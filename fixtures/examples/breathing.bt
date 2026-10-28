@@ -1,0 +1,8 @@
+# Breathing: driven by the clock, so the oscillator's path runs at every tick.
+running
+
+wave: osc(t: {arora/time}, frequency: {face/breath_rate})
+amplitude: remap(x: {face/energy}, in_min: 0, in_max: 1, out_min: 0.03, out_max: 0.2)
+swell: mul(a: @wave, b: @amplitude)
+chest: {rig/chest} = add(a: @swell, b: 0.5)
+flush: {face/flush} = remap(x: {face/energy}, in_min: 0, in_max: 1, out_min: 0.15, out_max: 0.85)

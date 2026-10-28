@@ -1,0 +1,11 @@
+# Three readers of one value, all asked: the cascade runs once for the three.
+parallel
+  equal(a: @near, b: true)
+  equal(a: @mid, b: true)
+  equal(a: @far, b: true)
+
+raw: mul(a: {sensor/distance}, b: 100)
+cm: clamp(x: @raw, min: 0, max: 1000)
+near: lt(a: @cm, b: 10)
+mid: lt(a: @cm, b: 30)
+far: lt(a: @cm, b: 50)

@@ -1,0 +1,20 @@
+# Greet, then rest: wave while a person is visible and not yet greeted, until a
+# 2 s timer ends, then mark them greeted; otherwise ease the arm to rest.
+fallback
+  sequence
+    equal(a: {person/visible}, b: true)
+    equal(a: @fresh, b: true)
+    parallel
+      {rig/arm_raise} = number(x: @raise)
+      {rig/arm_wave} = number(x: @sway)
+      wait(seconds: 2, now: {arora/time}, since: none)
+    {social/greeted} = boolean(x: true)
+  parallel
+    {rig/arm_raise} = number(x: @rest_raise)
+    {rig/arm_wave} = number(x: @rest_wave)
+
+fresh: not(x: {social/greeted})
+raise: damp(target: 1, half_life: 0.12, state: none, initial: {rig/arm_raise})
+sway: mul(a: osc(t: {arora/time}, frequency: 1.6), b: 0.6)
+rest_raise: damp(target: 0, half_life: 0.2, state: none, initial: {rig/arm_raise})
+rest_wave: damp(target: 0, half_life: 0.2, state: none, initial: {rig/arm_wave})

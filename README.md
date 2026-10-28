@@ -102,8 +102,17 @@ The wasm build needs Rust and `wasm-pack`:
 ```bash
 npm run build:wasm   # wasm/pkg, which the build, lint, typecheck and tests read
 npm run test:unit
-npm run demo         # the editor over the mock and the spectrum's examples, on port 5188
+npm run demo         # the editor on port 5188
 ```
+
+The unit tests run the language from `wasm/pkg`, and
+`src/integration/studio-arora.test.ts` runs `fixtures/devices/dataflow.bt` on
+an emulated device of `@semio/studio-arora`'s World, whose devices carry
+`@arora/dataflow`: it reads that package's wasm build
+(`npm run build -w @semio/studio-arora`).
+
+The demo opens the NGBT spectrum's examples, each on a mock device, and, when
+`@semio/studio-arora` is built, `dataflow.bt` on an emulated device.
 
 `wasm/` depends on `arora-behavior-tree` 9.6, which is not yet on crates.io:
 until it is, a local, gitignored `.cargo/config.toml` in this package patches

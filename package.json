@@ -58,6 +58,7 @@
   },
   "devDependencies": {
     "@semio/eslint-config": "*",
+    "@semio/studio-arora": "*",
     "@semio/typescript-config": "*",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.0.1",

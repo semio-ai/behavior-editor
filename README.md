@@ -102,8 +102,7 @@ that follows the system unless the page sets `data-theme` on its root element.
 ## Develop
 
 Building the wasm needs Rust stable with the `wasm32-unknown-unknown` target
-(`wasm/rust-toolchain.toml`), `wasm-pack` 0.15, and `arora-behavior-tree` 9.7
-for the crate to depend on:
+(`wasm/rust-toolchain.toml`) and `wasm-pack` 0.15:
 
 ```bash
 npm run build:wasm   # wasm/pkg, which the build, lint, typecheck and tests read
@@ -123,11 +122,6 @@ The demo opens the NGBT spectrum's examples, each on a mock device, and, when
 The crate's tests run in release (`npm run test:rust`), as the wasm is built:
 the language's nesting limit is set for a release build's stack use.
 
-`wasm/` takes `arora-behavior-tree` from crates.io, and its build is
-reproducible when `wasm/Cargo.lock` is committed, which `build:wasm` and
-`test:rust` then read with `--locked`. While 9.7 is not on crates.io, the crate
-builds against a local `[patch.crates-io]` in this package's gitignored
-`.cargo/config.toml`, pointing at a `cargo package` of the arora-sdk branch
-that carries it; a lock made that way names a path, so it is not committed and
-the scripts do not pass `--locked`. turbo hashes that `.cargo/` as an input of
-`build:wasm`, so a changed patch builds anew.
+`wasm/` takes its dependencies from crates.io and runs every cargo command
+with `--locked`, so a change to `wasm/Cargo.toml` without its `wasm/Cargo.lock`
+fails rather than resolving anew.

@@ -1,7 +1,2 @@
 /wasm/pkg
 /wasm/target
-# A local `[patch.crates-io]` pointing the wasm crate at an arora-sdk checkout.
-/.cargo
-# The wasm crate's lock is committed once its dependencies resolve from
-# crates.io alone; a lock made with the local patch above names a path.
-/wasm/Cargo.lock

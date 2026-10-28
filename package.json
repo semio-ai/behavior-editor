@@ -50,7 +50,7 @@
     "test": "vitest run",
     "clean": "rm -rf .turbo && rm -rf node_modules && rm -rf dist wasm/pkg wasm/target",
     "lint:rust": "cd wasm && cargo clippy --all-targets -- -D warnings && cargo fmt --check",
-    "test:rust": "cd wasm && cargo test"
+    "test:rust": "cd wasm && cargo test --release"
   },
   "peerDependencies": {
     "react": "^19.0.0",

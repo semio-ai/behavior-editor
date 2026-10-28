@@ -9,7 +9,7 @@ describe("the examples' text", () => {
       const language = await loadLanguage();
       const parsed = language.parse(example.text);
       expect(parsed.diagnostics).toEqual([]);
-      expect(language.format(parsed.document, MATH_FUNCTIONS)).toBe(example.text);
+      expect(language.format(parsed, MATH_FUNCTIONS)).toBe(example.text);
       const loaded = language.resolve(parsed.document, MATH_FUNCTIONS);
       expect(loaded.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
       expect(loaded.nodes.map((n) => [n.name, n.path, n.attached])).toEqual(

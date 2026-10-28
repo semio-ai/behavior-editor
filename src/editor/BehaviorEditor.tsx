@@ -10,6 +10,7 @@ import { FileBar } from "./FileBar";
 import { functionIndex } from "./functions";
 import { type Edit, Inspector } from "./Inspector";
 import { PlaybackBar } from "./PlaybackBar";
+import { outputKeys } from "./store-keys";
 import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
 import { useMediaQuery } from "./use-media-query";
@@ -96,6 +97,7 @@ export function BehaviorEditor({
     () => functionIndex(natives, functions, moduleNames),
     [natives, functions, moduleNames],
   );
+  const isOutput = useMemo(() => outputKeys(resolved.graph, index), [resolved.graph, index]);
   const rows = useMemo(
     () => diagramRows(parsed.document, index, resolved.nodes),
     [parsed.document, index, resolved.nodes],
@@ -111,12 +113,21 @@ export function BehaviorEditor({
   // the parse left out the lines it could not read, so an edit formatted from
   // it would drop them. The diagram shows the parse and edits nothing.
   const editable = !parsed.diagnostics.some((d) => d.severity === "error");
+  const [editError, setEditError] = useState<string | null>(null);
   const edit = useCallback(
     (change: Edit, select?: NodePath | null) => {
       if (!editable) return;
       const next = change(parsed.document);
       if (next === parsed.document) return;
-      setText(language.format(next, functions));
+      let written: string;
+      try {
+        written = language.format({ document: next, diagnostics: [] }, functions);
+      } catch (error) {
+        setEditError(error instanceof Error ? error.message : String(error));
+        return;
+      }
+      setEditError(null);
+      setText(written);
       if (select !== undefined) setSelected(select === null ? null : rowKey(select));
     },
     [editable, parsed.document, language, functions, setText],
@@ -272,6 +283,7 @@ export function BehaviorEditor({
   );
   const store = (
     <StorePanel
+      isOutput={isOutput}
       store={playback.store}
       history={playback.history}
       plotted={plotted}
@@ -307,6 +319,11 @@ export function BehaviorEditor({
       {runtimeError && (
         <p className="be-alert" role="alert">
           {runtimeError}
+        </p>
+      )}
+      {editError && (
+        <p className="be-alert" role="alert">
+          {editError}
         </p>
       )}
       {wide ? (

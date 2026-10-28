@@ -36,6 +36,7 @@ function modeOf(value: Expression | undefined): Mode {
       return "call";
     case "select":
     case "json":
+    case "variable_id":
       return "other";
     default:
       return "literal";
@@ -322,8 +323,6 @@ function listItem(text: string, primitive: string | undefined): Expression {
   return number(text);
 }
 
-const KEY = /^[^{}\s]+$/;
-
 function VariableEditor({
   name: label,
   value,
@@ -345,7 +344,8 @@ function VariableEditor({
         label={local ? `${label}: local variable` : `${label}: store key`}
         value={local ? value.slice(1) : value}
         list={local ? undefined : listId}
-        invalid={(text) => !KEY.test(text)}
+        // Any key is written: the language quotes one `{key}` cannot hold.
+        invalid={(text) => text === ""}
         onCommit={(text) =>
           onChange(expression({ type: "variable", name: local ? `.${text}` : text }))
         }

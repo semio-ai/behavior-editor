@@ -15,6 +15,7 @@ use arora_behavior::interpreter_module::encode_load;
 use arora_behavior::{FunctionIndex, ModuleFunction};
 use arora_behavior_tree::text;
 use arora_types::record::module::frozen::Function;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -43,18 +44,21 @@ pub fn parse(text: &str) -> Result<String, JsError> {
     Ok(value.to_string())
 }
 
-/// A document's text in the canonical layout, its arguments in the order of
-/// `functions_json`'s parameters.
+/// A parse result's text in the canonical layout, its arguments in the order
+/// of `functions_json`'s parameters. A parse with errors, or a document
+/// nested deeper than the language allows, is refused: the error's message
+/// is the JSON of its diagnostics.
 #[wasm_bindgen]
-pub fn format(document_json: &str, functions_json: &str) -> Result<String, JsError> {
-    let document: text::Document = serde_json::from_str(document_json).map_err(error)?;
-    Ok(text::format(&document, &index(functions_json)?))
+pub fn format(parsed_json: &str, functions_json: &str) -> Result<String, JsError> {
+    let parsed: text::Parsed = from_json(parsed_json).map_err(error)?;
+    text::format(&parsed, &index(functions_json)?)
+        .map_err(|diagnostics| error(serde_json::to_string(&diagnostics).unwrap_or_default()))
 }
 
 /// Resolve a document against `functions_json`: `{ graph, nodes, diagnostics }`.
 #[wasm_bindgen]
 pub fn resolve(document_json: &str, functions_json: &str) -> Result<String, JsError> {
-    let mut document: Value = serde_json::from_str(document_json).map_err(error)?;
+    let mut document: Value = from_json(document_json).map_err(error)?;
     // Every span of a resolved node or diagnostic starts where one of the
     // document's does: its line and column are that one's.
     let mut places = HashMap::new();
@@ -98,8 +102,19 @@ pub fn natives() -> Result<String, JsError> {
 /// the new graph left in place. The empty graph loads no behavior.
 #[wasm_bindgen(js_name = loadCall)]
 pub fn load_call(graph_json: &str) -> Result<String, JsError> {
-    let graph: Graph = serde_json::from_str(graph_json).map_err(error)?;
+    let graph: Graph = from_json(graph_json).map_err(error)?;
     serde_json::to_string(&encode_load(&graph)).map_err(error)
+}
+
+/// `json` read as a `T`, however deep the language lets it nest. serde_json
+/// stops at 128 levels by default, and a document's JSON nests several levels
+/// for each of the language's (`text::MAX_DEPTH`), which bounds the recursion.
+fn from_json<T: DeserializeOwned>(json: &str) -> Result<T, serde_json::Error> {
+    let mut reader = serde_json::Deserializer::from_str(json);
+    reader.disable_recursion_limit();
+    let value = T::deserialize(&mut reader)?;
+    reader.end()?;
+    Ok(value)
 }
 
 fn signature(function: &ModuleFunction) -> MethodSignature {
@@ -113,7 +128,7 @@ fn signature(function: &ModuleFunction) -> MethodSignature {
 
 /// The function index `functions_json`, a `MethodSignature[]`, describes.
 fn index(functions_json: &str) -> Result<FunctionIndex, JsError> {
-    let signatures: Vec<MethodSignature> = serde_json::from_str(functions_json).map_err(error)?;
+    let signatures: Vec<MethodSignature> = from_json(functions_json).map_err(error)?;
     Ok(signatures
         .into_iter()
         .map(|s| {
@@ -240,8 +255,23 @@ mod tests {
     #[test]
     fn a_formatted_document_reads_back() {
         let text = "fallback\n  succeed\n";
-        let parsed: Value = serde_json::from_str(&parse(text).unwrap()).unwrap();
-        assert_eq!(format(&parsed["document"].to_string(), "[]").unwrap(), text);
+        assert_eq!(format(&parse(text).unwrap(), "[]").unwrap(), text);
+    }
+
+    #[test]
+    fn a_text_nested_past_the_limit_is_reported_not_overflowed() {
+        let depth = 10 * text::MAX_DEPTH;
+        let text = format!(
+            "running\n\nx: {}1{}\n",
+            "f(a: ".repeat(depth),
+            ")".repeat(depth)
+        );
+        let parsed: Value = from_json(&parse(&text).unwrap()).unwrap();
+        let messages = parsed["diagnostics"].to_string();
+        assert!(messages.contains("128"), "{messages}");
+        // The refusal itself is a JsError, which only a wasm target can make.
+        let document: text::Parsed = serde_json::from_value(parsed).unwrap();
+        assert!(text::format(&document, &FunctionIndex::new()).is_err());
     }
 
     #[test]

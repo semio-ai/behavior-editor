@@ -114,7 +114,10 @@ an emulated device of `@semio/studio-arora`'s World, whose devices carry
 The demo opens the NGBT spectrum's examples, each on a mock device, and, when
 `@semio/studio-arora` is built, `dataflow.bt` on an emulated device.
 
-`wasm/` depends on `arora-behavior-tree` 9.6, which is not yet on crates.io:
+The crate's tests run in release (`npm run test:rust`), as the wasm is built:
+the language's nesting limit is set for a release build's stack use.
+
+`wasm/` depends on `arora-behavior-tree` 9.7, which is not yet on crates.io:
 until it is, a local, gitignored `.cargo/config.toml` in this package patches
 it to a `cargo package` of the arora-sdk branch that carries it, and
 `wasm/Cargo.lock` is not committed.

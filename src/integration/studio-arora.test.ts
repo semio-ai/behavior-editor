@@ -110,7 +110,7 @@ describe("a behavior file on an emulated studio-arora device", () => {
 
   it("formats as written: opened and saved again, the file is the same", async () => {
     const { functions } = await resolved();
-    expect(language.format(language.parse(text).document, functions)).toBe(text);
+    expect(language.format(language.parse(text), functions)).toBe(text);
   });
 
   it("runs on the device: conditions, a cascade, the clock and a stateful node", async () => {

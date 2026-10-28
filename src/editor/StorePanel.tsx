@@ -18,6 +18,8 @@ export interface StorePanelProps {
   plotted: readonly string[];
   onPlottedChange(keys: string[]): void;
   onWrite(key: string, value: Value | null): void;
+  /** Whether something other than a person writes `key` at every tick: shown, not edited. */
+  isOutput(key: string): boolean;
 }
 
 /** The range a slider gives a number: 0 to 1 for a fraction, a power of ten beyond. */
@@ -30,11 +32,19 @@ export function sliderRange(value: number): [number, number] {
 const SERIES = 4;
 
 /**
- * The store, key by key, as the last tick left it: a slider for a number, a
- * switch for a boolean, a field for a string, each writing through the
- * runtime; and a plot of the keys chosen.
+ * The store, key by key, as the last tick left it. An input has a slider for
+ * a number, a switch for a boolean, a field for a string, each writing
+ * through the runtime; an output, which the runtime or the behavior writes at
+ * every tick, shows its value. Any number can be plotted.
  */
-export function StorePanel({ store, history, plotted, onPlottedChange, onWrite }: StorePanelProps) {
+export function StorePanel({
+  store,
+  history,
+  plotted,
+  onPlottedChange,
+  onWrite,
+  isOutput,
+}: StorePanelProps) {
   const keys = [...store.keys()].sort();
   // A key's slider spans the values it held lately, so it holds still while the value moves.
   const rangeOf = (key: string, n: number): [number, number] => {
@@ -54,12 +64,19 @@ export function StorePanel({ store, history, plotted, onPlottedChange, onWrite }
           const series = plotted.indexOf(key);
           return (
             <li key={key} className="be-key">
-              <KeyEditor
-                name={key}
-                value={value}
-                range={n === undefined ? null : rangeOf(key, n)}
-                onWrite={(next) => onWrite(key, next)}
-              />
+              {isOutput(key) ? (
+                <div className="be-control be-output">
+                  <span className="be-label">{key}</span>
+                  <output aria-label={key}>{formatValue(value)}</output>
+                </div>
+              ) : (
+                <KeyEditor
+                  name={key}
+                  value={value}
+                  range={n === undefined ? null : rangeOf(key, n)}
+                  onWrite={(next) => onWrite(key, next)}
+                />
+              )}
               {plottable && (
                 <label className="be-plot-toggle">
                   <input

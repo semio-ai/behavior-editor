@@ -184,6 +184,18 @@ describe("BehaviorEditor", () => {
     });
   });
 
+  it("writes a store key `{key}` cannot hold in its quoted form", async () => {
+    const { user, texts } = setup(SMILE);
+    await user.click(await screen.findByRole("treeitem", { name: /^cheeks: / }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "b: source" }), "key");
+    const key = screen.getByRole("combobox", { name: "b: store key" });
+    await user.clear(key);
+    await user.type(key, "face/a key{Enter}");
+    expect(texts.at(-1)).toContain(
+      'cheeks: {rig/cheek_raise} = mul(a: @amount, b: {"face/a key"})',
+    );
+  });
+
   it("deletes the selected node with the Delete key, and moves it with Alt and an arrow", async () => {
     const { user, written } = setup(ORDER);
     await user.click((await screen.findAllByRole("treeitem", { name: /^truthy/ }))[0]!);

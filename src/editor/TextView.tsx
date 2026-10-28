@@ -128,10 +128,7 @@ export function TextView({ text, diagnostics, highlight, onChange, onCaret }: Te
                 <span className="be-where">
                   {d.span.line}:{d.span.column}
                 </span>{" "}
-                <span className="be-severity">{d.severity}</span>{" "}
-                <span className="be-message" title={d.message}>
-                  {d.message}
-                </span>
+                <span className="be-severity">{d.severity}</span> {d.message}
               </button>
             </li>
           ))}

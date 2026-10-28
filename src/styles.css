@@ -960,14 +960,6 @@
   gap: 8px;
 }
 
-/* A long diagnostic shows its first lines; the whole message is its title. */
-.be-diagnostic .be-message {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
-}
 .be-unset summary {
   cursor: pointer;
   font-size: 12px;
@@ -978,4 +970,8 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.be-output output {
+  color: var(--be-ink);
 }

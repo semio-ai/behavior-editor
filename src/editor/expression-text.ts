@@ -38,7 +38,9 @@ export function expressionText(expression: Expression): string {
     case "json":
       return `json(${JSON.stringify(kind.text)})`;
     case "variable":
-      return `{${kind.name}}`;
+      return variableText(kind.name);
+    case "variable_id":
+      return `{${kind.value}}`;
     case "port":
       return `@${kind.node.text}${kind.parameter === null ? "" : `.${kind.parameter.text}`}`;
     case "select":
@@ -46,6 +48,18 @@ export function expressionText(expression: Expression): string {
     case "call":
       return callText(kind.call);
   }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A variable as the language writes it: `{key}`, or `{"key"}` when `{key}`
+ * would not read back as `key`: a key that is empty, holds a space, a brace, a
+ * quote or a line break, starts with `=`, or is an id.
+ */
+export function variableText(key: string): string {
+  const plain = key !== "" && !key.startsWith("=") && !/[\s{}"]/.test(key) && !UUID.test(key);
+  return plain ? `{${key}}` : `{${JSON.stringify(key)}}`;
 }
 
 /** The nodes `expression` reads, as `@node`, at any depth. */

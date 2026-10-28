@@ -75,6 +75,8 @@ export interface Argument {
   span: Span;
   name: Name;
   value: Expression;
+  /** The comments after it, in a call broken over lines. */
+  comments: Comment[];
 }
 
 /** An identifier or an id, as written. */
@@ -113,11 +115,16 @@ export type ExpressionKind =
   | { type: "uuid"; value: string }
   /** `json("…")`: a value in its serde JSON form, a structure or an enumeration. */
   | { type: "json"; text: string }
-  /** `{key}` a store key, `{.name}` a tree-local variable. */
+  /**
+   * `{key}` a store key, `{.name}` a tree-local variable; `{"a key"}` quoted,
+   * for a key `{key}` cannot hold. `name` is the key itself, unquoted.
+   */
   | { type: "variable"; name: string }
+  /** `{<uuid>}`: the variable of that id, which names none. */
+  | { type: "variable_id"; value: string }
   /** `@node` its return value, `@node.parameter` one of its parameters. */
   | { type: "port"; node: Name; parameter: Name | null }
-  /** `source[path]` */
+  /** `source[path]`: the path runs to the first `]`. */
   | { type: "select"; source: Expression; path: string }
   /** `function(parameter: value, …)` */
   | { type: "call"; call: Call };

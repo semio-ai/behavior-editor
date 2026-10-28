@@ -11,11 +11,13 @@ export interface BehaviorText {
   /** Parse a file. Recovery is per line: a document comes back with every error. */
   parse(text: string): ParseResult;
   /**
-   * The file text of a document, in the one canonical layout, each node's
-   * arguments in the order of its function's parameters. A document whose
-   * text did not parse is refused: its text is the only whole account of it.
+   * The file text of a parse result, in the one canonical layout, each node's
+   * arguments in the order of its function's parameters. A parse with errors
+   * is refused, as is a document nested deeper than the language allows: it
+   * throws. A parse with errors leaves lines out of its document, so its text
+   * is the only whole account of the behavior.
    */
-  format(document: BehaviorDocument, functions: MethodSignature[]): string;
+  format(parsed: ParseResult, functions: MethodSignature[]): string;
   /**
    * Resolve a document against the functions it may call, `functions` being
    * the modules' as a device's `describeMethods` lists them (the natives are

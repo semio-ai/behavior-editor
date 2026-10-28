@@ -41,7 +41,7 @@ export function functionName(text: string): FunctionName {
 
 /** An argument an edit wrote. */
 export function argument(parameter: string, value: Expression): Argument {
-  return { span: NO_SPAN, name: name(parameter), value };
+  return { span: NO_SPAN, name: name(parameter), value, comments: [] };
 }
 
 /** A call of `function_` with `args` by parameter name. */

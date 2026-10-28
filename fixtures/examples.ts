@@ -45,7 +45,6 @@ const SEQUENCE = native("sequence", N.SEQUENCE);
 const FALLBACK = native("fallback", N.FALLBACK);
 const PARALLEL = native("parallel", N.PARALLEL);
 const RUNNING = native("running", N.RUNNING);
-const EQUAL = native("equal", N.EQUAL, { a: N.EQUAL_A, b: N.EQUAL_B });
 
 /** An argument as stated: a literal, a store key or local variable, a node's port, or a call. */
 type Arg =
@@ -216,7 +215,7 @@ function build(
 
 const readersTree = (root: Fn): Spec => ({
   fn: root,
-  children: ["near", "mid", "far"].map((ref) => ({ fn: EQUAL, args: { a: { ref }, b: true } })),
+  children: ["near", "mid", "far"].map((ref) => ({ fn: math("truthy"), args: { x: { ref } } })),
 });
 const readersDetached: Spec[] = [
   { name: "raw", fn: math("mul"), args: { a: { key: "sensor/distance" }, b: 100 } },
@@ -240,13 +239,13 @@ export const SMILE = build(
       args: { x: { ref: "amount" }, in_min: 0, in_max: 1, out_min: -0.2, out_max: 1 },
     },
     {
-      name: "ease",
+      name: "mouth",
       target: "rig/mouth_corner",
       fn: math("damp"),
       args: { target: { ref: "corner" }, half_life: 0.12, state: "none" },
     },
     {
-      name: "cheek",
+      name: "cheeks",
       target: "rig/cheek_raise",
       fn: math("mul"),
       args: { a: { ref: "amount" }, b: 0.6 },
@@ -265,7 +264,7 @@ export const BREATHING = build(
   [
     {
       name: "wave",
-      fn: math("osc"),
+      fn: math("oscillator"),
       args: { t: { key: "arora/time" }, frequency: { key: "face/breath_rate" } },
     },
     {
@@ -273,8 +272,15 @@ export const BREATHING = build(
       fn: math("remap"),
       args: { x: { key: "face/energy" }, in_min: 0, in_max: 1, out_min: 0.03, out_max: 0.2 },
     },
-    { name: "swell", fn: math("mul"), args: { a: { ref: "wave" }, b: { ref: "amplitude" } } },
-    { name: "chest", target: "rig/chest", fn: math("add"), args: { a: { ref: "swell" }, b: 0.5 } },
+    {
+      name: "chest",
+      target: "rig/chest",
+      fn: math("add"),
+      args: {
+        a: { call: math("mul"), args: { a: { ref: "wave" }, b: { ref: "amplitude" } } },
+        b: 0.5,
+      },
+    },
     {
       name: "flush",
       target: "face/flush",
@@ -285,6 +291,12 @@ export const BREATHING = build(
   { "face/energy": { f64: 0.4 }, "face/breath_rate": { f64: 0.3 } },
   ["rig/chest", "face/flush"],
 );
+
+const ease = (target: number, halfLife: number, key: string): Spec => ({
+  target: key,
+  fn: math("damp"),
+  args: { target, half_life: halfLife, state: "none", initial: { key } },
+});
 
 export const GREET = build(
   "greet",
@@ -297,54 +309,36 @@ export const GREET = build(
       {
         fn: SEQUENCE,
         children: [
-          { fn: EQUAL, args: { a: { key: "person/visible" }, b: true } },
-          { fn: EQUAL, args: { a: { ref: "fresh" }, b: true } },
+          { fn: math("truthy"), args: { x: { key: "person/visible" } } },
+          { fn: math("truthy"), args: { x: { ref: "fresh" } } },
           {
             fn: PARALLEL,
             children: [
-              { target: "rig/arm_raise", fn: math("number"), args: { x: { ref: "raise" } } },
-              { target: "rig/arm_wave", fn: math("number"), args: { x: { ref: "sway" } } },
+              ease(1, 0.12, "rig/arm_raise"),
+              {
+                target: "rig/arm_wave",
+                fn: math("mul"),
+                args: {
+                  a: {
+                    call: math("oscillator"),
+                    args: { t: { key: "arora/time" }, frequency: 1.6 },
+                  },
+                  b: 0.6,
+                },
+              },
               { fn: math("wait"), args: { seconds: 2, now: { key: "arora/time" }, since: "none" } },
             ],
           },
-          { target: "social/greeted", fn: math("boolean"), args: { x: true } },
+          { target: "social/greeted", fn: math("identity"), args: { x: true } },
         ],
       },
       {
         fn: PARALLEL,
-        children: [
-          { target: "rig/arm_raise", fn: math("number"), args: { x: { ref: "rest_raise" } } },
-          { target: "rig/arm_wave", fn: math("number"), args: { x: { ref: "rest_wave" } } },
-        ],
+        children: [ease(0, 0.2, "rig/arm_raise"), ease(0, 0.2, "rig/arm_wave")],
       },
     ],
   },
-  [
-    { name: "fresh", fn: math("not"), args: { x: { key: "social/greeted" } } },
-    {
-      name: "raise",
-      fn: math("damp"),
-      args: { target: 1, half_life: 0.12, state: "none", initial: { key: "rig/arm_raise" } },
-    },
-    {
-      name: "sway",
-      fn: math("mul"),
-      args: {
-        a: { call: math("osc"), args: { t: { key: "arora/time" }, frequency: 1.6 } },
-        b: 0.6,
-      },
-    },
-    {
-      name: "rest_raise",
-      fn: math("damp"),
-      args: { target: 0, half_life: 0.2, state: "none", initial: { key: "rig/arm_raise" } },
-    },
-    {
-      name: "rest_wave",
-      fn: math("damp"),
-      args: { target: 0, half_life: 0.2, state: "none", initial: { key: "rig/arm_wave" } },
-    },
-  ],
+  [{ name: "fresh", fn: math("not"), args: { x: { key: "social/greeted" } } }],
   {
     "person/visible": { bool: false },
     "social/greeted": { bool: false },
@@ -384,10 +378,10 @@ export const ORDER = build(
   {
     fn: SEQUENCE,
     children: [
-      { target: "v", fn: math("number"), args: { x: { ref: "inc" } } },
-      { fn: EQUAL, args: { a: { ref: "ok" }, b: true } },
-      { target: "v", fn: math("number"), args: { x: { ref: "inc" } } },
-      { fn: EQUAL, args: { a: { ref: "ok" }, b: true } },
+      { target: "v", fn: math("identity"), args: { x: { ref: "inc" } } },
+      { fn: math("truthy"), args: { x: { ref: "ok" } } },
+      { target: "v", fn: math("identity"), args: { x: { ref: "inc" } } },
+      { fn: math("truthy"), args: { x: { ref: "ok" } } },
     ],
   },
   [

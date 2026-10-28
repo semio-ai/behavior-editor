@@ -63,10 +63,10 @@ describe("BehaviorEditor", () => {
     setup(GREET);
     const tree = await screen.findByRole("tree", { name: "Behavior diagram" });
     const items = within(tree).getAllByRole("treeitem");
-    expect(items).toHaveLength(17);
+    expect(items).toHaveLength(13);
     expect(items[0]).toHaveAttribute("aria-level", "1");
     expect(item(/^sequence/)).toHaveAttribute("aria-level", "2");
-    expect(item(/^raise: damp, detached/)).toBeTruthy();
+    expect(item(/^fresh: not, detached/)).toBeTruthy();
     expect(item(/^fallback/)).toHaveAttribute("aria-expanded", "true");
   });
 
@@ -76,10 +76,47 @@ describe("BehaviorEditor", () => {
     await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
     expect(screen.getByLabelText("Root status")).toHaveTextContent("Success");
     expect(item(/^sequence, succeeded/)).toBeTruthy();
-    expect(item(/^inc: add, detached, called/)).toBeTruthy();
+    expect(item(/^inc: add, detached, called, value changed, value 1$/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Step" }));
     await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 2"));
     expect(await runtime.read("v")).toEqual({ f64: 2 });
+  });
+
+  it("tells a detached node whose value changed from one that ran to the same value", async () => {
+    const { user } = setup(SMILE);
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(item(/^mouth: /)).toHaveAccessibleName(/value changed/));
+    await user.click(screen.getByRole("button", { name: "Step" }));
+    // The easing ran again, its state having changed, and returned the value it had.
+    await waitFor(() =>
+      expect(item(/^mouth: /)).toHaveAccessibleName(/called, same value, value 0\.04$/),
+    );
+    expect(item(/^cheeks: /)).toHaveAccessibleName(/cache hit, not called, value 0\.12$/);
+  });
+
+  it("opens the diagram on its root when the drawing is wider than its pane", async () => {
+    const width = Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")!;
+    Object.defineProperty(Element.prototype, "clientWidth", {
+      configurable: true,
+      get(this: Element) {
+        return this.classList.contains("be-canvas") ? 300 : 0;
+      },
+    });
+    try {
+      setup(GREET);
+      // Once the runtime's functions arrive, the nodes take their final widths.
+      await waitFor(() => expect(item(/^\{rig\/arm_wave\} = mul/)).toHaveAttribute("data-key"));
+      await waitFor(() => {
+        const root = item(/^fallback/);
+        const canvas = root.closest(".be-canvas")!;
+        const x = Number(/translate\(([\d.]+),/.exec(root.getAttribute("transform")!)![1]);
+        const w = Number(root.querySelector(".be-box")!.getAttribute("width"));
+        expect(canvas.scrollLeft).toBeGreaterThan(0);
+        expect(x + w / 2 - canvas.scrollLeft).toBeCloseTo(150, 0);
+      });
+    } finally {
+      Object.defineProperty(Element.prototype, "clientWidth", width);
+    }
   });
 
   it("selects a node by click, and moves the selection with the arrow keys", async () => {
@@ -89,33 +126,33 @@ describe("BehaviorEditor", () => {
     expect(within(inspector).getByText("sequence", { selector: "code" })).toBeTruthy();
     expect(item(/^sequence/)).toHaveAttribute("aria-selected", "true");
     await user.keyboard("{ArrowRight}");
-    expect(screen.getAllByRole("treeitem", { name: /^\{v\} = number/ })[0]).toHaveFocus();
-    expect(within(inspector).getByText("{v} = number", { selector: "code" })).toBeTruthy();
+    expect(screen.getAllByRole("treeitem", { name: /^\{v\} = identity/ })[0]).toHaveFocus();
+    expect(within(inspector).getByText("{v} = identity", { selector: "code" })).toBeTruthy();
     await user.keyboard("{ArrowLeft}");
     expect(item(/^sequence/)).toHaveFocus();
   });
 
   it("renames a node from the inspector, and its readers follow", async () => {
     const { user, written } = setup(GREET);
-    await user.click(await screen.findByRole("treeitem", { name: /^raise: damp/ }));
+    await user.click(await screen.findByRole("treeitem", { name: /^fresh: not/ }));
     const name = screen.getByRole("textbox", { name: "Name" });
     await user.clear(name);
-    await user.type(name, "lift{Enter}");
+    await user.type(name, "unseen{Enter}");
     const document = written();
-    expect(document.nodes[2]?.name?.text).toBe("lift");
-    const wave = document.nodes[0]!.children[0]!.children[2]!.children[0]!;
-    expect(wave.call.arguments[0]?.value.kind).toMatchObject({
+    expect(document.nodes[1]?.name?.text).toBe("unseen");
+    const reader = document.nodes[0]!.children[0]!.children[1]!;
+    expect(reader.call.arguments[0]?.value.kind).toMatchObject({
       type: "port",
-      node: { text: "lift" },
+      node: { text: "unseen" },
     });
   });
 
   it("refuses a name another node has", async () => {
-    const { user, texts } = setup(GREET);
-    await user.click(await screen.findByRole("treeitem", { name: /^raise: damp/ }));
+    const { user, texts } = setup(SMILE);
+    await user.click(await screen.findByRole("treeitem", { name: /^cheeks: / }));
     const name = screen.getByRole("textbox", { name: "Name" });
     await user.clear(name);
-    await user.type(name, "sway{Enter}");
+    await user.type(name, "amount{Enter}");
     expect(name).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText("Another node has this name.")).toBeTruthy();
     expect(texts).toEqual([]);
@@ -123,7 +160,7 @@ describe("BehaviorEditor", () => {
 
   it("edits a literal argument through the inspector", async () => {
     const { user, written } = setup(SMILE);
-    await user.click(await screen.findByRole("treeitem", { name: /^cheek: / }));
+    await user.click(await screen.findByRole("treeitem", { name: /^cheeks: / }));
     const b = screen.getByRole("textbox", { name: "b" });
     expect(b).toHaveValue("0.6");
     await user.clear(b);
@@ -137,7 +174,7 @@ describe("BehaviorEditor", () => {
 
   it("feeds an argument from another node's output", async () => {
     const { user, written } = setup(SMILE);
-    await user.click(await screen.findByRole("treeitem", { name: /^cheek: / }));
+    await user.click(await screen.findByRole("treeitem", { name: /^cheeks: / }));
     await user.selectOptions(screen.getByRole("combobox", { name: "b: source" }), "node");
     await user.selectOptions(screen.getByRole("combobox", { name: "b: node" }), "corner");
     expect(written().nodes[4]?.call.arguments[1]?.value.kind).toMatchObject({
@@ -149,12 +186,12 @@ describe("BehaviorEditor", () => {
 
   it("deletes the selected node with the Delete key, and moves it with Alt and an arrow", async () => {
     const { user, written } = setup(ORDER);
-    await user.click((await screen.findAllByRole("treeitem", { name: /^equal/ }))[0]!);
+    await user.click((await screen.findAllByRole("treeitem", { name: /^truthy/ }))[0]!);
     await user.keyboard("{Delete}");
-    expect(names(written().nodes[0]!.children)).toEqual(["number", "number", "equal"]);
-    await user.click(screen.getAllByRole("treeitem", { name: /^\{v\} = number/ })[1]!);
+    expect(names(written().nodes[0]!.children)).toEqual(["identity", "identity", "truthy"]);
+    await user.click(screen.getAllByRole("treeitem", { name: /^\{v\} = identity/ })[1]!);
     await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
-    expect(names(written().nodes[0]!.children)).toEqual(["number", "number", "equal"]);
+    expect(names(written().nodes[0]!.children)).toEqual(["identity", "identity", "truthy"]);
   });
 
   it("adds a child from the palette, searching it by name", async () => {
@@ -167,10 +204,10 @@ describe("BehaviorEditor", () => {
     const group = screen.getByRole("region", { name: "Behavior tree" });
     await user.click(within(group).getByRole("button", { name: /^succeed/ }));
     expect(names(written().nodes[0]!.children)).toEqual([
-      "number",
-      "equal",
-      "number",
-      "equal",
+      "identity",
+      "truthy",
+      "identity",
+      "truthy",
       "succeed",
     ]);
   });
@@ -214,7 +251,7 @@ describe("BehaviorEditor", () => {
     await waitFor(() => expect(texts).toHaveLength(1));
     await user.click(screen.getByRole("tab", { name: "Diagram" }));
     expect(screen.getByText(/^The text has errors/)).toBeVisible();
-    await user.click((await screen.findAllByRole("treeitem", { name: /^equal/ }))[0]!);
+    await user.click((await screen.findAllByRole("treeitem", { name: /^truthy/ }))[0]!);
     await user.keyboard("{Delete}");
     expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
     expect(texts).toHaveLength(1);
@@ -234,7 +271,7 @@ describe("BehaviorEditor", () => {
   it("marks the file dirty, and asks before discarding the change", async () => {
     const { user } = setup(SMILE);
     expect(screen.queryByText("(unsaved changes)")).toBeNull();
-    await user.click(await screen.findByRole("treeitem", { name: /^cheek: / }));
+    await user.click(await screen.findByRole("treeitem", { name: /^cheeks: / }));
     await user.click(screen.getByRole("button", { name: "Move up" }));
     expect(screen.getByText("(unsaved changes)")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "New" }));

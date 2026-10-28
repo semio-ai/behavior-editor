@@ -15,7 +15,7 @@
   --be-ok: #2b8a3e;
   --be-fail: #c92a2a;
   --be-run: #d9730d;
-  --be-called: #e8590c;
+  --be-changed: #e8590c;
   --be-same: #4263eb;
   --be-cached: #a3aaa5;
   --be-wire: #5f6f94;
@@ -42,7 +42,7 @@
     --be-ok: #51cf66;
     --be-fail: #ff6b6b;
     --be-run: #ffa94d;
-    --be-called: #ff8743;
+    --be-changed: #ff8743;
     --be-same: #7d95ff;
     --be-cached: #59625c;
     --be-wire: #8d9cc4;
@@ -68,7 +68,7 @@
   --be-ok: #51cf66;
   --be-fail: #ff6b6b;
   --be-run: #ffa94d;
-  --be-called: #ff8743;
+  --be-changed: #ff8743;
   --be-same: #7d95ff;
   --be-cached: #59625c;
   --be-wire: #8d9cc4;
@@ -235,9 +235,22 @@
 /* Layout: diagram, text and side panel side by side when wide; tabs when narrow. */
 .be-main {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
   gap: 12px;
   align-items: start;
+}
+/* The diagram is the main area; the text sits under it, or beside it on a very wide screen. */
+.be-views {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+@media (min-width: 1800px) {
+  .be-views {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 34rem);
+  }
 }
 .be-side {
   display: flex;
@@ -327,9 +340,12 @@
   border-radius: 3px;
   border: 2px solid var(--be-line);
 }
-.be-sw-called {
-  border-color: var(--be-called);
-  background: color-mix(in srgb, var(--be-called) 28%, transparent);
+.be-sw-changed {
+  border-color: var(--be-changed);
+  background: color-mix(in srgb, var(--be-changed) 28%, transparent);
+}
+.be-sw-same {
+  border-color: var(--be-same);
 }
 .be-sw-cached {
   border-color: var(--be-cached);
@@ -434,10 +450,14 @@
   stroke: var(--be-fail);
   stroke-width: 2;
 }
-.be-node.be-called .be-box {
-  stroke: var(--be-called);
+.be-node.be-changed .be-box {
+  stroke: var(--be-changed);
   stroke-width: 2.5;
-  fill: color-mix(in srgb, var(--be-called) 14%, var(--be-panel));
+  fill: color-mix(in srgb, var(--be-changed) 14%, var(--be-panel));
+}
+.be-node.be-same .be-box {
+  stroke: var(--be-same);
+  stroke-width: 2.5;
 }
 .be-node.be-cached .be-box {
   stroke: var(--be-cached);
@@ -469,6 +489,20 @@
   font: 600 12px var(--be-mono);
   fill: var(--be-accent);
   pointer-events: none;
+}
+.be-value rect {
+  fill: var(--be-panel);
+  stroke: var(--be-same);
+  stroke-width: 1.2;
+}
+.be-value.be-changed rect {
+  stroke: var(--be-changed);
+  fill: color-mix(in srgb, var(--be-changed) 14%, var(--be-panel));
+}
+.be-value text {
+  font: 500 10.5px var(--be-mono);
+  fill: var(--be-ink);
+  font-variant-numeric: tabular-nums;
 }
 .be-port {
   fill: var(--be-panel);
@@ -519,8 +553,11 @@
 .be-mini.be-R {
   fill: var(--be-run);
 }
-.be-mini.be-called {
-  fill: var(--be-called);
+.be-mini.be-changed {
+  fill: var(--be-changed);
+}
+.be-mini.be-same {
+  fill: var(--be-same);
 }
 .be-mini.be-cached {
   fill: none;

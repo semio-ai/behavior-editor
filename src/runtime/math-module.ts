@@ -1,7 +1,7 @@
 import type { FrozenTy, MethodSignature, PrimitiveKind } from "../model/signature";
 import { type Value, valueBoolean, valueNumber } from "../model/value";
 import type { CallResult, MockFunction, MockModule } from "./mock-arora";
-import { STATUS_ENUMERATION, STATUS_RUNNING, STATUS_SUCCESS } from "./natives";
+import { STATUS_ENUMERATION, STATUS_FAILURE, STATUS_RUNNING, STATUS_SUCCESS } from "./natives";
 
 /**
  * The mock device's math module: the operations of the NGBT spectrum's
@@ -14,9 +14,10 @@ import { STATUS_ENUMERATION, STATUS_RUNNING, STATUS_SUCCESS } from "./natives";
  * | `remap(x, in_min, in_max, out_min, out_max)` | `x` mapped linearly |
  * | `lt(a, b)` | `a < b` |
  * | `not(x)` | `!x` |
- * | `osc(t, frequency)` | `sin(2π · frequency · t)`, `t` in seconds |
+ * | `oscillator(t, frequency)` | `sin(2π · frequency · t)`, `t` in seconds |
  * | `damp(target, half_life, state, initial?)` | `state` eased one 1/30 s step toward `target`, and written back; from `initial`, or else `target`, when absent |
- * | `number(x)`, `boolean(x)` | `x`: a value to write to a key |
+ * | `identity(x)` | `x`, any value: what a leaf writes to a key |
+ * | `truthy(x)` | Success when `x` is `true` or a non-zero number, Failure otherwise |
  * | `wait(seconds, now, since)` | Running until `seconds` have passed since `since`, which it sets at its first tick and clears when it succeeds |
  */
 export const MATH_MODULE_ID = "77a83264-60a2-467c-9292-092cc08f051a";
@@ -53,10 +54,10 @@ export const MATH = {
     b: "e9295d00-bcce-4c60-80f6-7c0c8359d785",
   },
   not: { id: "2de0a3c4-1753-47d2-825c-b6a87e8fc423", x: "35c3e6b4-5753-4fd4-82fc-5dd9fbf1ef94" },
-  osc: {
-    id: "9eeb64aa-0dd8-427e-acc1-8f9091c6337b",
-    t: "8c0fa32d-35b1-4c47-9128-c2bf32d78af8",
-    frequency: "76b94d5d-d499-41aa-a081-81e06b311a16",
+  oscillator: {
+    id: "7f010bb8-9e2d-4494-b8ed-7a2dda88a600",
+    t: "644405a4-957c-4d17-983e-a56112da4b8a",
+    frequency: "752564d1-1ca3-47ea-b3b0-df86b6f48543",
   },
   damp: {
     id: "6b1c3151-028a-4a3a-8d50-399ea282d178",
@@ -65,10 +66,13 @@ export const MATH = {
     state: "5a406a4b-237f-4ce9-afff-0c34bc61494f",
     initial: "dd905236-76c2-4647-bc1c-cb23fcf316b0",
   },
-  number: { id: "cc908913-db81-4005-8c7d-1a14dddd160d", x: "da6b84e4-8fc3-46d4-9344-918256b518e0" },
-  boolean: {
-    id: "fceca348-b738-432e-b41c-79a7b4884cbf",
-    x: "c8b12b5d-0be8-420f-9575-4563deb77368",
+  identity: {
+    id: "01d76050-29c7-4bf2-bfe2-91ed3fc8e70a",
+    x: "15a64938-9413-4963-a6f6-48c229370aa6",
+  },
+  truthy: {
+    id: "01fc88ec-3eb8-4b03-8478-424dbc8790e5",
+    x: "2fc11efc-a334-4034-9306-92a47855c406",
   },
   wait: {
     id: "2d3612fc-331c-40f2-b82b-4373c191db29",
@@ -85,6 +89,11 @@ const primitive = (kind: PrimitiveKind): FrozenTy => ({ type: "primitive", value
 const F64 = primitive("f64");
 const BOOL = primitive("boolean");
 const OPTIONAL_F64: FrozenTy = { type: "frozenOption", value: { element: F64 } };
+/** Any value: the well-known key-value type, which the resolver reads as any type. */
+const ANY: FrozenTy = {
+  type: "frozenScalar",
+  value: { reference: { id: "00000000-0000-0000-0000-00000000001b", version: "1.0.0" } },
+};
 const STATUS: FrozenTy = {
   type: "frozenScalar",
   value: { reference: { id: STATUS_ENUMERATION, version: "1.0.0" } },
@@ -214,7 +223,7 @@ export function mathModule(): MockModule {
       ),
       define("not", [["x", BOOL]], BOOL, (arg) => boolean(!bool(arg, "x"))),
       define(
-        "osc",
+        "oscillator",
         [
           ["t", F64],
           ["frequency", F64],
@@ -242,8 +251,12 @@ export function mathModule(): MockModule {
           };
         },
       ),
-      define("number", [["x", F64]], F64, (arg) => f64(num(arg, "x"))),
-      define("boolean", [["x", BOOL]], BOOL, (arg) => boolean(bool(arg, "x"))),
+      define("identity", [["x", ANY]], ANY, (arg) => ({ ret: arg("x") ?? "unit", mutated: [] })),
+      define("truthy", [["x", ANY]], STATUS, (arg) => {
+        const x = arg("x");
+        const held = valueBoolean(x) ?? (valueNumber(x) ?? 0) !== 0;
+        return { ret: status(held ? STATUS_SUCCESS : STATUS_FAILURE), mutated: [] };
+      }),
       define(
         "wait",
         [

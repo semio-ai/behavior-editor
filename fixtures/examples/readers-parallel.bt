@@ -1,8 +1,8 @@
 # Three readers of one value, all asked: the cascade runs once for the three.
 parallel
-  equal(a: @near, b: true)
-  equal(a: @mid, b: true)
-  equal(a: @far, b: true)
+  truthy(x: @near)
+  truthy(x: @mid)
+  truthy(x: @far)
 
 raw: mul(a: {sensor/distance}, b: 100)
 cm: clamp(x: @raw, min: 0, max: 1000)

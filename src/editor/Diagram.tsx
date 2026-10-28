@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { type Value, formatValue, valueEquals } from "../model/value";
+import { statusOf } from "../runtime/natives";
 import type { DetachedActivity, Status, TickReport } from "../runtime/runtime";
 import { type Box, type DiagramLayout, MINI, layoutDiagram, portY } from "./diagram-layout";
 import type { DiagramRow } from "./diagram-rows";
@@ -17,6 +19,8 @@ export interface DiagramProps {
   folds: ReadonlySet<string>;
   selected: string | null;
   report: TickReport | null;
+  /** The tick before `report`'s, to tell a value that changed from one that stayed. */
+  previous: TickReport | null;
   onSelect(key: string): void;
   onToggleFold(key: string): void;
   onDelete(key: string): void;
@@ -26,21 +30,56 @@ export interface DiagramProps {
 
 const DRAG_THRESHOLD = 6;
 
-/** What a row did this tick: its status when the tree holds it, its activity when detached. */
-function stateOf(row: DiagramRow, report: TickReport | null): Status | DetachedActivity | null {
-  if (!report || row.graphId === null) return null;
-  if (row.detached) return report.detached?.[row.graphId] ?? null;
-  return report.statuses?.[row.graphId] ?? null;
+/**
+ * What a node did this tick: a tree node's status; a detached node called
+ * with its value changed or the same, served from its cache, or not reached.
+ */
+type NodeState = Status | "changed" | "same" | "cached" | "idle";
+
+/** A row's state this tick, and its return value with whether it changed since the tick before. */
+interface RowState {
+  state: NodeState | null;
+  value?: Value;
+  change?: "changed" | "same";
 }
 
-const live = (state: Status | DetachedActivity | null) => state !== null && state !== "idle";
+function stateOf(
+  row: DiagramRow,
+  report: TickReport | null,
+  previous: TickReport | null,
+): RowState {
+  if (!report || row.graphId === null) return { state: null };
+  const id = row.graphId;
+  // A status is the pill's to show, not a value's.
+  const reported = report.values?.[id];
+  const value = reported === undefined || statusOf(reported) ? undefined : reported;
+  const ran = row.detached
+    ? report.detached?.[id] === "called"
+    : report.statuses?.[id] !== undefined;
+  // A value is new when its node ran and it differs from the tick before's.
+  const change: RowState["change"] =
+    value === undefined
+      ? undefined
+      : ran && !valueEquals(previous?.values?.[id], value)
+        ? "changed"
+        : "same";
+  const shown = value === undefined ? {} : { value, change };
+  if (!row.detached) return { state: report.statuses?.[id] ?? null, ...shown };
+  const activity: DetachedActivity | undefined = report.detached?.[id];
+  if (activity === undefined) return { state: null, ...shown };
+  if (activity !== "called") return { state: activity, ...shown };
+  return { state: change ?? "changed", ...shown };
+}
 
-const STATE_WORDS: Record<Status | DetachedActivity, string> = {
+const live = (state: NodeState | null) => state !== null && state !== "idle";
+
+const STATE_WORDS: Record<NodeState, string> = {
   S: "succeeded",
   F: "failed",
   R: "running",
-  called: "called",
-  cached: "cached",
+  changed: "called, value changed",
+  same: "called, same value",
+  cached: "cache hit, not called",
   idle: "not reached",
 };
 
@@ -74,6 +113,7 @@ export function Diagram({
   folds,
   selected,
   report,
+  previous,
   onSelect,
   onToggleFold,
   onDelete,
@@ -91,13 +131,14 @@ export function Diagram({
   const container = useRef<HTMLDivElement>(null);
   const root = layout.boxes.get("0");
   const rootCentre = root ? root.x + root.w / 2 : null;
-  const centred = useRef(false);
-  // Open on the root, once: a tree wider than its pane scrolls sideways from there.
+  const centredAt = useRef<number | null>(0);
+  // Open on the root, and follow it while the layout settles (the functions
+  // arriving widen the nodes), until the pane is scrolled by hand.
   useEffect(() => {
     const pane = container.current?.parentElement;
-    if (centred.current || !pane || rootCentre === null) return;
-    centred.current = true;
+    if (!pane || rootCentre === null || centredAt.current !== pane.scrollLeft) return;
     pane.scrollLeft = Math.max(0, rootCentre - pane.clientWidth / 2);
+    centredAt.current = pane.scrollLeft;
   }, [rootCentre]);
   const nodeRefs = useRef(new Map<string, SVGGElement>());
 
@@ -196,8 +237,8 @@ export function Diagram({
   };
 
   const hot = hovered ?? selected;
-  const states = new Map(rows.map((r) => [r.key, stateOf(r, report)]));
-  const isLive = (key: string) => live(states.get(key) ?? null);
+  const states = new Map(rows.map((r) => [r.key, stateOf(r, report, previous)]));
+  const isLive = (key: string) => live(states.get(key)?.state ?? null);
   const dropKey = drag?.drop && drag.drop.kind !== "detach" ? drag.drop.key : null;
 
   return (
@@ -251,8 +292,8 @@ export function Diagram({
             <DiagramNode
               key={box.row.key}
               box={box}
-              state={states.get(box.row.key) ?? null}
-              miniStates={box.minis?.map((m) => states.get(m.key) ?? null) ?? []}
+              state={states.get(box.row.key) ?? { state: null }}
+              miniStates={box.minis?.map((m) => states.get(m.key)?.state ?? null) ?? []}
               position={positionOf(box.row)}
               selected={box.row.key === selected}
               focusable={box.row.key === focusKey}
@@ -282,8 +323,8 @@ interface DiagramNodeProps {
   box: Box;
   /** Its place among its siblings: the tree's own nesting is not in the markup. */
   position: { at: number; of: number };
-  state: Status | DetachedActivity | null;
-  miniStates: (Status | DetachedActivity | null)[];
+  state: RowState;
+  miniStates: (NodeState | null)[];
   selected: boolean;
   focusable: boolean;
   dropTarget: boolean;
@@ -297,7 +338,7 @@ interface DiagramNodeProps {
 function DiagramNode({
   box,
   position,
-  state,
+  state: { state, value, change },
   miniStates,
   selected,
   focusable,
@@ -332,6 +373,7 @@ function DiagramNode({
     row.title,
     row.detached ? "detached" : "",
     state === null ? "" : STATE_WORDS[state],
+    value === undefined ? "" : `value ${formatValue(value)}`,
     hasChildren && box.folded ? `${row.descendantKeys.length} nodes folded` : "",
   ]
     .filter(Boolean)
@@ -401,6 +443,7 @@ function DiagramNode({
           )}
         </g>
       )}
+      {value !== undefined && <ValueLabel value={value} change={change} w={w} />}
       {box.pill && (
         <g className={`be-pill be-${status ?? "none"}`}>
           <rect x={w - 27} y={7} width={19} height={15} rx={3} />
@@ -409,6 +452,31 @@ function DiagramNode({
           </text>
         </g>
       )}
+    </g>
+  );
+}
+
+const VALUE_CHARS = 12;
+
+/** A node's return value, set in its top border at the right, colored by whether it changed. */
+function ValueLabel({
+  value,
+  change,
+  w,
+}: {
+  value: Value;
+  change: "changed" | "same" | undefined;
+  w: number;
+}) {
+  const full = formatValue(value);
+  const text = full.length > VALUE_CHARS ? `${full.slice(0, VALUE_CHARS - 1)}…` : full;
+  const width = text.length * 6.2 + 10;
+  return (
+    <g className={`be-value be-${change ?? "same"}`} aria-hidden="true">
+      <rect x={w - width - 34} y={-9} width={width} height={16} rx={3} />
+      <text x={w - 39} y={2.5} textAnchor="end">
+        {text}
+      </text>
     </g>
   );
 }

@@ -85,6 +85,7 @@ const SOURCES: [string, (example: Example) => Promise<Loaded>][] = [
 
 describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_, graphOf) => {
   const start = async (example: Example) => run(example, await graphOf(example));
+
   describe("Smile mapping: a graph alone", () => {
     it("runs every sink at the first tick and publishes after the tree", async () => {
       const { tick, number } = await start(SMILE);
@@ -108,13 +109,15 @@ describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_,
       expect(names((await tick()).calls)).toEqual(["damp"]);
       const settled = await tick();
       expect(settled.calls).toEqual([]);
-      expect(activity(id, settled.report, "amount", "corner", "ease", "cheek")).toEqual({
+      expect(activity(id, settled.report, "amount", "corner", "mouth", "cheeks")).toEqual({
         amount: "cached",
         corner: "cached",
-        ease: "cached",
-        cheek: "cached",
+        mouth: "cached",
+        cheeks: "cached",
       });
       expect(settled.report.changes.map((c) => c.key)).toEqual([TIME_KEY]);
+      // A cached node still reports its value: its last call's.
+      expect(settled.report.values?.[id("cheeks")]).toEqual({ f64: 0.2 * 0.6 });
 
       await device.write("face/smile", { f64: 0.8 });
       const moved = await tick();
@@ -139,22 +142,22 @@ describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_,
     it("runs the oscillator's path at every tick and caches the rest", async () => {
       const { tick, number, id } = await start(BREATHING);
       const first = await tick();
-      expect(names(first.calls).sort()).toEqual(["add", "mul", "osc", "remap", "remap"]);
+      expect(names(first.calls).sort()).toEqual(["add", "mul", "oscillator", "remap", "remap"]);
       const second = await tick();
-      expect(names(second.calls)).toEqual(["osc", "mul", "add"]);
-      expect(activity(id, second.report, "wave", "amplitude", "swell", "chest", "flush")).toEqual({
+      expect(names(second.calls)).toEqual(["oscillator", "mul", "add"]);
+      expect(
+        activity(id, second.report, "wave", "amplitude", "detached.2.a", "chest", "flush"),
+      ).toEqual({
         wave: "called",
         amplitude: "cached",
-        swell: "called",
+        "detached.2.a": "called",
         chest: "called",
         flush: "cached",
       });
       const t = 2 / 30;
       const amplitude = 0.03 + 0.4 * (0.2 - 0.03);
-      expect(await number("rig/chest")).toBeCloseTo(
-        0.5 + amplitude * Math.sin(2 * Math.PI * 0.3 * t),
-        10,
-      );
+      const chest = 0.5 + amplitude * Math.sin(2 * Math.PI * 0.3 * t);
+      expect(await number("rig/chest")).toBeCloseTo(chest, 10);
       expect(await number("face/flush")).toBeCloseTo(0.15 + 0.4 * 0.7, 10);
     });
 
@@ -162,27 +165,24 @@ describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_,
       const { tick, calls } = await start(BREATHING);
       await tick();
       await tick();
-      expect(calls.find((c) => c.fn === "osc")?.args.t).toEqual({ f64: 2 / 30 });
+      expect(calls.find((c) => c.fn === "oscillator")?.args.t).toEqual({ f64: 2 / 30 });
     });
   });
 
   describe("Greet, then rest", () => {
     it("rests while nobody is visible", async () => {
       const { tick, number, id } = await start(GREET);
-      const { report } = await tick();
+      const { report, calls } = await tick();
       expect(report.root).toBe("S");
-      const [fallback, sequence, visible] = ["root", "root.0", "root.0.0"].map((p) => id(p));
-      expect(report.statuses?.[fallback!]).toBe("S");
-      expect(report.statuses?.[sequence!]).toBe("F");
-      expect(report.statuses?.[visible!]).toBe("F");
+      expect(report.statuses?.[id("root")]).toBe("S");
+      expect(report.statuses?.[id("root.0")]).toBe("F");
+      expect(report.statuses?.[id("root.0.0")]).toBe("F");
       expect(report.statuses?.[id("root.0.1")]).toBeUndefined();
       expect(report.statuses?.[id("root.1")]).toBe("S");
-      expect(activity(id, report, "fresh", "raise", "sway", "rest_raise", "rest_wave")).toEqual({
+      expect(names(calls)).toEqual(["truthy", "damp", "damp"]);
+      expect(activity(id, report, "fresh", "root.0.2.1.a")).toEqual({
         fresh: "idle",
-        raise: "idle",
-        sway: "idle",
-        rest_raise: "called",
-        rest_wave: "called",
+        "root.0.2.1.a": "idle",
       });
       expect(await number("rig/arm_raise")).toBe(0);
     });
@@ -196,9 +196,8 @@ describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_,
       expect(waving.report.statuses?.[id("root.0.2.2")]).toBe("R");
       expect(await number("rig/arm_raise")).toBeGreaterThan(0);
       expect(Math.abs((await number("rig/arm_wave"))!)).toBeGreaterThan(0);
-      // The nested call reading the clock runs at every tick, as its reader does.
-      const sway = id("detached.2.a");
-      expect(waving.report.detached?.[sway]).toBe("called");
+      // The call in the wave's argument reads the clock: it runs at every tick its reader does.
+      expect(waving.report.detached?.[id("root.0.2.1.a")]).toBe("called");
 
       let ticks = 1;
       let report = waving.report;
@@ -235,19 +234,32 @@ describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_,
     it("under a parallel, asks all three and runs the cascade once", async () => {
       const { tick, id } = await start(READERS_PARALLEL);
       const { report, calls } = await tick();
-      expect(names(calls)).toEqual(["mul", "clamp", "lt", "lt", "lt"]);
+      expect(names(calls)).toEqual([
+        "mul",
+        "clamp",
+        "lt",
+        "truthy",
+        "lt",
+        "truthy",
+        "lt",
+        "truthy",
+      ]);
       expect(calls[1]!.args.x).toEqual({ f64: 20 });
       // 20 cm: not nearer than 10, nearer than 30 and 50.
-      const statuses = ["root.0", "root.1", "root.2"].map((p) => report.statuses?.[id(p)]);
-      expect(statuses).toEqual(["F", "S", "S"]);
+      expect(["root.0", "root.1", "root.2"].map((p) => report.statuses?.[id(p)])).toEqual([
+        "F",
+        "S",
+        "S",
+      ]);
       expect(report.root).toBe("F");
-      expect((await tick()).calls).toEqual([]);
+      expect(report.values?.[id("cm")]).toEqual({ f64: 20 });
+      expect(names((await tick()).calls)).toEqual(["truthy", "truthy", "truthy"]);
     });
 
     it("under a fallback, stops at the first that holds and never asks the rest", async () => {
       const { tick, id } = await start(READERS_FALLBACK);
       const { report, calls } = await tick();
-      expect(names(calls)).toEqual(["mul", "clamp", "lt", "lt"]);
+      expect(names(calls)).toEqual(["mul", "clamp", "lt", "truthy", "lt", "truthy"]);
       expect(report.root).toBe("S");
       expect(activity(id, report, "raw", "cm", "near", "mid", "far")).toEqual({
         raw: "called",
@@ -264,7 +276,7 @@ describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_,
       await tick();
       await device.write("sensor/distance", { f64: 0.05 });
       const { report, calls } = await tick();
-      expect(names(calls)).toEqual(["mul", "clamp", "lt"]);
+      expect(names(calls)).toEqual(["mul", "clamp", "lt", "truthy"]);
       expect(report.statuses?.[id("root.0")]).toBe("S");
       expect(activity(id, report, "near", "mid", "far")).toEqual({
         near: "called",
@@ -285,16 +297,19 @@ describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_,
         // v × 10: both readings of the tick are 10 n, and v ends the tick at n.
         expect(calls).toEqual([
           { fn: "add", args: { a: { f64: n - 1 }, b: { f64: 1 } } },
-          { fn: "number", args: { x: { f64: n } } },
+          { fn: "identity", args: { x: { f64: n } } },
           { fn: "mul", args: { a: { f64: n }, b: { f64: 10 } } },
           { fn: "lt", args: { a: { f64: 10 * n }, b: { f64: 1e12 } } },
-          { fn: "number", args: { x: { f64: n } } },
+          { fn: "truthy", args: { x: { bool: true } } },
+          { fn: "identity", args: { x: { f64: n } } },
+          { fn: "truthy", args: { x: { bool: true } } },
         ]);
         expect(activity(id, report, "inc", "scaled", "ok")).toEqual({
           inc: "called",
           scaled: "called",
           ok: "called",
         });
+        expect(report.values?.[id("scaled")]).toEqual({ f64: 10 * n });
         expect(await number("v")).toBe(n);
       }
     });
@@ -322,13 +337,13 @@ describe("MockArora", () => {
       loaded({
         nodes: {
           r: node("r", N.SUCCEED),
-          b: node("b", MATH.number.id),
-          a: node("a", MATH.number.id),
+          b: node("b", MATH.identity.id),
+          a: node("a", MATH.identity.id),
         },
         links: [
-          { target: { node: "a", port: MATH.number.x }, source: { literal: { f64: 1 } } },
+          { target: { node: "a", port: MATH.identity.x }, source: { literal: { f64: 1 } } },
           { target: { node: "a", port: N.RET }, source: { variable: "k" } },
-          { target: { node: "b", port: MATH.number.x }, source: { literal: { f64: 2 } } },
+          { target: { node: "b", port: MATH.identity.x }, source: { literal: { f64: 2 } } },
           { target: { node: "b", port: N.RET }, source: { variable: "k" } },
         ],
         variables: { k: "out" },
@@ -341,7 +356,7 @@ describe("MockArora", () => {
   it("publishes two sinks of one key as lowering lists them: by id, not as the text does", async () => {
     const language = await loadLanguage();
     const text = (first: string, second: string) =>
-      `running\n\n${first}: {out} = number(x: 1)\n${second}: {out} = number(x: 2)\n`;
+      `running\n\n${first}: {out} = identity(x: 1f64)\n${second}: {out} = identity(x: 2f64)\n`;
     for (const [first, second] of [
       ["alpha", "beta"],
       ["beta", "alpha"],
@@ -384,12 +399,12 @@ describe("MockArora", () => {
     const device = new MockArora({ store: { in: { f64: 3 } } });
     await device.start(
       loaded({
-        nodes: { r: node("r", MATH.number.id), d: node("d", MATH.mul.id) },
+        nodes: { r: node("r", MATH.identity.id), d: node("d", MATH.mul.id) },
         links: [
           { target: { node: "d", port: MATH.mul.a }, source: { variable: "vin" } },
           { target: { node: "d", port: MATH.mul.b }, source: { literal: { f64: 2 } } },
           { target: { node: "d", port: N.RET }, source: { variable: "local" } },
-          { target: { node: "r", port: MATH.number.x }, source: { variable: "local" } },
+          { target: { node: "r", port: MATH.identity.x }, source: { variable: "local" } },
           { target: { node: "r", port: N.RET }, source: { variable: "vout" } },
         ],
         variables: { vin: "in", local: ".x", vout: "out" },
@@ -406,12 +421,12 @@ describe("MockArora", () => {
       loaded({
         nodes: {
           r: node("r", N.SEQUENCE_STAR, ["a", "w", "b"]),
-          a: node("a", MATH.number.id),
+          a: node("a", MATH.identity.id),
           w: node("w", MATH.wait.id),
           b: node("b", N.SUCCEED),
         },
         links: [
-          { target: { node: "a", port: MATH.number.x }, source: { literal: { f64: 1 } } },
+          { target: { node: "a", port: MATH.identity.x }, source: { literal: { f64: 1 } } },
           { target: { node: "w", port: MATH.wait.seconds }, source: { literal: { f64: 0.03 } } },
           { target: { node: "w", port: MATH.wait.now }, source: { variable: "t" } },
           { target: { node: "w", port: MATH.wait.since }, source: { literal: { option: null } } },
@@ -512,16 +527,16 @@ describe("MockArora", () => {
         loaded({
           nodes: {
             r: node("r", N.SUCCEED),
-            a: node("a", MATH.number.id),
-            b: node("b", MATH.number.id),
+            a: node("a", MATH.identity.id),
+            b: node("b", MATH.identity.id),
           },
           links: [
             {
-              target: { node: "a", port: MATH.number.x },
+              target: { node: "a", port: MATH.identity.x },
               source: { port: { node: "b", port: N.RET } },
             },
             {
-              target: { node: "b", port: MATH.number.x },
+              target: { node: "b", port: MATH.identity.x },
               source: { port: { node: "a", port: N.RET } },
             },
           ],
@@ -542,7 +557,7 @@ describe("MockArora", () => {
     expect(await number("rig/mouth_corner")).toBeGreaterThan(halfway!);
     // A changed node starts afresh: its easing jumps to its target.
     const changed = structuredClone(SMILE.loaded);
-    const ease = idOf(SMILE.loaded, "ease");
+    const ease = idOf(SMILE.loaded, "mouth");
     const halfLife = changed.graph.links.find(
       (l) => l.target.node === ease && l.target.port === MATH.damp.half_life,
     )!;

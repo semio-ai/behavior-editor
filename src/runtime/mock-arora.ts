@@ -100,6 +100,7 @@ export class MockArora implements BehaviorRuntime {
       ...(outcome.root ? { root: outcome.root } : {}),
       statuses: outcome.statuses,
       detached: outcome.detached,
+      values: outcome.values,
       changes: changes(before, this.#store),
     };
     return outcome.error ? Promise.reject(outcome.error) : Promise.resolve(report);
@@ -187,6 +188,7 @@ interface DetachedState {
 interface TickOutcome {
   root?: Status;
   statuses: Record<string, Status>;
+  values: Record<string, Value>;
   detached: Record<string, DetachedActivity>;
   error?: Error;
 }
@@ -218,6 +220,8 @@ class Program {
   readonly #state = new Map<string, DetachedState>();
   #tick = 0;
   #statuses: Record<string, Status> = {};
+  /** The return values of the module leaves ticked this tick. */
+  #returned: Record<string, Value> = {};
 
   constructor(
     graph: Graph,
@@ -424,6 +428,7 @@ class Program {
   tick(): TickOutcome {
     this.#tick += 1;
     this.#statuses = {};
+    this.#returned = {};
     for (const state of this.#state.values()) state.activity = "idle";
     let root: Status | undefined;
     let error: Error | undefined;
@@ -450,9 +455,16 @@ class Program {
         }
       }
     }
+    // A detached node's return value is its last call's, whether or not this tick read it.
+    const values = { ...this.#returned };
+    for (const [id, state] of this.#state) {
+      const ret = state.outputs.get(N.RET);
+      if (ret !== undefined) values[id] = ret;
+    }
     return {
       ...(root ? { root } : {}),
       statuses: this.#statuses,
+      values,
       detached: Object.fromEntries([...this.#state].map(([id, s]) => [id, s.activity])),
       ...(error ? { error } : {}),
     };
@@ -603,6 +615,7 @@ class Program {
       );
     }
     const result = fn.call(args);
+    this.#returned[node.id] = result.ret;
     for (const mutated of result.mutated) {
       writeBack(this.#cell(node.id, mutated.id), mutated.value, isOptional(signature, mutated.id));
     }

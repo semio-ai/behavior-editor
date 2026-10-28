@@ -1,20 +1,16 @@
-# Greet, then rest: wave while a person is visible and not yet greeted, until a
-# 2 s timer ends, then mark them greeted; otherwise ease the arm to rest.
-fallback
-  sequence
-    equal(a: {person/visible}, b: true)
-    equal(a: @fresh, b: true)
-    parallel
-      {rig/arm_raise} = number(x: @raise)
-      {rig/arm_wave} = number(x: @sway)
+# Greet, then rest: control around dataflow. A leaf whose return value goes to
+# a key writes it each time it ticks, and succeeds.
+fallback  # greet or rest
+  sequence  # greet
+    truthy(x: {person/visible})
+    truthy(x: @fresh)  # not greeted yet
+    parallel  # wave until the timer ends
+      {rig/arm_raise} = damp(target: 1, half_life: 0.12, state: none, initial: {rig/arm_raise})
+      {rig/arm_wave} = mul(a: oscillator(t: {arora/time}, frequency: 1.6), b: 0.6)
       wait(seconds: 2, now: {arora/time}, since: none)
-    {social/greeted} = boolean(x: true)
-  parallel
-    {rig/arm_raise} = number(x: @rest_raise)
-    {rig/arm_wave} = number(x: @rest_wave)
+    {social/greeted} = identity(x: true)
+  parallel  # rest
+    {rig/arm_raise} = damp(target: 0, half_life: 0.2, state: none, initial: {rig/arm_raise})
+    {rig/arm_wave} = damp(target: 0, half_life: 0.2, state: none, initial: {rig/arm_wave})
 
 fresh: not(x: {social/greeted})
-raise: damp(target: 1, half_life: 0.12, state: none, initial: {rig/arm_raise})
-sway: mul(a: osc(t: {arora/time}, frequency: 1.6), b: 0.6)
-rest_raise: damp(target: 0, half_life: 0.2, state: none, initial: {rig/arm_raise})
-rest_wave: damp(target: 0, half_life: 0.2, state: none, initial: {rig/arm_wave})

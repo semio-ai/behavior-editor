@@ -57,7 +57,8 @@ The editor:
 - draws the tree top-down, with each node's status this tick (S, R, F), and
   the detached nodes on its left, each level with the ports it feeds; a wire
   runs from each named node to every argument that reads it. A detached node
-  shows whether it was called, served from its cache, or not reached.
+  shows whether it ran to a changed value or the same one, was served from its
+  cache, or was not reached; a node's return value sits in its top border.
 - edits the selected node: its name (its readers follow), its function from a
   searchable palette, each argument by parameter (a literal by type, a store
   key, a tree-local variable, another node's port, a nested call), where its
@@ -83,9 +84,11 @@ that follows the system unless the page sets `data-theme` on its root element.
   brought up to date on demand once per tick and called only when their
   arguments changed, sinks published after the tree in node-id order, state
   in mutable parameters, kept across a restart for the nodes an edit left in
-  place. Its math module carries the operations of the NGBT spectrum's
-  examples (`add`, `mul`, `clamp`, `remap`, `lt`, `not`, `osc`, `damp`,
-  `number`, `boolean`, `wait`); it publishes its clock to `arora/time`.
+  place. It reports each node's return value after the tick. Its math module
+  carries the operations of the NGBT spectrum's examples, named as
+  `arora-behavior-tree`'s `docs/text.md` names them (`add`, `mul`, `clamp`,
+  `remap`, `lt`, `not`, `truthy`, `oscillator`, `damp`, `identity`, `wait`);
+  it publishes its clock to `arora/time`.
 - `DeviceRuntime` runs it on a device as Studio's World offers it, through the
   device's own call path: the interpreter's `spawn_graph`, built by
   `language.spawnGraphCall`, and stopped with the call the run's handle names

@@ -23,6 +23,12 @@ export interface TickReport {
   statuses?: Record<string, Status>;
   /** The detached nodes, by graph node id. Absent when the runtime cannot say. */
   detached?: Record<string, DetachedActivity>;
+  /**
+   * Each node's return value (`_ret`) after the tick, by graph node id: a
+   * detached node's from its last call, a module leaf's when it ticked.
+   * Absent when the runtime cannot say.
+   */
+  values?: Record<string, Value>;
   /** The store keys the tick changed, each at its value after the tick; `null` unset. */
   changes: { key: string; value: Value | null }[];
 }

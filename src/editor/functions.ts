@@ -75,7 +75,18 @@ export function functionIndex(
 /** How the diagram draws a node: what it does decides its shape. */
 export type NodeShape = "control" | "condition" | "action" | "data";
 
-const CONDITIONS = new Set([N.EQUAL, N.IS_STRING_SET, N.WAIT_STRING_SET, N.REGEX_MATCH]);
+/**
+ * Whether a leaf calling `entry` is a condition: it returns a status, reads
+ * at least one argument and writes none.
+ */
+function isCondition(entry: FunctionEntry): boolean {
+  const fn = entry.signature.function;
+  const returnsStatus =
+    fn.returnType.type === "frozenScalar" &&
+    fn.returnType.value.reference.id === N.STATUS_ENUMERATION;
+  const params = Object.values(fn.parameters);
+  return returnsStatus && params.length > 0 && params.every((p) => !p.mutable);
+}
 
 /** The shape of a node calling `entry`: a detached node is data. */
 export function nodeShape(
@@ -85,7 +96,7 @@ export function nodeShape(
 ): NodeShape {
   if (hasChildren || (entry && N.CONTROL_NODES.has(entry.signature.id))) return "control";
   if (!attached) return "data";
-  return entry && CONDITIONS.has(entry.signature.id) ? "condition" : "action";
+  return entry && isCondition(entry) ? "condition" : "action";
 }
 
 /** The glyph of a control node, as behavior-tree diagrams draw it. */

@@ -221,6 +221,7 @@ export function BehaviorEditor({
             folds={folds}
             selected={selectedRow?.key ?? null}
             report={playback.report}
+            previous={playback.previous}
             onSelect={setSelected}
             onToggleFold={toggleFold}
             onDelete={(key) => {
@@ -310,8 +311,10 @@ export function BehaviorEditor({
       )}
       {wide ? (
         <div className="be-main">
-          {diagram}
-          {textView}
+          <div className="be-views">
+            {diagram}
+            {textView}
+          </div>
           <aside className="be-side">
             {inspector}
             {store}
@@ -364,8 +367,12 @@ function Legend() {
   return (
     <div className="be-legend" aria-label="Legend">
       <span>
-        <i className="be-sw be-sw-called" />
-        called: an argument changed
+        <i className="be-sw be-sw-changed" />
+        ran, value changed
+      </span>
+      <span>
+        <i className="be-sw be-sw-same" />
+        ran, same value
       </span>
       <span>
         <i className="be-sw be-sw-cached" />

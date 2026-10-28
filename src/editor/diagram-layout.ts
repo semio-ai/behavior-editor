@@ -3,7 +3,7 @@ import type { DiagramRow } from "./diagram-rows";
 /**
  * Where the diagram puts each node, edge and wire. Top-down, as behavior-tree
  * editors draw it; a node stacks its children in an indented column when they
- * are all leaves and more than four. The detached nodes go in columns left of
+ * are all leaves and more than four, or wider side by side than `STACK_WIDTH`. The detached nodes go in columns left of
  * the tree, each column after the columns it reads from, each node level with
  * the ports it feeds. A folded node hides its subtree, shows one square per
  * node it hides, and stands for them at either end of a wire.
@@ -46,7 +46,7 @@ export interface Wire {
 
 const CH_T = 7.3;
 const CH_S = 6.65;
-const PAD = 20;
+export const PAD = 20;
 const HG = 18;
 const VG = 30;
 const IND = 24;
@@ -56,6 +56,8 @@ export const LINE = 15;
 export const MINI = 18;
 const FG = 44;
 const WRAP = 46;
+/** How wide leaves side by side may run before they stack in a column. */
+const STACK_WIDTH = 640;
 
 /** The y of port `i`'s line, from the top of its box. */
 export const portY = (box: Box, i: number) => 32 + LINE * box.portLine[i]!;
@@ -154,7 +156,8 @@ export function layoutDiagram(
       n.H = n.h;
       return;
     }
-    n.stacked = k > 4 && n.children.every((c) => !c.children.length);
+    const sideBySide = n.children.reduce((s, c) => s + c.W, 0) + HG * (k - 1);
+    n.stacked = n.children.every((c) => !c.children.length) && (k > 4 || sideBySide > STACK_WIDTH);
     if (n.stacked) {
       n.W = Math.max(n.w, IND + Math.max(...n.children.map((c) => c.W)));
       n.H = n.h + 14 + n.children.reduce((s, c) => s + c.H, 0) + SG * (k - 1);

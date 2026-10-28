@@ -12,6 +12,8 @@ export const HISTORY = 240;
 
 export interface Playback {
   report: TickReport | null;
+  /** The report of the tick before `report`'s. */
+  previous: TickReport | null;
   playing: boolean;
   setPlaying(playing: boolean): void;
   rate: Rate;
@@ -50,7 +52,10 @@ export function usePlayback(
   loaded: Loaded | null,
   autoPlay: boolean,
 ): Playback {
-  const [report, setReport] = useState<TickReport | null>(null);
+  const [reports, setReports] = useState<{
+    report: TickReport | null;
+    previous: TickReport | null;
+  }>({ report: null, previous: null });
   const [playing, setPlaying] = useState(autoPlay);
   const [rate, setRate] = useState<Rate>(30);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +100,7 @@ export function usePlayback(
         await runtime.start(behavior);
         started.current = true;
         setError(null);
-        setReport(null);
+        setReports({ report: null, previous: null });
         setHistory(new Map());
         await readStore();
       }).catch((e: unknown) => {
@@ -122,7 +127,7 @@ export function usePlayback(
     stepping.current = true;
     enqueue(async () => {
       const tick = await runtime.step(1000 / rate);
-      setReport(tick);
+      setReports((last) => ({ report: tick, previous: last.report }));
       const next = new Map(storeRef.current);
       for (const { key, value } of tick.changes) {
         if (value === null) next.delete(key);
@@ -174,7 +179,8 @@ export function usePlayback(
   );
 
   return {
-    report,
+    report: reports.report,
+    previous: reports.previous,
     playing,
     setPlaying,
     rate,

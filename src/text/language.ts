@@ -25,8 +25,12 @@ export interface BehaviorText {
   resolve(document: BehaviorDocument, functions: MethodSignature[]): Loaded;
   /** The native nodes, described as functions, for the palette. */
   natives(): MethodSignature[];
-  /** The `arora_types::call::Call` JSON that spawns `graph` on a device's interpreter. */
-  spawnGraphCall(graph: Graph): string;
+  /**
+   * The `arora_types::call::Call` JSON that loads `graph` as a device's
+   * behavior: the interpreter's `load`, which ticks it at every tick in place of
+   * the behavior it had. The empty graph loads none.
+   */
+  loadCall(graph: Graph): string;
 }
 
 export interface ParseResult {

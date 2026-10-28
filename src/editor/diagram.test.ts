@@ -1,13 +1,13 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { EXAMPLES, type Example, GREET, READERS_PARALLEL, idOf } from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
-import type { WasmBehaviorText } from "../text/wasm-language";
+import type { BehaviorText } from "../text/language";
 import { dropAt } from "./Diagram";
 import { PAD, layoutDiagram } from "./diagram-layout";
 import { diagramRows } from "./diagram-rows";
 import { functionIndex } from "./functions";
 
-let language: WasmBehaviorText;
+let language: BehaviorText;
 beforeAll(async () => {
   language = await loadLanguage();
 });

@@ -7,13 +7,13 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { type Example, GREET, ORDER, SMILE } from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
 import type { BehaviorDocument, SourceNode } from "../text/ast";
-import type { WasmBehaviorText } from "../text/wasm-language";
+import type { BehaviorText } from "../text/language";
 import { MATH_MODULE_ID } from "../runtime/math-module";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
 import { BehaviorEditor, type BehaviorEditorProps } from "./BehaviorEditor";
 
-let language: WasmBehaviorText;
+let language: BehaviorText;
 beforeAll(async () => {
   language = await loadLanguage();
 });

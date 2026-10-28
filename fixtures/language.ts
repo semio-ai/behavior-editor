@@ -7,15 +7,16 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mathModule } from "../src/runtime/math-module";
-import { type WasmBehaviorText, createBehaviorText } from "../src/text/wasm-language";
+import type { BehaviorText } from "../src/text/language";
+import { createBehaviorText } from "../src/text/wasm-language";
 import initBehaviorText, * as behaviorText from "../wasm/pkg/behavior_text.js";
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), "..", "wasm", "pkg");
 
-let loading: Promise<WasmBehaviorText> | undefined;
+let loading: Promise<BehaviorText> | undefined;
 
 /** The language service, its wasm initialized once. */
-export function loadLanguage(): Promise<WasmBehaviorText> {
+export function loadLanguage(): Promise<BehaviorText> {
   loading ??= readFile(join(pkg, "behavior_text_bg.wasm")).then(async (wasm) => {
     await initBehaviorText({ module_or_path: wasm });
     return createBehaviorText(behaviorText);

@@ -1,11 +1,7 @@
 export { BehaviorEditor, type BehaviorEditorProps } from "./editor/BehaviorEditor";
 
 export type { BehaviorText, Diagnostic, Loaded, LoadedNode, ParseResult } from "./text/language";
-export {
-  createBehaviorText,
-  type BehaviorTextExports,
-  type WasmBehaviorText,
-} from "./text/wasm-language";
+export { createBehaviorText, type BehaviorTextExports } from "./text/wasm-language";
 export type {
   Argument,
   BehaviorDocument,
@@ -43,5 +39,4 @@ export {
   DeviceRuntime,
   type AroraDevice,
   type DeviceRuntimeOptions,
-  type TaskHandle,
 } from "./runtime/device-runtime";

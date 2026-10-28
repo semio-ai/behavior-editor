@@ -2,7 +2,6 @@ import type { Graph } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import { type Value, valueEquals } from "../model/value";
 import type { Loaded } from "../text/language";
-import * as N from "./natives";
 import type { BehaviorRuntime, TickReport } from "./runtime";
 
 /**
@@ -24,34 +23,29 @@ export interface AroraDevice {
   step(dtMs: number): void;
 }
 
-/** The run a spawned behavior is: how to stop it, and the key it reports its status on. */
-export interface TaskHandle {
-  /** The `Call` JSON that halts the run. */
-  stop: string;
-  /** The run's status key, device-relative. */
-  status: string;
-}
-
 export interface DeviceRuntimeOptions {
   device: AroraDevice;
   /** The device's id: the namespace its keys are read under. */
   deviceId: string;
-  /** The `Call` JSON that spawns a graph on the device's interpreter. */
-  spawnGraphCall: (graph: Graph) => string;
-  /** The run a spawn call's `CallResult` JSON answers with. */
-  taskHandle: (callResultJson: string) => TaskHandle;
+  /** The `Call` JSON that loads a graph as the device's behavior: the language's `loadCall`. */
+  loadCall: (graph: Graph) => string;
 }
 
+/** The graph of no behavior: loading it stops the device's. */
+const EMPTY: Graph = { nodes: {}, links: [], variables: {} };
+
 /**
- * A behavior running on a device, through the device's own call path: starting
- * one spawns its graph on the interpreter, as any client's call would, and a
- * graph whose root is the running one's takes its place, keeping the state of
- * the nodes it left in place. The device reports the run's status and its
- * store; it does not say which nodes ticked.
+ * A behavior running on a device, through the device's own call path:
+ * starting one loads its graph on the interpreter, as any client's call would.
+ * The loaded behavior is ticked at every step and re-evaluated once it
+ * completes, as a behavior tree is; loading another replaces it, keeping the
+ * state of the nodes the new graph left in place, and loading the empty graph
+ * stops it. The device reports its store; it does not say which nodes ticked
+ * or what the root returned.
  */
 export class DeviceRuntime implements BehaviorRuntime {
   readonly #options: DeviceRuntimeOptions;
-  #run: TaskHandle | null = null;
+  #running = false;
   #ticks = 0;
   /** The store as the last step left it, to report what a step changed. */
   #seen = new Map<string, Value>();
@@ -68,8 +62,9 @@ export class DeviceRuntime implements BehaviorRuntime {
 
   start(loaded: Loaded): Promise<void> {
     return this.#attempt(() => {
-      const { device, spawnGraphCall, taskHandle } = this.#options;
-      this.#run = taskHandle(device.call(spawnGraphCall(loaded.graph)));
+      const { device, loadCall } = this.#options;
+      device.call(loadCall(loaded.graph));
+      this.#running = true;
       this.#ticks = 0;
       this.#seen = this.#snapshot();
     });
@@ -85,10 +80,9 @@ export class DeviceRuntime implements BehaviorRuntime {
       }
       for (const key of this.#seen.keys()) if (!now.has(key)) changes.push({ key, value: null });
       this.#seen = now;
-      if (!this.#run) return { tick: 0, changes };
+      if (!this.#running) return { tick: 0, changes };
       this.#ticks += 1;
-      const root = N.statusOf(this.#readKey(this.#run.status));
-      return { tick: this.#ticks, ...(root ? { root } : {}), changes };
+      return { tick: this.#ticks, changes };
     });
   }
 
@@ -106,8 +100,8 @@ export class DeviceRuntime implements BehaviorRuntime {
 
   stop(): Promise<void> {
     return this.#attempt(() => {
-      if (this.#run) this.#options.device.call(this.#run.stop);
-      this.#run = null;
+      if (this.#running) this.#options.device.call(this.#options.loadCall(EMPTY));
+      this.#running = false;
     });
   }
 

@@ -4,11 +4,6 @@ import type { Graph } from "../model/graph";
 import type { Value } from "../model/value";
 import { type AroraDevice, DeviceRuntime } from "./device-runtime";
 import { MATH, mathModule } from "./math-module";
-import * as N from "./natives";
-
-const status = (variant: string): Value => ({
-  enum: { id: N.STATUS_ENUMERATION, variant_id: variant, value: "unit" },
-});
 
 /**
  * A device whose store is a map of device-relative keys, as `StudioAroraWorld`
@@ -51,20 +46,16 @@ class FakeDevice implements AroraDevice {
 
 function setup() {
   const device = new FakeDevice();
-  const spawned: Graph[] = [];
+  const loaded: Graph[] = [];
   const runtime = new DeviceRuntime({
     device,
     deviceId: "robot",
-    spawnGraphCall: (graph) => {
-      spawned.push(graph);
-      return JSON.stringify({ module_id: "interpreter", id: "spawn_graph", args: [] });
-    },
-    taskHandle: (result) => {
-      const run = (JSON.parse(result) as { ret: { str: string } }).ret.str;
-      return { stop: JSON.stringify({ halt: run }), status: `tasks/${run}/status` };
+    loadCall: (graph) => {
+      loaded.push(graph);
+      return JSON.stringify({ load: loaded.length });
     },
   });
-  return { device, runtime, spawned };
+  return { device, runtime, loaded };
 }
 
 describe("DeviceRuntime", () => {
@@ -76,15 +67,13 @@ describe("DeviceRuntime", () => {
   });
 
   it("starts a behavior through the device's call path", async () => {
-    const { device, runtime, spawned } = setup();
+    const { device, runtime, loaded } = setup();
     await runtime.start(ORDER.loaded);
-    expect(spawned).toEqual([ORDER.loaded.graph]);
-    expect(device.calls).toEqual([
-      JSON.stringify({ module_id: "interpreter", id: "spawn_graph", args: [] }),
-    ]);
+    expect(loaded).toEqual([ORDER.loaded.graph]);
+    expect(device.calls).toEqual([JSON.stringify({ load: 1 })]);
   });
 
-  it("reports the run's status and what each step changed", async () => {
+  it("reports what each step changed", async () => {
     const { device, runtime } = setup();
     device.store.set("v", { f64: 0 });
     device.store.set("gone", { bool: true });
@@ -92,14 +81,12 @@ describe("DeviceRuntime", () => {
     device.onStep = (store) => {
       store.set("v", { f64: 1 });
       store.delete("gone");
-      store.set("tasks/run 1/status", status(N.STATUS_RUNNING));
     };
     const report = await runtime.step(33);
     expect(report.tick).toBe(1);
-    expect(report.root).toBe("R");
+    expect(report.root).toBeUndefined();
     expect(report.statuses).toBeUndefined();
     expect(report.changes).toEqual([
-      { key: "tasks/run 1/status", value: status(N.STATUS_RUNNING) },
       { key: "v", value: { f64: 1 } },
       { key: "gone", value: null },
     ]);
@@ -118,11 +105,12 @@ describe("DeviceRuntime", () => {
     expect(await runtime.keys()).toEqual(["face/smile"]);
   });
 
-  it("stops the run with the call its handle names", async () => {
-    const { device, runtime } = setup();
+  it("stops the behavior by loading the empty graph", async () => {
+    const { device, runtime, loaded } = setup();
     await runtime.start(ORDER.loaded);
     await runtime.stop();
-    expect(device.calls.at(-1)).toBe(JSON.stringify({ halt: "run 1" }));
+    expect(loaded.at(-1)).toEqual({ nodes: {}, links: [], variables: {} });
+    expect(device.calls.at(-1)).toBe(JSON.stringify({ load: 2 }));
     expect((await runtime.step(33)).tick).toBe(0);
   });
 

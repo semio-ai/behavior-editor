@@ -2,9 +2,9 @@ import type { Value } from "./value";
 
 /**
  * The shared behavior graph, `arora_behavior::graph::Graph`, in its serde JSON
- * form: what resolving a behavior's text produces and what an interpreter loads
- * or spawns. Its nodes are keyed by id and keep no order; the tree lists them
- * root first, then by id.
+ * form: what resolving a behavior's text produces and what an interpreter
+ * loads as its behavior. Its nodes are keyed by id and keep no order; the
+ * tree lists them root first, then by id.
  */
 export interface Graph {
   root?: string;

@@ -16,7 +16,6 @@ arora-behavior-tree = "9.6"
 arora-behavior = "9.6"
 # Call and CallResult, the JSON a device's `call` takes and answers.
 arora-types = "3.10"
-semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["serde"] }

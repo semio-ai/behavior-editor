@@ -1,6 +1,5 @@
 import type { Graph } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
-import type { TaskHandle } from "../runtime/device-runtime";
 import type { BehaviorDocument } from "./ast";
 import type { BehaviorText, Loaded, ParseResult } from "./language";
 
@@ -13,14 +12,7 @@ export interface BehaviorTextExports {
   format(documentJson: string, functionsJson: string): string;
   resolve(documentJson: string, functionsJson: string): string;
   natives(): string;
-  spawnGraphCall(graphJson: string): string;
-  taskHandle(callResultJson: string): string;
-}
-
-/** The language service over the wasm build, and the run a device's spawn call answers. */
-export interface WasmBehaviorText extends BehaviorText {
-  /** The run a `spawnGraphCall`'s `CallResult` JSON describes: what `DeviceRuntime` takes. */
-  taskHandle(callResultJson: string): TaskHandle;
+  loadCall(graphJson: string): string;
 }
 
 /**
@@ -32,7 +24,7 @@ export interface WasmBehaviorText extends BehaviorText {
  * const language = createBehaviorText(behaviorText);
  * ```
  */
-export function createBehaviorText(exports: BehaviorTextExports): WasmBehaviorText {
+export function createBehaviorText(exports: BehaviorTextExports): BehaviorText {
   let natives: MethodSignature[] | undefined;
   return {
     parse: (text) => JSON.parse(exports.parse(text)) as ParseResult,
@@ -41,7 +33,6 @@ export function createBehaviorText(exports: BehaviorTextExports): WasmBehaviorTe
     resolve: (document: BehaviorDocument, functions: MethodSignature[]) =>
       JSON.parse(exports.resolve(JSON.stringify(document), JSON.stringify(functions))) as Loaded,
     natives: () => (natives ??= JSON.parse(exports.natives()) as MethodSignature[]),
-    spawnGraphCall: (graph: Graph) => exports.spawnGraphCall(JSON.stringify(graph)),
-    taskHandle: (callResultJson) => JSON.parse(exports.taskHandle(callResultJson)) as TaskHandle,
+    loadCall: (graph: Graph) => exports.loadCall(JSON.stringify(graph)),
   };
 }

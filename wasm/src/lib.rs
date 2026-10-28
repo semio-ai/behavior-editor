@@ -10,21 +10,15 @@
 
 use std::collections::HashMap;
 
-use arora_behavior::graph::{Graph, GraphType};
-use arora_behavior::interpreter_module::{decode_spawn_result, encode_spawn_graph};
-use arora_behavior::{FunctionIndex, ModuleFunction, RunPolicy};
+use arora_behavior::graph::Graph;
+use arora_behavior::interpreter_module::encode_load;
+use arora_behavior::{FunctionIndex, ModuleFunction};
 use arora_behavior_tree::text;
-use arora_types::call::CallResult;
 use arora_types::record::module::frozen::Function;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
-
-/// The graph type a behavior file resolves to, and the version of its format
-/// the interpreter reads.
-const GRAPH_TYPE: &str = "behavior-tree";
-const GRAPH_VERSION: semver::Version = semver::Version::new(1, 3, 0);
 
 /// A function as a device's `describeMethods` lists it.
 #[derive(Serialize, Deserialize)]
@@ -97,28 +91,15 @@ pub fn natives() -> Result<String, JsError> {
     serde_json::to_string(&natives).map_err(error)
 }
 
-/// The `Call` JSON that spawns `graph_json` on a device's interpreter, as a
-/// concurrent run: `arora_behavior::interpreter_module`'s `spawn_graph`. A
-/// graph whose root is a live run's replaces that run's program.
-#[wasm_bindgen(js_name = spawnGraphCall)]
-pub fn spawn_graph_call(graph_json: &str) -> Result<String, JsError> {
+/// The `Call` JSON that loads `graph_json` as a device's behavior:
+/// `arora_behavior::interpreter_module`'s `load`. The loaded behavior is the
+/// interpreter's main one, ticked at every tick and re-evaluated once it
+/// completes, and it replaces the previous one, keeping the state of the nodes
+/// the new graph left in place. The empty graph loads no behavior.
+#[wasm_bindgen(js_name = loadCall)]
+pub fn load_call(graph_json: &str) -> Result<String, JsError> {
     let graph: Graph = serde_json::from_str(graph_json).map_err(error)?;
-    let graph_type = GraphType {
-        name: GRAPH_TYPE.into(),
-        version: GRAPH_VERSION,
-    };
-    let call = encode_spawn_graph(&graph_type, &graph, RunPolicy::Concurrent);
-    serde_json::to_string(&call).map_err(error)
-}
-
-/// The run a `spawn_graph` call started, from its `CallResult` JSON:
-/// `{ stop, status }`, the `Call` JSON that halts it and its status key.
-#[wasm_bindgen(js_name = taskHandle)]
-pub fn task_handle(call_result_json: &str) -> Result<String, JsError> {
-    let result: CallResult = serde_json::from_str(call_result_json).map_err(error)?;
-    let handle = decode_spawn_result(&result.ret).map_err(error)?;
-    let stop = serde_json::to_string(&handle.stop).map_err(error)?;
-    Ok(json!({ "stop": stop, "status": handle.status.path }).to_string())
+    serde_json::to_string(&encode_load(&graph)).map_err(error)
 }
 
 fn signature(function: &ModuleFunction) -> MethodSignature {
@@ -275,12 +256,14 @@ mod tests {
     }
 
     #[test]
-    fn a_spawn_call_targets_the_interpreter() {
+    fn a_load_call_targets_the_interpreter() {
         let graph = r#"{"nodes":{},"links":[],"variables":{}}"#;
-        let call: Value = serde_json::from_str(&spawn_graph_call(graph).unwrap()).unwrap();
+        let call: Value = serde_json::from_str(&load_call(graph).unwrap()).unwrap();
         assert_eq!(call["module_id"], "61726f72-6100-0000-0000-000000000001");
-        assert_eq!(call["id"], "61726f72-6100-0000-0000-00000000000b");
-        assert_eq!(call["args"][0]["value"], json!({ "str": "behavior-tree" }));
-        assert_eq!(call["args"][1]["value"], json!({ "str": "1.3.0" }));
+        assert_eq!(call["id"], "61726f72-6100-0000-0000-000000000004");
+        assert_eq!(
+            call["args"][0]["id"],
+            "61726f72-6100-0000-0000-000000000005"
+        );
     }
 }

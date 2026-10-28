@@ -90,9 +90,10 @@ that follows the system unless the page sets `data-theme` on its root element.
   `remap`, `lt`, `not`, `truthy`, `oscillator`, `damp`, `identity`, `wait`);
   it publishes its clock to `arora/time`.
 - `DeviceRuntime` runs it on a device as Studio's World offers it, through the
-  device's own call path: the interpreter's `spawn_graph`, built by
-  `language.spawnGraphCall`, and stopped with the call the run's handle names
-  (`language.taskHandle`).
+  device's own call path: the interpreter's `load`, built by
+  `language.loadCall`, which makes the graph the device's behavior, ticked at
+  every step and re-evaluated once it completes. Loading the empty graph stops
+  it.
 
 ## Develop
 

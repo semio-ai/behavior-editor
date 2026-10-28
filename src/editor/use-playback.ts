@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MethodSignature } from "../model/signature";
 import { type Value, valueBoolean, valueNumber } from "../model/value";
-import type { BehaviorRuntime, TickReport } from "../runtime/runtime";
+import type { BehaviorRuntime, KeyInfo, TickReport } from "../runtime/runtime";
 import type { Loaded } from "../text/language";
 
 export const RATES = [10, 30, 60] as const;
@@ -24,8 +24,12 @@ export interface Playback {
   reset(): void;
   /** Why the runtime refused the behavior or a tick, until the next start. */
   error: string | null;
-  /** The store, key by key. */
+  /** The store, key by key, a pending write shown as written. */
   store: ReadonlyMap<string, Value>;
+  /** What the runtime says of each key: whether a person may write it, its type. */
+  keys: ReadonlyMap<string, KeyInfo>;
+  /** The keys written since the last tick: a device applies a write at its next step. */
+  pending: ReadonlySet<string>;
   /** The numbers each key held over the last ticks, oldest first. */
   history: ReadonlyMap<string, readonly (number | null)[]>;
   write(key: string, value: Value | null): void;
@@ -78,17 +82,31 @@ export function usePlayback(
     return next;
   }, []);
 
+  const [keys, setKeys] = useState<ReadonlyMap<string, KeyInfo>>(new Map());
+  const [pendingState, setPendingState] = useState<ReadonlySet<string>>(new Set());
+  const pendingRef = useRef<ReadonlySet<string>>(pendingState);
+  const setPending = useCallback((next: ReadonlySet<string>) => {
+    pendingRef.current = next;
+    setPendingState(next);
+  }, []);
+
+  const readKeys = useCallback(async () => {
+    const infos = await runtime.keys();
+    setKeys(new Map(infos.map((info) => [info.key, info])));
+    return infos;
+  }, [runtime]);
+
   const readStore = useCallback(async () => {
-    const keys = await runtime.keys();
-    const values = await Promise.all(keys.map((k) => runtime.read(k)));
+    const infos = await readKeys();
+    const values = await Promise.all(infos.map((info) => runtime.read(info.key)));
     const next = new Map<string, Value>();
-    keys.forEach((k, i) => {
+    infos.forEach((info, i) => {
       const value = values[i];
-      if (value != null) next.set(k, value);
+      if (value != null) next.set(info.key, value);
     });
     setStore(next);
     return next;
-  }, [runtime, setStore]);
+  }, [runtime, readKeys, setStore]);
 
   useEffect(() => {
     enqueue(readStore).catch((e: unknown) => setError(message(e)));
@@ -114,12 +132,13 @@ export function usePlayback(
     if (loaded) start(loaded);
   }, [loaded, start]);
 
+  // Stopping waits its turn, so a start still queued cannot run after it.
   useEffect(
     () => () => {
       started.current = false;
-      runtime.stop().catch(() => undefined);
+      enqueue(() => runtime.stop()).catch(() => undefined);
     },
-    [runtime],
+    [runtime, enqueue],
   );
 
   const step = useCallback(() => {
@@ -133,7 +152,15 @@ export function usePlayback(
         if (value === null) next.delete(key);
         else next.set(key, value);
       }
+      // A written key now holds what the device made of the write.
+      for (const key of pendingRef.current) {
+        const value = await runtime.read(key);
+        if (value === null) next.delete(key);
+        else next.set(key, value);
+      }
+      setPending(new Set());
       setStore(next);
+      await readKeys();
       setHistory((h) => {
         const out = new Map<string, readonly (number | null)[]>();
         for (const key of new Set([...h.keys(), ...next.keys()])) {
@@ -150,7 +177,7 @@ export function usePlayback(
       .finally(() => {
         stepping.current = false;
       });
-  }, [runtime, rate, enqueue, setStore]);
+  }, [runtime, rate, enqueue, setStore, setPending, readKeys]);
 
   useEffect(() => {
     if (!playing) return undefined;
@@ -164,18 +191,19 @@ export function usePlayback(
     start(loaded);
   }, [loaded, runtime, enqueue, start]);
 
+  // A write shows as written until the next tick says what the runtime made of it.
   const write = useCallback(
     (key: string, value: Value | null) => {
       enqueue(async () => {
         await runtime.write(key, value);
-        const read = await runtime.read(key);
         const next = new Map(storeRef.current);
-        if (read === null) next.delete(key);
-        else next.set(key, read);
+        if (value === null) next.delete(key);
+        else next.set(key, value);
         setStore(next);
+        setPending(new Set([...pendingRef.current, key]));
       }).catch((e: unknown) => setError(message(e)));
     },
-    [runtime, enqueue, setStore],
+    [runtime, enqueue, setStore, setPending],
   );
 
   return {
@@ -189,6 +217,8 @@ export function usePlayback(
     reset,
     error,
     store: storeState,
+    keys,
+    pending: pendingState,
     history,
     write,
   };

@@ -1,10 +1,10 @@
 import type { Graph, GraphNode, LinkSource } from "../model/graph";
-import type { FunctionSignature, MethodSignature } from "../model/signature";
-import { type Value, valueEquals, valueString } from "../model/value";
+import type { FrozenTy, FunctionSignature, MethodSignature } from "../model/signature";
+import { type Value, valueEquals, valueString, valueTag } from "../model/value";
 import type { Loaded } from "../text/language";
 import { mathModule } from "./math-module";
 import * as N from "./natives";
-import type { BehaviorRuntime, DetachedActivity, Status, TickReport } from "./runtime";
+import type { BehaviorRuntime, DetachedActivity, KeyInfo, Status, TickReport } from "./runtime";
 
 /** What a module function answers: its return value, and the mutable parameters it wrote. */
 export interface CallResult {
@@ -62,12 +62,17 @@ export const TIME_KEY = "arora/time";
 export class MockArora implements BehaviorRuntime {
   readonly #store = new Map<string, Value>();
   readonly #functions = new Map<string, MockFunction>();
+  /** The keys a person writes: those the mock was seeded with, and those written since. */
+  readonly #inputs = new Set<string>();
   #program: Program | null = null;
   #ticks = 0;
   #time = 0;
 
   constructor(options: MockAroraOptions = {}) {
-    for (const [key, value] of Object.entries(options.store ?? {})) this.#store.set(key, value);
+    for (const [key, value] of Object.entries(options.store ?? {})) {
+      this.#store.set(key, value);
+      this.#inputs.add(key);
+    }
     for (const module of options.modules ?? [mathModule()]) {
       for (const fn of module.functions) this.#functions.set(fn.signature.id, fn);
     }
@@ -107,6 +112,7 @@ export class MockArora implements BehaviorRuntime {
   }
 
   write(key: string, value: Value | null): Promise<void> {
+    this.#inputs.add(key);
     if (value === null) this.#store.delete(key);
     else this.#store.set(key, value);
     return Promise.resolve();
@@ -116,8 +122,26 @@ export class MockArora implements BehaviorRuntime {
     return Promise.resolve(this.#store.get(key) ?? null);
   }
 
-  keys(): Promise<string[]> {
-    return Promise.resolve([...this.#store.keys()].sort());
+  /**
+   * The store's keys and the keys the behavior reads, set or not. A person
+   * may write the keys the mock was seeded with, the keys a person wrote, and
+   * the keys the behavior reads; not its clock, nor a key only the behavior
+   * writes.
+   */
+  keys(): Promise<KeyInfo[]> {
+    const reads = this.#program?.reads() ?? new Map<string, string | undefined>();
+    const keys = [...new Set([...this.#store.keys(), ...reads.keys()])].sort();
+    return Promise.resolve(
+      keys.map((key) => {
+        const value = this.#store.get(key);
+        const ty = value === undefined ? reads.get(key) : valueTag(value);
+        return {
+          key,
+          editable: key !== TIME_KEY && (this.#inputs.has(key) || reads.has(key)),
+          ...(ty === undefined ? {} : { ty }),
+        };
+      }),
+    );
   }
 
   stop(): Promise<void> {
@@ -425,6 +449,26 @@ class Program {
     }
   }
 
+  /**
+   * The store keys the behavior reads, each with the value tag its parameter
+   * takes when its function says: the keys linked to an argument the node
+   * does not write.
+   */
+  reads(): Map<string, string | undefined> {
+    const reads = new Map<string, string | undefined>();
+    for (const link of this.#graph.links) {
+      if (!("variable" in link.source)) continue;
+      const key = this.#graph.variables[link.source.variable];
+      const node = this.#graph.nodes[link.target.node];
+      if (key === undefined || key.startsWith(".") || !node) continue;
+      const port = link.target.port;
+      const parameter = this.#signature(node)?.parameters[port];
+      if (port === N.RET || parameter?.mutable || N.nativeWrites(node.function, port)) continue;
+      reads.set(key, parameter ? tagOf(parameter.type) : undefined);
+    }
+    return reads;
+  }
+
   tick(): TickOutcome {
     this.#tick += 1;
     this.#statuses = {};
@@ -699,6 +743,15 @@ class Program {
     state.outputs = results;
     state.activity = "called";
   }
+}
+
+/** The value tag of a primitive type, or of an optional's content. */
+function tagOf(ty: FrozenTy): string | undefined {
+  if (ty.type === "frozenOption") return tagOf(ty.value.element);
+  if (ty.type !== "primitive") return undefined;
+  const tags: Record<string, string> = { boolean: "bool", string: "str", unit: "unit" };
+  const kind = ty.value.kind;
+  return tags[kind] ?? (kind.startsWith("array") ? undefined : kind);
 }
 
 /** A node's definition: what a rebuilt graph compares to know it left the node as it was. */

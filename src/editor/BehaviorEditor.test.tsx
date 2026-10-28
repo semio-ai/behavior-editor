@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import "@testing-library/jest-dom/vitest";
+import "../../fixtures/dom";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";

@@ -67,8 +67,12 @@ The editor:
 - reparses the text once typing pauses, and lists and underlines what the
   parser and the resolver report. While the text has errors, the diagram
   edits nothing: the text is the only whole account of the behavior.
-- ticks the behavior at 10, 30 or 60 Hz, edits the store's keys with sliders,
-  switches and fields, and plots the ones chosen.
+- ticks the behavior at 10, 30 or 60 Hz and plots the keys chosen. It lists
+  the store's keys and the keys the behavior reads, set or not, and edits with
+  sliders, switches and fields the ones its runtime lets a person write (a
+  device's key meta, the mock's inputs), save a key the behavior publishes
+  after every tick. A key a tree node writes stays editable, marked as such,
+  and a write a device applies at its next step shows as pending until then.
 - opens and saves `.bt` files through the File System Access API, or a file
   input and a download where the browser lacks it.
 
@@ -97,7 +101,9 @@ that follows the system unless the page sets `data-theme` on its root element.
 
 ## Develop
 
-The wasm build needs Rust and `wasm-pack`:
+Building the wasm needs Rust stable with the `wasm32-unknown-unknown` target
+(`wasm/rust-toolchain.toml`), `wasm-pack` 0.15, and `arora-behavior-tree` 9.7
+for the crate to depend on:
 
 ```bash
 npm run build:wasm   # wasm/pkg, which the build, lint, typecheck and tests read
@@ -117,7 +123,11 @@ The demo opens the NGBT spectrum's examples, each on a mock device, and, when
 The crate's tests run in release (`npm run test:rust`), as the wasm is built:
 the language's nesting limit is set for a release build's stack use.
 
-`wasm/` depends on `arora-behavior-tree` 9.7, which is not yet on crates.io:
-until it is, a local, gitignored `.cargo/config.toml` in this package patches
-it to a `cargo package` of the arora-sdk branch that carries it, and
-`wasm/Cargo.lock` is not committed.
+`wasm/` takes `arora-behavior-tree` from crates.io, and its build is
+reproducible when `wasm/Cargo.lock` is committed, which `build:wasm` and
+`test:rust` then read with `--locked`. While 9.7 is not on crates.io, the crate
+builds against a local `[patch.crates-io]` in this package's gitignored
+`.cargo/config.toml`, pointing at a `cargo package` of the arora-sdk branch
+that carries it; a lock made that way names a path, so it is not committed and
+the scripts do not pass `--locked`. turbo hashes that `.cargo/` as an input of
+`build:wasm`, so a changed patch builds anew.

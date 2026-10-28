@@ -567,13 +567,32 @@ describe("MockArora", () => {
     expect(await number("rig/mouth_corner")).toBeCloseTo(-0.2 + 0.8 * 1.2, 10);
   });
 
+  it("lists the keys a behavior reads, set or not, as inputs, and keeps its own clock and outputs closed", async () => {
+    const { device } = await run(SMILE, SMILE.loaded);
+    await device.step(DT);
+    const keys = Object.fromEntries((await device.keys()).map((k) => [k.key, k]));
+    expect(keys["face/smile"]).toEqual({ key: "face/smile", editable: true, ty: "f64" });
+    expect(keys[TIME_KEY]?.editable).toBe(false);
+    expect(keys["rig/mouth_corner"]?.editable).toBe(false);
+    const fresh = new MockArora();
+    await fresh.start(SMILE.loaded);
+    // Unset, it is listed all the same, typed by the parameter it feeds.
+    expect(await fresh.keys()).toContainEqual({ key: "face/smile", editable: true, ty: "f64" });
+    // A key a person writes is an input from then on.
+    await fresh.write("rig/cheek_raise", { f64: 1 });
+    expect((await fresh.keys()).find((k) => k.key === "rig/cheek_raise")?.editable).toBe(true);
+  });
+
   it("steps its clock without a behavior, and keeps its store once stopped", async () => {
     const device = new MockArora({ store: { k: { bool: true } } });
     const report = await device.step(500);
     expect(report).toEqual({ tick: 0, changes: [{ key: TIME_KEY, value: { f64: 0.5 } }] });
     await device.start(SMILE.loaded);
     await device.stop();
-    expect(await device.keys()).toEqual([TIME_KEY, "k"]);
+    expect(await device.keys()).toEqual([
+      { key: TIME_KEY, editable: false, ty: "f64" },
+      { key: "k", editable: true, ty: "bool" },
+    ]);
     await device.write("k", null);
     expect(await device.read("k")).toBeNull();
     expect((await device.functions()).map((f) => f.name)).toContain("damp");

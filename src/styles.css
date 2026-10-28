@@ -975,3 +975,11 @@
 .be-output output {
   color: var(--be-ink);
 }
+.be-key-body {
+  min-width: 0;
+}
+.be-key-note {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: var(--be-muted);
+}

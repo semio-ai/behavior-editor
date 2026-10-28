@@ -115,3 +115,19 @@ export function statusOf(value: Value | null | undefined): Status | undefined {
       return undefined;
   }
 }
+
+/** Whether the native `function` writes its parameter `parameter`. */
+export function nativeWrites(function_: string, parameter: string): boolean {
+  switch (function_) {
+    case SET_STRING:
+      return parameter === SET_STRING_VARIABLE;
+    case UNSET_STRING:
+      return parameter === UNSET_STRING_VARIABLE;
+    case REGEX_MATCH:
+      return parameter === REGEX_MATCH_FIRST_MATCH;
+    case UNPACK:
+      return unpackOutIndex(parameter) !== undefined;
+    default:
+      return false;
+  }
+}

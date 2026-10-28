@@ -33,6 +33,20 @@ export interface TickReport {
   changes: { key: string; value: Value | null }[];
 }
 
+/** A store key as its runtime describes it. */
+export interface KeyInfo {
+  key: string;
+  /**
+   * Whether a person may write it: a device's meta opens it, or the mock
+   * takes it as an input. A key the runtime writes itself, its clock, is not.
+   */
+  editable: boolean;
+  /** The value tag its values take (`f64`, `bool`, `str`…), when the runtime says. */
+  ty?: string;
+  min?: number;
+  max?: number;
+}
+
 /** Where a behavior runs: a device, or a mock of one. */
 export interface BehaviorRuntime {
   /** The modules' functions; the natives come from the language service. */
@@ -44,8 +58,8 @@ export interface BehaviorRuntime {
   /** Write a store key; `null` unsets it. */
   write(key: string, value: Value | null): Promise<void>;
   read(key: string): Promise<Value | null>;
-  /** The store's keys. */
-  keys(): Promise<string[]>;
+  /** The store's keys, each with what a person may do with it. */
+  keys(): Promise<KeyInfo[]>;
   /** Stop the behavior. The store keeps its values. */
   stop(): Promise<void>;
 }

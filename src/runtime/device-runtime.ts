@@ -2,7 +2,15 @@ import type { Graph } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import { type Value, valueEquals } from "../model/value";
 import type { Loaded } from "../text/language";
-import type { BehaviorRuntime, TickReport } from "./runtime";
+import type { BehaviorRuntime, KeyInfo, TickReport } from "./runtime";
+
+/** What a device says of a key: `arora_types::data::KeyMeta`'s JSON, as far as the editor reads it. */
+interface KeyMeta {
+  ty?: string;
+  min?: number;
+  max?: number;
+  editable?: boolean;
+}
 
 /**
  * A device as Studio's World offers it, bound to one device: the methods of
@@ -94,8 +102,16 @@ export class DeviceRuntime implements BehaviorRuntime {
     return this.#attempt(() => this.#readKey(key));
   }
 
-  keys(): Promise<string[]> {
-    return this.#attempt(() => this.#keys());
+  keys(): Promise<KeyInfo[]> {
+    return this.#attempt(() =>
+      this.#listed().map(([key, meta]) => ({
+        key,
+        editable: meta.editable === true,
+        ...(meta.ty === undefined ? {} : { ty: meta.ty }),
+        ...(meta.min === undefined ? {} : { min: meta.min }),
+        ...(meta.max === undefined ? {} : { max: meta.max }),
+      })),
+    );
   }
 
   stop(): Promise<void> {
@@ -114,9 +130,9 @@ export class DeviceRuntime implements BehaviorRuntime {
     }
   }
 
-  #keys(): string[] {
-    const listed = JSON.parse(this.#options.device.listKeys()) as [string, unknown][];
-    return listed.map(([key]) => key);
+  /** The device's keys with their meta: what makes a key open to `update`, and its type. */
+  #listed(): [string, KeyMeta][] {
+    return JSON.parse(this.#options.device.listKeys()) as [string, KeyMeta][];
   }
 
   #readKey(key: string): Value | null {
@@ -127,7 +143,7 @@ export class DeviceRuntime implements BehaviorRuntime {
 
   #snapshot(): Map<string, Value> {
     const values = new Map<string, Value>();
-    for (const key of this.#keys()) {
+    for (const [key] of this.#listed()) {
       const value = this.#readKey(key);
       if (value !== null) values.set(key, value);
     }

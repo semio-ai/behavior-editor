@@ -30,8 +30,11 @@ class FakeDevice implements AroraDevice {
     if (!key.startsWith("robot/")) throw new Error(`read outside the device: ${key}`);
     return JSON.stringify(this.store.get(key.slice("robot/".length)) ?? null);
   }
+  /** Each key's meta, as `setMeta` sets it: what opens it to `update`. */
+  meta = new Map<string, Record<string, unknown>>();
   listKeys() {
-    return JSON.stringify([...this.store.keys()].sort().map((key) => [key, {}]));
+    const keys = [...new Set([...this.store.keys(), ...this.meta.keys()])].sort();
+    return JSON.stringify(keys.map((key) => [key, this.meta.get(key) ?? {}]));
   }
   step() {
     for (const changes of this.pending.splice(0)) {
@@ -102,7 +105,19 @@ describe("DeviceRuntime", () => {
     expect(await runtime.read("face/smile")).toBeNull();
     await runtime.step(33);
     expect(await runtime.read("face/smile")).toEqual({ f64: 0.5 });
-    expect(await runtime.keys()).toEqual(["face/smile"]);
+    expect(await runtime.keys()).toEqual([{ key: "face/smile", editable: false }]);
+  });
+
+  it("lists each key as the device's meta says, with or without a value", async () => {
+    const { device, runtime } = setup();
+    device.meta.set("sensor/distance", { ty: "f32", editable: true, min: 0, max: 2 });
+    device.meta.set("animation/players", { editable: false });
+    device.store.set("k.position", { f64: 0.1 });
+    expect(await runtime.keys()).toEqual([
+      { key: "animation/players", editable: false },
+      { key: "k.position", editable: false },
+      { key: "sensor/distance", editable: true, ty: "f32", min: 0, max: 2 },
+    ]);
   });
 
   it("stops the behavior by loading the empty graph", async () => {

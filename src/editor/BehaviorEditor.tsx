@@ -10,7 +10,7 @@ import { FileBar } from "./FileBar";
 import { functionIndex } from "./functions";
 import { type Edit, Inspector } from "./Inspector";
 import { PlaybackBar } from "./PlaybackBar";
-import { outputKeys } from "./store-keys";
+import { behaviorKeys } from "./store-keys";
 import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
 import { useMediaQuery } from "./use-media-query";
@@ -97,7 +97,7 @@ export function BehaviorEditor({
     () => functionIndex(natives, functions, moduleNames),
     [natives, functions, moduleNames],
   );
-  const isOutput = useMemo(() => outputKeys(resolved.graph, index), [resolved.graph, index]);
+  const storeKeys = useMemo(() => behaviorKeys(resolved, index), [resolved, index]);
   const rows = useMemo(
     () => diagramRows(parsed.document, index, resolved.nodes),
     [parsed.document, index, resolved.nodes],
@@ -283,7 +283,9 @@ export function BehaviorEditor({
   );
   const store = (
     <StorePanel
-      isOutput={isOutput}
+      keys={playback.keys}
+      behavior={storeKeys}
+      pending={playback.pending}
       store={playback.store}
       history={playback.history}
       plotted={plotted}

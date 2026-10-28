@@ -3,36 +3,44 @@ import { GREET, SMILE } from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
 import type { BehaviorText } from "../text/language";
 import { functionIndex } from "./functions";
-import { outputKeys } from "./store-keys";
+import { behaviorKeys } from "./store-keys";
 
 let language: BehaviorText;
 beforeAll(async () => {
   language = await loadLanguage();
 });
 
-const outputs = (text: string) => {
+const keysOf = (text: string) => {
   const loaded = language.resolve(language.parse(text).document, MATH_FUNCTIONS);
-  return outputKeys(loaded.graph, functionIndex(language.natives(), MATH_FUNCTIONS));
+  return behaviorKeys(loaded, functionIndex(language.natives(), MATH_FUNCTIONS));
 };
 
-describe("the store's output keys", () => {
-  it("are the runtime's own and the keys the behavior writes without reading them", () => {
-    const isOutput = outputs(SMILE.text);
-    expect(["arora/time", "arora/dt", "rig/mouth_corner", "rig/cheek_raise"].map(isOutput)).toEqual(
-      [true, true, true, true],
-    );
-    expect(isOutput("face/smile")).toBe(false);
+describe("the keys a behavior reads and writes", () => {
+  it("tell a sink's key, published every tick, from what it reads", () => {
+    const { reads, writes } = keysOf(SMILE.text);
+    expect(Object.fromEntries(writes)).toEqual({
+      "rig/mouth_corner": "sink",
+      "rig/cheek_raise": "sink",
+    });
+    expect([...reads]).toEqual(["face/smile"]);
   });
 
-  it("leave a key the behavior also reads an input", () => {
-    const isOutput = outputs(GREET.text);
-    // `social/greeted` is set by the greeting and read by `fresh`: a person resets it.
-    expect(isOutput("social/greeted")).toBe(false);
-    expect(isOutput("person/visible")).toBe(false);
+  it("tell a key a tree node writes when it ticks", () => {
+    const { reads, writes } = keysOf(GREET.text);
+    expect(writes.get("social/greeted")).toBe("leaf");
+    expect(writes.get("rig/arm_raise")).toBe("leaf");
+    expect(reads.has("social/greeted")).toBe(true);
+    expect(reads.has("person/visible")).toBe(true);
+    expect(reads.has("arora/time")).toBe(true);
   });
 
   it("count a key a native writes, such as set_string's variable", () => {
-    const isOutput = outputs('sequence\n  set_string(variable: {face/mood}, value: "near")\n');
-    expect(isOutput("face/mood")).toBe(true);
+    const { reads, writes } = keysOf(
+      'sequence\n  set_string(variable: {face/mood}, value: "near")\n  set_string(variable: {.mood}, value: "x")\n',
+    );
+    expect(writes.get("face/mood")).toBe("leaf");
+    // A tree-local variable is no store key.
+    expect([...writes.keys()]).toEqual(["face/mood"]);
+    expect(reads.size).toBe(0);
   });
 });

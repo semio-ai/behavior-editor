@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
+import type { KeyInfo } from "../runtime/runtime";
 import {
+  type NumericTag,
   type Value,
   formatNumber,
   formatValue,
@@ -9,17 +11,22 @@ import {
   valueNumber,
   valueString,
 } from "../model/value";
+import type { BehaviorKeys } from "./store-keys";
 import { HISTORY } from "./use-playback";
 
 export interface StorePanelProps {
   store: ReadonlyMap<string, Value>;
+  /** What the runtime says of each key: whether a person may write it, its type. */
+  keys: ReadonlyMap<string, KeyInfo>;
+  /** The keys the behavior reads and writes, read off its graph. */
+  behavior: BehaviorKeys;
+  /** The keys written since the last tick. */
+  pending: ReadonlySet<string>;
   history: ReadonlyMap<string, readonly (number | null)[]>;
   /** The keys the plot draws. */
   plotted: readonly string[];
   onPlottedChange(keys: string[]): void;
   onWrite(key: string, value: Value | null): void;
-  /** Whether something other than a person writes `key` at every tick: shown, not edited. */
-  isOutput(key: string): boolean;
 }
 
 /** The range a slider gives a number: 0 to 1 for a fraction, a power of ten beyond. */
@@ -31,21 +38,86 @@ export function sliderRange(value: number): [number, number] {
 
 const SERIES = 4;
 
+/** What a key is, and so what a person may do with it. */
+interface KeyRow {
+  key: string;
+  value: Value | undefined;
+  editable: boolean;
+  /** Why it is shown as it is, when that needs saying. */
+  note: string | null;
+}
+
 /**
- * The store, key by key, as the last tick left it. An input has a slider for
- * a number, a switch for a boolean, a field for a string, each writing
- * through the runtime; an output, which the runtime or the behavior writes at
- * every tick, shows its value. Any number can be plotted.
+ * Each key's row. A key is editable when its runtime says a person may write
+ * it, unless the behavior publishes it after every tick, which overwrites a
+ * write at once. A key a tree node writes stays editable: a write lasts until
+ * the node ticks.
+ */
+export function keyRows(
+  store: ReadonlyMap<string, Value>,
+  keys: ReadonlyMap<string, KeyInfo>,
+  behavior: BehaviorKeys,
+  pending: ReadonlySet<string>,
+): KeyRow[] {
+  const all = [...new Set([...store.keys(), ...keys.keys(), ...behavior.reads])].sort();
+  return all.map((key) => {
+    const info = keys.get(key);
+    const write = behavior.writes.get(key);
+    const editable = info?.editable === true && write !== "sink";
+    const note = pending.has(key)
+      ? "applies at the next step"
+      : write === "sink"
+        ? "published by the behavior every tick"
+        : !info
+          ? "not listed by the runtime: it cannot be written"
+          : !info.editable
+            ? "written by the runtime, not by a person"
+            : write === "leaf"
+              ? "written by the behavior when its node ticks"
+              : null;
+    return { key, value: store.get(key), editable, note };
+  });
+}
+
+/** The value a key with none yet starts from, of its type when the runtime says. */
+function startingValue(ty: string | undefined): Value {
+  if (ty === "bool") return { bool: false };
+  if (ty === "str") return { str: "" };
+  const tag = NUMERIC.find((t) => t === ty) ?? "f64";
+  return numberValue(tag, 0);
+}
+
+const NUMERIC: readonly NumericTag[] = [
+  "u8",
+  "u16",
+  "u32",
+  "u64",
+  "i8",
+  "i16",
+  "i32",
+  "i64",
+  "f32",
+  "f64",
+];
+
+/**
+ * The store, key by key, as the last tick left it, with the keys the behavior
+ * reads that hold nothing yet. An editable key has a slider for a number, a
+ * switch for a boolean, a field for a string, each writing through the
+ * runtime; any other key shows its value and why it cannot be written. Any
+ * number can be plotted.
  */
 export function StorePanel({
   store,
+  keys,
+  behavior,
+  pending,
   history,
   plotted,
   onPlottedChange,
   onWrite,
-  isOutput,
 }: StorePanelProps) {
-  const keys = [...store.keys()].sort();
+  const rows = keyRows(store, keys, behavior, pending);
   // A key's slider spans the values it held lately, so it holds still while the value moves.
   const rangeOf = (key: string, n: number): [number, number] => {
     const seen = [n, ...(history.get(key) ?? []).filter((v): v is number => v !== null)];
@@ -55,28 +127,42 @@ export function StorePanel({
   return (
     <section className="be-store" aria-label="Store">
       <h3>Store</h3>
-      {keys.length === 0 && <p className="be-fine">The store holds no key yet.</p>}
+      {rows.length === 0 && <p className="be-fine">The store holds no key yet.</p>}
       <ul className="be-keys">
-        {keys.map((key) => {
-          const value = store.get(key)!;
+        {rows.map(({ key, value, editable, note }) => {
+          const shown = value ?? startingValue(keys.get(key)?.ty);
           const n = valueNumber(value);
           const plottable = n !== undefined || valueBoolean(value) !== undefined;
           const series = plotted.indexOf(key);
+          const noteId = `be-note-${key}`;
           return (
             <li key={key} className="be-key">
-              {isOutput(key) ? (
-                <div className="be-control be-output">
-                  <span className="be-label">{key}</span>
-                  <output aria-label={key}>{formatValue(value)}</output>
-                </div>
-              ) : (
-                <KeyEditor
-                  name={key}
-                  value={value}
-                  range={n === undefined ? null : rangeOf(key, n)}
-                  onWrite={(next) => onWrite(key, next)}
-                />
-              )}
+              <div className="be-key-body">
+                {editable ? (
+                  <KeyEditor
+                    name={key}
+                    value={shown}
+                    range={
+                      valueNumber(shown) === undefined ? null : rangeOf(key, valueNumber(shown)!)
+                    }
+                    describedBy={note ? noteId : undefined}
+                    onWrite={(next) => onWrite(key, next)}
+                  />
+                ) : (
+                  <div className="be-control be-output">
+                    <span className="be-label">{key}</span>
+                    <output aria-label={key} aria-describedby={note ? noteId : undefined}>
+                      {value === undefined ? "no value" : formatValue(value)}
+                    </output>
+                  </div>
+                )}
+                {note && (
+                  <p className="be-key-note" id={noteId}>
+                    {value === undefined && editable ? `no value yet · ${note}` : note}
+                  </p>
+                )}
+                {!note && value === undefined && <p className="be-key-note">no value yet</p>}
+              </div>
               {plottable && (
                 <label className="be-plot-toggle">
                   <input
@@ -107,11 +193,13 @@ function KeyEditor({
   name,
   value,
   range,
+  describedBy,
   onWrite,
 }: {
   name: string;
   value: Value;
   range: [number, number] | null;
+  describedBy: string | undefined;
   onWrite(value: Value): void;
 }) {
   const id = useId();
@@ -128,6 +216,7 @@ function KeyEditor({
         <output htmlFor={id}>{formatNumber(n)}</output>
         <input
           id={id}
+          aria-describedby={describedBy}
           type="range"
           min={range[0]}
           max={range[1]}
@@ -144,6 +233,7 @@ function KeyEditor({
         <label className="be-check" htmlFor={id}>
           <input
             id={id}
+            aria-describedby={describedBy}
             type="checkbox"
             role="switch"
             checked={b}
@@ -158,7 +248,12 @@ function KeyEditor({
     return (
       <div className="be-control">
         <label htmlFor={id}>{name}</label>
-        <StringField id={id} value={s} onCommit={(text) => onWrite({ str: text })} />
+        <StringField
+          id={id}
+          describedBy={describedBy}
+          value={s}
+          onCommit={(text) => onWrite({ str: text })}
+        />
       </div>
     );
   }
@@ -172,10 +267,12 @@ function KeyEditor({
 
 function StringField({
   id,
+  describedBy,
   value,
   onCommit,
 }: {
   id: string;
+  describedBy: string | undefined;
   value: string;
   onCommit(text: string): void;
 }) {
@@ -184,6 +281,7 @@ function StringField({
   return (
     <input
       id={id}
+      aria-describedby={describedBy}
       type="text"
       value={text}
       onChange={(event) => setText(event.target.value)}

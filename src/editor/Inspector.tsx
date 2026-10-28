@@ -33,6 +33,8 @@ export interface InspectorProps {
   rows: readonly DiagramRow[];
   index: FunctionIndex;
   keys: readonly string[];
+  /** Whether the document may be edited: not while its text has errors. */
+  editable: boolean;
   onEdit(edit: Edit, select?: NodePath | null): void;
 }
 
@@ -48,7 +50,7 @@ export function freshName(document: BehaviorDocument, base: string): string {
 }
 
 /** The node the diagram selected: its name, function, arguments, binding, and place. */
-export function Inspector({ document, row, rows, index, keys, onEdit }: InspectorProps) {
+export function Inspector({ document, row, rows, index, keys, editable, onEdit }: InspectorProps) {
   const [picking, setPicking] = useState<"function" | "child" | "detached" | null>(null);
   const nameId = useId();
   const moveId = useId();
@@ -94,172 +96,176 @@ export function Inspector({ document, row, rows, index, keys, onEdit }: Inspecto
   };
 
   const params = entry ? orderedParameters(entry.signature.function) : [];
-  const unknown = node.arguments.filter((a) => !params.some((p) => p.parameter.name === a.name));
+  const unknown = node.call.arguments.filter(
+    (a) => !params.some((p) => p.parameter.name === a.name.text),
+  );
 
   return (
     <section className="be-inspector" aria-label="Selected node">
-      <header className="be-inspector-head">
-        <h3>{row.detached ? "Detached node" : isRoot ? "Root" : "Tree node"}</h3>
-        <code>{row.title}</code>
-      </header>
+      <fieldset className="be-inspector-fields" disabled={!editable}>
+        <header className="be-inspector-head">
+          <h3>{row.detached ? "Detached node" : isRoot ? "Root" : "Tree node"}</h3>
+          <code>{row.title}</code>
+        </header>
 
-      <div className="be-field">
-        <label htmlFor={nameId}>Name</label>
-        <NameField
-          id={nameId}
-          value={node.name?.text ?? ""}
-          onCommit={(name) => onEdit((d) => renameNode(d, path, name || null))}
-          taken={(name) =>
-            walk(document).some(({ node: n }) => n !== node && n.name?.text === name)
-          }
-        />
-      </div>
-
-      <div className="be-field">
-        <span className="be-label" id={`${nameId}-fn`}>
-          Function
-        </span>
-        <button
-          type="button"
-          className="be-function"
-          aria-describedby={`${nameId}-fn`}
-          title={entry ? signatureText(entry) : "No module has this function"}
-          onClick={() => setPicking("function")}
-        >
-          {functionText(node.function)}
-          {!entry && <span className="be-warn"> · unknown</span>}
-        </button>
-      </div>
-      {picking && (
-        <FunctionPicker
-          index={index}
-          label={
-            picking === "function"
-              ? "Set function"
-              : picking === "child"
-                ? "Add child"
-                : "Add detached node"
-          }
-          onPick={pick}
-          onCancel={() => setPicking(null)}
-        />
-      )}
-
-      {!holder && (
-        <ArgumentEditor
-          name="returns to"
-          ty={entry?.signature.function.returnType}
-          mutable={false}
-          value={node.target ?? undefined}
-          onChange={(target) => onEdit((d) => setTarget(d, path, target))}
-          producers={producers}
-          keys={keys}
-          index={index}
-          modes={["unset", "key", "local", "node"]}
-        />
-      )}
-
-      {params.length > 0 && <h4 className="be-subhead">Arguments</h4>}
-      {params.map(({ id, parameter }) => (
-        <ArgumentEditor
-          key={id}
-          name={parameter.name}
-          ty={parameter.type}
-          mutable={parameter.mutable}
-          value={node.arguments.find((a) => a.name === parameter.name)?.value}
-          onChange={(value) =>
-            onEdit((d) =>
-              value === null
-                ? clearArgument(d, path, parameter.name)
-                : setArgument(d, path, parameter.name, value),
-            )
-          }
-          producers={producers}
-          keys={keys}
-          index={index}
-        />
-      ))}
-      {unknown.length > 0 && (
-        <div className="be-unknown">
-          <h4 className="be-subhead">Arguments the function does not take</h4>
-          <ul>
-            {unknown.map((a) => (
-              <li key={a.name}>
-                <code>{a.name}</code>
-                <button
-                  type="button"
-                  aria-label={`Remove argument ${a.name}`}
-                  onClick={() => onEdit((d) => clearArgument(d, path, a.name))}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <h4 className="be-subhead">Structure</h4>
-      <div className="be-actions">
-        {holder && (
-          <button type="button" onClick={() => setPicking("child")}>
-            Add child
-          </button>
-        )}
-        <button type="button" onClick={() => setPicking("detached")}>
-          Add detached node
-        </button>
-        <button
-          type="button"
-          disabled={isRoot}
-          onClick={() => onEdit((d) => moveNode(d, path, -1), siblingPath(path, -1))}
-        >
-          Move up
-        </button>
-        <button
-          type="button"
-          disabled={isRoot}
-          onClick={() => onEdit((d) => moveNode(d, path, 1), siblingPath(path, 1))}
-        >
-          Move down
-        </button>
-        <button
-          type="button"
-          className="be-danger"
-          disabled={isRoot}
-          onClick={() =>
-            onEdit((d) => deleteNode(d, path), path.length > 1 ? path.slice(0, -1) : [0])
-          }
-        >
-          Delete
-        </button>
-      </div>
-      {!isRoot && (
         <div className="be-field">
-          <label htmlFor={moveId}>Move to</label>
-          <select
-            id={moveId}
-            value=""
-            onChange={(event) => {
-              const to = event.target.value;
-              if (to === "detached") {
-                onEdit((d) => reparent(d, path, null, d.nodes.length), null);
-              } else if (to) {
-                const target = rows.find((r) => r.key === to)!;
-                onEdit((d) => reparent(d, path, target.path, target.node.children.length), null);
-              }
-            }}
-          >
-            <option value="">choose a new parent…</option>
-            {!row.detached && <option value="detached">no parent: detached</option>}
-            {parents.map((p) => (
-              <option key={p.key} value={p.key}>
-                {`under ${p.title} (${rowKey(p.path)})`}
-              </option>
-            ))}
-          </select>
+          <label htmlFor={nameId}>Name</label>
+          <NameField
+            id={nameId}
+            value={node.name?.text ?? ""}
+            onCommit={(name) => onEdit((d) => renameNode(d, path, name || null))}
+            taken={(name) =>
+              walk(document).some(({ node: n }) => n !== node && n.name?.text === name)
+            }
+          />
         </div>
-      )}
+
+        <div className="be-field">
+          <span className="be-label" id={`${nameId}-fn`}>
+            Function
+          </span>
+          <button
+            type="button"
+            className="be-function"
+            aria-describedby={`${nameId}-fn`}
+            title={entry ? signatureText(entry) : "No module has this function"}
+            onClick={() => setPicking("function")}
+          >
+            {functionText(node.call.function)}
+            {!entry && <span className="be-warn"> · unknown</span>}
+          </button>
+        </div>
+        {picking && (
+          <FunctionPicker
+            index={index}
+            label={
+              picking === "function"
+                ? "Set function"
+                : picking === "child"
+                  ? "Add child"
+                  : "Add detached node"
+            }
+            onPick={pick}
+            onCancel={() => setPicking(null)}
+          />
+        )}
+
+        {!holder && !entry?.native && (
+          <ArgumentEditor
+            name="returns to"
+            ty={entry?.signature.function.returnType}
+            mutable={false}
+            value={node.target ?? undefined}
+            onChange={(target) => onEdit((d) => setTarget(d, path, target))}
+            producers={producers}
+            keys={keys}
+            index={index}
+            modes={["unset", "key", "local", "node"]}
+          />
+        )}
+
+        {params.length > 0 && <h4 className="be-subhead">Arguments</h4>}
+        {params.map(({ id, parameter }) => (
+          <ArgumentEditor
+            key={id}
+            name={parameter.name}
+            ty={parameter.type}
+            mutable={parameter.mutable}
+            value={node.call.arguments.find((a) => a.name.text === parameter.name)?.value}
+            onChange={(value) =>
+              onEdit((d) =>
+                value === null
+                  ? clearArgument(d, path, parameter.name)
+                  : setArgument(d, path, parameter.name, value),
+              )
+            }
+            producers={producers}
+            keys={keys}
+            index={index}
+          />
+        ))}
+        {unknown.length > 0 && (
+          <div className="be-unknown">
+            <h4 className="be-subhead">Arguments the function does not take</h4>
+            <ul>
+              {unknown.map((a) => (
+                <li key={a.name.text}>
+                  <code>{a.name.text}</code>
+                  <button
+                    type="button"
+                    aria-label={`Remove argument ${a.name.text}`}
+                    onClick={() => onEdit((d) => clearArgument(d, path, a.name.text))}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <h4 className="be-subhead">Structure</h4>
+        <div className="be-actions">
+          {holder && (
+            <button type="button" onClick={() => setPicking("child")}>
+              Add child
+            </button>
+          )}
+          <button type="button" onClick={() => setPicking("detached")}>
+            Add detached node
+          </button>
+          <button
+            type="button"
+            disabled={isRoot}
+            onClick={() => onEdit((d) => moveNode(d, path, -1), siblingPath(path, -1))}
+          >
+            Move up
+          </button>
+          <button
+            type="button"
+            disabled={isRoot}
+            onClick={() => onEdit((d) => moveNode(d, path, 1), siblingPath(path, 1))}
+          >
+            Move down
+          </button>
+          <button
+            type="button"
+            className="be-danger"
+            disabled={isRoot}
+            onClick={() =>
+              onEdit((d) => deleteNode(d, path), path.length > 1 ? path.slice(0, -1) : [0])
+            }
+          >
+            Delete
+          </button>
+        </div>
+        {!isRoot && (
+          <div className="be-field">
+            <label htmlFor={moveId}>Move to</label>
+            <select
+              id={moveId}
+              value=""
+              onChange={(event) => {
+                const to = event.target.value;
+                if (to === "detached") {
+                  onEdit((d) => reparent(d, path, null, d.nodes.length), null);
+                } else if (to) {
+                  const target = rows.find((r) => r.key === to)!;
+                  onEdit((d) => reparent(d, path, target.path, target.node.children.length), null);
+                }
+              }}
+            >
+              <option value="">choose a new parent…</option>
+              {!row.detached && <option value="detached">no parent: detached</option>}
+              {parents.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {`under ${p.title} (${rowKey(p.path)})`}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </fieldset>
     </section>
   );
 }

@@ -10,12 +10,17 @@ import type { BehaviorDocument, Span } from "./ast";
 export interface BehaviorText {
   /** Parse a file. Recovery is per line: a document comes back with every error. */
   parse(text: string): ParseResult;
-  /** The file text of a document, in the one canonical layout. */
-  format(document: BehaviorDocument): string;
+  /**
+   * The file text of a document, in the one canonical layout, each node's
+   * arguments in the order of its function's parameters. A document whose
+   * text did not parse is refused: its text is the only whole account of it.
+   */
+  format(document: BehaviorDocument, functions: MethodSignature[]): string;
   /**
    * Resolve a document against the functions it may call, `functions` being
-   * the modules' (the natives are known to the resolver): the graph a device
-   * runs, and where each of its nodes comes from.
+   * the modules' as a device's `describeMethods` lists them (the natives are
+   * known to the resolver): the graph a device runs, and where each of its
+   * nodes comes from.
    */
   resolve(document: BehaviorDocument, functions: MethodSignature[]): Loaded;
   /** The native nodes, described as functions, for the palette. */

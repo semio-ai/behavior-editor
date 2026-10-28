@@ -9,6 +9,7 @@ import {
   SMILE,
   idOf,
 } from "../../fixtures/examples";
+import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
 import type { Graph } from "../model/graph";
 import { type Value, valueBoolean, valueNumber } from "../model/value";
 import type { Loaded } from "../text/language";
@@ -43,13 +44,16 @@ function recordingMath(calls: Call[]): MockModule {
 
 const DT = 1000 / 30;
 
-async function run(example: Example, store: Record<string, Value> = example.store) {
+/** `loaded` running on a mock device seeded as `example` is, its calls recorded. */
+async function run(example: Example, loaded: Loaded = example.loaded) {
   const calls: Call[] = [];
-  const device = new MockArora({ store, modules: [recordingMath(calls)] });
-  await device.start(example.loaded);
+  const device = new MockArora({ store: example.store, modules: [recordingMath(calls)] });
+  await device.start(loaded);
   return {
     device,
     calls,
+    /** The graph node id of the node named, or at the path, `name`. */
+    id: (name: string) => idOf(loaded, name),
     /** Tick once, and the calls it made. */
     tick: async (): Promise<{ report: TickReport; calls: Call[] }> => {
       calls.length = 0;
@@ -63,14 +67,27 @@ async function run(example: Example, store: Record<string, Value> = example.stor
 const names = (calls: Call[]) => calls.map((c) => c.fn);
 
 /** The detached activity of the nodes `named`, by name. */
-function activity(example: Example, report: TickReport, ...named: string[]) {
-  return Object.fromEntries(named.map((n) => [n, report.detached?.[idOf(example, n)]]));
+function activity(id: (name: string) => string, report: TickReport, ...named: string[]) {
+  return Object.fromEntries(named.map((n) => [n, report.detached?.[id(n)]]));
 }
 
-describe("MockArora on the spectrum's examples", () => {
+/** The graph of an example the device runs: as written by hand, or as the resolver makes it of the text. */
+const SOURCES: [string, (example: Example) => Promise<Loaded>][] = [
+  ["written by hand", (example) => Promise.resolve(example.loaded)],
+  [
+    "resolved from its text",
+    async (example) => {
+      const language = await loadLanguage();
+      return language.resolve(language.parse(example.text).document, MATH_FUNCTIONS);
+    },
+  ],
+];
+
+describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_, graphOf) => {
+  const start = async (example: Example) => run(example, await graphOf(example));
   describe("Smile mapping: a graph alone", () => {
     it("runs every sink at the first tick and publishes after the tree", async () => {
-      const { tick, number } = await run(SMILE);
+      const { tick, number } = await start(SMILE);
       const { report, calls } = await tick();
       expect(report.root).toBe("R");
       expect(names(calls).sort()).toEqual(["clamp", "damp", "mul", "remap"]);
@@ -85,13 +102,13 @@ describe("MockArora on the spectrum's examples", () => {
     });
 
     it("makes no call once settled, and only downstream calls on a change", async () => {
-      const { device, tick, number } = await run(SMILE);
+      const { device, tick, number, id } = await start(SMILE);
       await tick();
       // The easing's state changed at its first call: a changed input, so it runs once more.
       expect(names((await tick()).calls)).toEqual(["damp"]);
       const settled = await tick();
       expect(settled.calls).toEqual([]);
-      expect(activity(SMILE, settled.report, "amount", "corner", "ease", "cheek")).toEqual({
+      expect(activity(id, settled.report, "amount", "corner", "ease", "cheek")).toEqual({
         amount: "cached",
         corner: "cached",
         ease: "cached",
@@ -120,14 +137,12 @@ describe("MockArora on the spectrum's examples", () => {
 
   describe("Breathing: driven by the clock", () => {
     it("runs the oscillator's path at every tick and caches the rest", async () => {
-      const { tick, number } = await run(BREATHING);
+      const { tick, number, id } = await start(BREATHING);
       const first = await tick();
       expect(names(first.calls).sort()).toEqual(["add", "mul", "osc", "remap", "remap"]);
       const second = await tick();
       expect(names(second.calls)).toEqual(["osc", "mul", "add"]);
-      expect(
-        activity(BREATHING, second.report, "wave", "amplitude", "swell", "chest", "flush"),
-      ).toEqual({
+      expect(activity(id, second.report, "wave", "amplitude", "swell", "chest", "flush")).toEqual({
         wave: "called",
         amplitude: "cached",
         swell: "called",
@@ -144,7 +159,7 @@ describe("MockArora on the spectrum's examples", () => {
     });
 
     it("reads the clock the device publishes before each tick", async () => {
-      const { tick, calls } = await run(BREATHING);
+      const { tick, calls } = await start(BREATHING);
       await tick();
       await tick();
       expect(calls.find((c) => c.fn === "osc")?.args.t).toEqual({ f64: 2 / 30 });
@@ -153,18 +168,16 @@ describe("MockArora on the spectrum's examples", () => {
 
   describe("Greet, then rest", () => {
     it("rests while nobody is visible", async () => {
-      const { tick, number } = await run(GREET);
+      const { tick, number, id } = await start(GREET);
       const { report } = await tick();
       expect(report.root).toBe("S");
-      const [fallback, sequence, visible] = ["root", "root.0", "root.0.0"].map((p) =>
-        idOf(GREET, p),
-      );
+      const [fallback, sequence, visible] = ["root", "root.0", "root.0.0"].map((p) => id(p));
       expect(report.statuses?.[fallback!]).toBe("S");
       expect(report.statuses?.[sequence!]).toBe("F");
       expect(report.statuses?.[visible!]).toBe("F");
-      expect(report.statuses?.[idOf(GREET, "root.0.1")]).toBeUndefined();
-      expect(report.statuses?.[idOf(GREET, "root.1")]).toBe("S");
-      expect(activity(GREET, report, "fresh", "raise", "sway", "rest_raise", "rest_wave")).toEqual({
+      expect(report.statuses?.[id("root.0.1")]).toBeUndefined();
+      expect(report.statuses?.[id("root.1")]).toBe("S");
+      expect(activity(id, report, "fresh", "raise", "sway", "rest_raise", "rest_wave")).toEqual({
         fresh: "idle",
         raise: "idle",
         sway: "idle",
@@ -175,16 +188,16 @@ describe("MockArora on the spectrum's examples", () => {
     });
 
     it("waves until the timer ends, marks the person greeted, then eases to rest", async () => {
-      const { device, tick, number } = await run(GREET);
+      const { device, tick, number, id } = await start(GREET);
       await tick();
       await device.write("person/visible", { bool: true });
       const waving = await tick();
       expect(waving.report.root).toBe("R");
-      expect(waving.report.statuses?.[idOf(GREET, "root.0.2.2")]).toBe("R");
+      expect(waving.report.statuses?.[id("root.0.2.2")]).toBe("R");
       expect(await number("rig/arm_raise")).toBeGreaterThan(0);
       expect(Math.abs((await number("rig/arm_wave"))!)).toBeGreaterThan(0);
       // The nested call reading the clock runs at every tick, as its reader does.
-      const sway = idOf(GREET, "detached.2.a");
+      const sway = id("detached.2.a");
       expect(waving.report.detached?.[sway]).toBe("called");
 
       let ticks = 1;
@@ -200,12 +213,12 @@ describe("MockArora on the spectrum's examples", () => {
       expect(await number("rig/arm_raise")).toBeCloseTo(1, 3);
 
       const resting = await tick();
-      expect(resting.report.statuses?.[idOf(GREET, "root.0.1")]).toBe("F");
+      expect(resting.report.statuses?.[id("root.0.1")]).toBe("F");
       expect(await number("rig/arm_raise")).toBeLessThan(1);
     });
 
     it("keeps a branch's easing state while the branch is not ticked", async () => {
-      const { device, tick, number } = await run(GREET);
+      const { device, tick, number } = await start(GREET);
       await device.write("person/visible", { bool: true });
       for (let i = 0; i < 70; i++) await tick();
       expect(valueBoolean(await device.read("social/greeted"))).toBe(true);
@@ -220,42 +233,40 @@ describe("MockArora on the spectrum's examples", () => {
 
   describe("Three readers of one value", () => {
     it("under a parallel, asks all three and runs the cascade once", async () => {
-      const { tick } = await run(READERS_PARALLEL);
+      const { tick, id } = await start(READERS_PARALLEL);
       const { report, calls } = await tick();
       expect(names(calls)).toEqual(["mul", "clamp", "lt", "lt", "lt"]);
       expect(calls[1]!.args.x).toEqual({ f64: 20 });
       // 20 cm: not nearer than 10, nearer than 30 and 50.
-      const statuses = ["root.0", "root.1", "root.2"].map(
-        (p) => report.statuses?.[idOf(READERS_PARALLEL, p)],
-      );
+      const statuses = ["root.0", "root.1", "root.2"].map((p) => report.statuses?.[id(p)]);
       expect(statuses).toEqual(["F", "S", "S"]);
       expect(report.root).toBe("F");
       expect((await tick()).calls).toEqual([]);
     });
 
     it("under a fallback, stops at the first that holds and never asks the rest", async () => {
-      const { tick } = await run(READERS_FALLBACK);
+      const { tick, id } = await start(READERS_FALLBACK);
       const { report, calls } = await tick();
       expect(names(calls)).toEqual(["mul", "clamp", "lt", "lt"]);
       expect(report.root).toBe("S");
-      expect(activity(READERS_FALLBACK, report, "raw", "cm", "near", "mid", "far")).toEqual({
+      expect(activity(id, report, "raw", "cm", "near", "mid", "far")).toEqual({
         raw: "called",
         cm: "called",
         near: "called",
         mid: "called",
         far: "idle",
       });
-      expect(report.statuses?.[idOf(READERS_FALLBACK, "root.2")]).toBeUndefined();
+      expect(report.statuses?.[id("root.2")]).toBeUndefined();
     });
 
     it("under a fallback, runs only what a moved input reaches", async () => {
-      const { device, tick } = await run(READERS_FALLBACK);
+      const { device, tick, id } = await start(READERS_FALLBACK);
       await tick();
       await device.write("sensor/distance", { f64: 0.05 });
       const { report, calls } = await tick();
       expect(names(calls)).toEqual(["mul", "clamp", "lt"]);
-      expect(report.statuses?.[idOf(READERS_FALLBACK, "root.0")]).toBe("S");
-      expect(activity(READERS_FALLBACK, report, "near", "mid", "far")).toEqual({
+      expect(report.statuses?.[id("root.0")]).toBe("S");
+      expect(activity(id, report, "near", "mid", "far")).toEqual({
         near: "called",
         mid: "idle",
         far: "idle",
@@ -265,7 +276,7 @@ describe("MockArora on the spectrum's examples", () => {
 
   describe("Order within a tick", () => {
     it("brings a node up to date at its first read; later reads reuse it", async () => {
-      const { tick, number } = await run(ORDER);
+      const { tick, number, id } = await start(ORDER);
       for (let n = 1; n <= 3; n++) {
         const { report, calls } = await tick();
         expect(report.root).toBe("S");
@@ -279,7 +290,7 @@ describe("MockArora on the spectrum's examples", () => {
           { fn: "lt", args: { a: { f64: 10 * n }, b: { f64: 1e12 } } },
           { fn: "number", args: { x: { f64: n } } },
         ]);
-        expect(activity(ORDER, report, "inc", "scaled", "ok")).toEqual({
+        expect(activity(id, report, "inc", "scaled", "ok")).toEqual({
           inc: "called",
           scaled: "called",
           ok: "called",
@@ -325,6 +336,24 @@ describe("MockArora", () => {
     );
     await device.step(DT);
     expect(await device.read("out")).toEqual({ f64: 2 });
+  });
+
+  it("publishes two sinks of one key as lowering lists them: by id, not as the text does", async () => {
+    const language = await loadLanguage();
+    const text = (first: string, second: string) =>
+      `running\n\n${first}: {out} = number(x: 1)\n${second}: {out} = number(x: 2)\n`;
+    for (const [first, second] of [
+      ["alpha", "beta"],
+      ["beta", "alpha"],
+    ] as const) {
+      const sinks = language.resolve(language.parse(text(first, second)).document, MATH_FUNCTIONS);
+      const device = new MockArora();
+      await device.start(sinks);
+      await device.step(DT);
+      // The sink of the greater id is listed later, and wins.
+      const later = [idOf(sinks, first), idOf(sinks, second)].sort()[1];
+      expect(await device.read("out")).toEqual({ f64: later === idOf(sinks, first) ? 1 : 2 });
+    }
   });
 
   it("brings every sink up to date before any publishes", async () => {
@@ -513,7 +542,7 @@ describe("MockArora", () => {
     expect(await number("rig/mouth_corner")).toBeGreaterThan(halfway!);
     // A changed node starts afresh: its easing jumps to its target.
     const changed = structuredClone(SMILE.loaded);
-    const ease = idOf(SMILE, "ease");
+    const ease = idOf(SMILE.loaded, "ease");
     const halfLife = changed.graph.links.find(
       (l) => l.target.node === ease && l.target.port === MATH.damp.half_life,
     )!;

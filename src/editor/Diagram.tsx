@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DetachedActivity, Status, TickReport } from "../runtime/runtime";
 import { type Box, type DiagramLayout, MINI, layoutDiagram, portY } from "./diagram-layout";
 import type { DiagramRow } from "./diagram-rows";
@@ -88,6 +88,17 @@ export function Diagram({
   );
   const press = useRef<{ key: string; x: number; y: number; pointer: number } | null>(null);
   const svg = useRef<SVGSVGElement>(null);
+  const container = useRef<HTMLDivElement>(null);
+  const root = layout.boxes.get("0");
+  const rootCentre = root ? root.x + root.w / 2 : null;
+  const centred = useRef(false);
+  // Open on the root, once: a tree wider than its pane scrolls sideways from there.
+  useEffect(() => {
+    const pane = container.current?.parentElement;
+    if (centred.current || !pane || rootCentre === null) return;
+    centred.current = true;
+    pane.scrollLeft = Math.max(0, rootCentre - pane.clientWidth / 2);
+  }, [rootCentre]);
   const nodeRefs = useRef(new Map<string, SVGGElement>());
 
   const visible = [...layout.boxes.keys()];
@@ -190,7 +201,7 @@ export function Diagram({
   const dropKey = drag?.drop && drag.drop.kind !== "detach" ? drag.drop.key : null;
 
   return (
-    <div className="be-diagram" data-dragging={drag ? "" : undefined}>
+    <div className="be-diagram" ref={container} data-dragging={drag ? "" : undefined}>
       <svg
         ref={svg}
         width={layout.width}

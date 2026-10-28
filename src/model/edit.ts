@@ -1,8 +1,11 @@
 import type {
   Argument,
   BehaviorDocument,
+  Call,
   Expression,
+  ExpressionKind,
   FunctionName,
+  Name,
   SourceNode,
   Span,
 } from "../text/ast";
@@ -21,19 +24,52 @@ export type NodePath = readonly number[];
 /** The span of a node or expression an edit made, which the text has not placed yet. */
 export const NO_SPAN: Span = { start: 0, end: 0, line: 0, column: 0 };
 
-/** A new node calling `function`, with `args` by parameter name. */
+/** A name an edit wrote. */
+export function name(text: string): Name {
+  return { span: NO_SPAN, text };
+}
+
+/** An expression an edit wrote. */
+export function expression(kind: ExpressionKind): Expression {
+  return { span: NO_SPAN, kind };
+}
+
+/** A function named `text`, in no stated module. */
+export function functionName(text: string): FunctionName {
+  return { span: NO_SPAN, module: null, name: name(text) };
+}
+
+/** An argument an edit wrote. */
+export function argument(parameter: string, value: Expression): Argument {
+  return { span: NO_SPAN, name: name(parameter), value };
+}
+
+/** A call of `function_` with `args` by parameter name. */
+export function call(
+  function_: FunctionName | string,
+  args: readonly (readonly [string, Expression])[] = [],
+): Call {
+  return {
+    span: NO_SPAN,
+    function: typeof function_ === "string" ? functionName(function_) : function_,
+    arguments: args.map(([parameter, value]) => argument(parameter, value)),
+  };
+}
+
+/** A new node calling `function_`, with `args` by parameter name. */
 export function newNode(
   function_: FunctionName | string,
   args: readonly (readonly [string, Expression])[] = [],
 ): SourceNode {
   return {
+    span: NO_SPAN,
     name: null,
     target: null,
-    function:
-      typeof function_ === "string" ? { module: null, name: function_, span: NO_SPAN } : function_,
-    arguments: args.map(([name, value]) => ({ name, value, span: NO_SPAN })),
+    call: call(function_, args),
     children: [],
-    span: NO_SPAN,
+    comments: [],
+    comment: null,
+    blank_before: false,
   };
 }
 
@@ -156,22 +192,22 @@ export function reparent(
 export function renameNode(
   document: BehaviorDocument,
   path: NodePath,
-  name: string | null,
+  next: string | null,
 ): BehaviorDocument {
   const node = nodeAt(document, path);
   if (!node) return document;
   const old = node.name?.text ?? null;
-  if (old === name) return document;
-  if (name !== null && walk(document).some(({ node: n }) => n.name?.text === name)) return document;
+  if (old === next) return document;
+  if (next !== null && walk(document).some(({ node: n }) => n.name?.text === next)) return document;
   const renamed = updateNode(document, path, (n) => ({
     ...n,
-    name: name === null ? null : { text: name, span: NO_SPAN },
+    name: next === null ? null : name(next),
   }));
-  if (old === null || name === null) return renamed;
+  if (old === null || next === null) return renamed;
   return mapNodes(renamed, (n) => ({
     ...n,
-    target: n.target && renameReferences(n.target, old, name),
-    arguments: renameInArguments(n.arguments, old, name),
+    target: n.target && renameReferences(n.target, old, next),
+    call: renameInCall(n.call, old, next),
   }));
 }
 
@@ -187,41 +223,53 @@ export function setFunction(
 ): BehaviorDocument {
   return updateNode(document, path, (n) => ({
     ...n,
-    function: function_,
-    arguments: parameters ? n.arguments.filter((a) => parameters.includes(a.name)) : n.arguments,
+    call: {
+      ...n.call,
+      function: function_,
+      arguments: parameters
+        ? n.call.arguments.filter((a) => parameters.includes(a.name.text))
+        : n.call.arguments,
+    },
   }));
 }
 
-/** Set the argument of the parameter `name` of the node at `path`. */
+/** Set the argument of `parameter` of the node at `path`. */
 export function setArgument(
   document: BehaviorDocument,
   path: NodePath,
-  name: string,
+  parameter: string,
   value: Expression,
 ): BehaviorDocument {
-  return updateNode(document, path, (n) => {
-    const at = n.arguments.findIndex((a) => a.name === name);
-    const argument: Argument = { name, value, span: at >= 0 ? n.arguments[at]!.span : NO_SPAN };
-    return {
-      ...n,
-      arguments:
-        at >= 0 ? n.arguments.map((a, i) => (i === at ? argument : a)) : [...n.arguments, argument],
-    };
-  });
+  return updateNode(document, path, (n) => ({
+    ...n,
+    call: withArgument(n.call, parameter, value),
+  }));
 }
 
-/** Remove the argument of the parameter `name` of the node at `path`. */
+/** Remove the argument of `parameter` of the node at `path`. */
 export function clearArgument(
   document: BehaviorDocument,
   path: NodePath,
-  name: string,
+  parameter: string,
 ): BehaviorDocument {
   const node = nodeAt(document, path);
-  if (!node?.arguments.some((a) => a.name === name)) return document;
-  return updateNode(document, path, (n) => ({
-    ...n,
-    arguments: n.arguments.filter((a) => a.name !== name),
-  }));
+  if (!node?.call.arguments.some((a) => a.name.text === parameter)) return document;
+  return updateNode(document, path, (n) => ({ ...n, call: withoutArgument(n.call, parameter) }));
+}
+
+/** `call` with the argument of `parameter` set to `value`, in place or last. */
+export function withArgument(call_: Call, parameter: string, value: Expression): Call {
+  const at = call_.arguments.findIndex((a) => a.name.text === parameter);
+  if (at < 0) return { ...call_, arguments: [...call_.arguments, argument(parameter, value)] };
+  return {
+    ...call_,
+    arguments: call_.arguments.map((a, i) => (i === at ? { ...a, value } : a)),
+  };
+}
+
+/** `call` without the argument of `parameter`. */
+export function withoutArgument(call_: Call, parameter: string): Call {
+  return { ...call_, arguments: call_.arguments.filter((a) => a.name.text !== parameter) };
 }
 
 /** Bind the return value of the node at `path` to `target`, or unbind it with `null`. */
@@ -278,26 +326,28 @@ function mapNodes(
   return { ...document, nodes: map(document.nodes) };
 }
 
-function renameInArguments(args: readonly Argument[], old: string, name: string): Argument[] {
-  return args.map((a) => ({ ...a, value: renameReferences(a.value, old, name) }));
+function renameInCall(call_: Call, old: string, next: string): Call {
+  return {
+    ...call_,
+    arguments: call_.arguments.map((a) => ({ ...a, value: renameReferences(a.value, old, next) })),
+  };
 }
 
-function renameReferences(expression: Expression, old: string, name: string): Expression {
-  switch (expression.kind) {
-    case "node":
-      return expression.node === old ? { ...expression, node: name } : expression;
+function renameReferences(value: Expression, old: string, next: string): Expression {
+  const { kind } = value;
+  const rename = (inner: Expression) => renameReferences(inner, old, next);
+  switch (kind.type) {
+    case "port":
+      return kind.node.text === old ? { ...value, kind: { ...kind, node: name(next) } } : value;
     case "array":
-      return {
-        ...expression,
-        items: expression.items.map((x) => renameReferences(x, old, name)),
-      };
+      return { ...value, kind: { ...kind, elements: kind.elements.map(rename) } };
     case "some":
-      return { ...expression, value: renameReferences(expression.value, old, name) };
+      return { ...value, kind: { ...kind, value: rename(kind.value) } };
     case "select":
-      return { ...expression, source: renameReferences(expression.source, old, name) };
+      return { ...value, kind: { ...kind, source: rename(kind.source) } };
     case "call":
-      return { ...expression, arguments: renameInArguments(expression.arguments, old, name) };
+      return { ...value, kind: { ...kind, call: renameInCall(kind.call, old, next) } };
     default:
-      return expression;
+      return value;
   }
 }

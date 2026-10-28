@@ -1,5 +1,13 @@
 {
   "extends": "@semio/typescript-config/react-library.json",
-  "include": ["."],
-  "exclude": ["dist", "build", "node_modules", "wasm"]
+  "include": [
+    "."
+  ],
+  "exclude": [
+    "dist",
+    "build",
+    "node_modules",
+    "wasm/target",
+    ".cargo"
+  ]
 }

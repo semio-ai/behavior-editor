@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { BehaviorDocument, Expression, SourceNode } from "../text/ast";
 import {
-  NO_SPAN,
   addChild,
+  call,
+  expression,
+  functionName,
+  name,
   addDetached,
   clearArgument,
   deleteNode,
@@ -17,18 +20,21 @@ import {
   walk,
 } from "./edit";
 
-const ref = (node: string, parameter: string | null = null): Expression => ({
-  kind: "node",
-  node,
-  parameter,
-  span: NO_SPAN,
-});
-const num = (text: string): Expression => ({ kind: "number", text, suffix: null, span: NO_SPAN });
-const key = (name: string): Expression => ({ kind: "variable", name, span: NO_SPAN });
+const ref = (node: string, parameter: string | null = null): Expression =>
+  expression({
+    type: "port",
+    node: name(node),
+    parameter: parameter === null ? null : name(parameter),
+  });
+const num = (text: string): Expression => expression({ type: "number", text, suffix: null });
+const key = (variable: string): Expression => expression({ type: "variable", name: variable });
 
-function named(name: string, node: SourceNode): SourceNode {
-  return { ...node, name: { text: name, span: NO_SPAN } };
+function named(text: string, node: SourceNode): SourceNode {
+  return { ...node, name: name(text) };
 }
+
+const fn = (node: SourceNode | undefined) => node?.call.function.name.text;
+const args = (node: SourceNode | undefined) => node?.call.arguments.map((a) => a.name.text);
 
 function withChildren(node: SourceNode, children: SourceNode[]): SourceNode {
   return { ...node, children };
@@ -77,12 +83,12 @@ function sample(): BehaviorDocument {
 }
 
 const functions = (document: BehaviorDocument) =>
-  walk(document).map(({ node, path }) => `${path.join(".")} ${node.function.name}`);
+  walk(document).map(({ node, path }) => `${path.join(".")} ${fn(node)}`);
 
 describe("edits of a behavior document", () => {
   it("address nodes by path and walk them in file order", () => {
     const document = sample();
-    expect(nodeAt(document, [0, 0, 1])?.function.name).toBe("succeed");
+    expect(fn(nodeAt(document, [0, 0, 1]))).toBe("succeed");
     expect(nodeAt(document, [0, 5])).toBeUndefined();
     expect(functions(document)).toEqual([
       "0 fallback",
@@ -106,10 +112,10 @@ describe("edits of a behavior document", () => {
 
   it("add a child last, or at an index", () => {
     const last = addChild(sample(), [0, 0], newNode("running"));
-    expect(nodeAt(last, [0, 0, 2])?.function.name).toBe("running");
+    expect(fn(nodeAt(last, [0, 0, 2]))).toBe("running");
     const first = addChild(sample(), [0, 0], newNode("running"), 0);
-    expect(nodeAt(first, [0, 0, 0])?.function.name).toBe("running");
-    expect(nodeAt(first, [0, 0, 1])?.function.name).toBe("below");
+    expect(fn(nodeAt(first, [0, 0, 0]))).toBe("running");
+    expect(fn(nodeAt(first, [0, 0, 1]))).toBe("below");
     expect(addChild(sample(), [0, 9], newNode("running"))).toEqual(sample());
   });
 
@@ -137,7 +143,7 @@ describe("edits of a behavior document", () => {
       "0.1.1 succeed",
     ]);
     const up = moveNode(sample(), [2], -1);
-    expect(up.nodes.map((n) => n.function.name)).toEqual(["fallback", "clamp", "mul"]);
+    expect(up.nodes.map(fn)).toEqual(["fallback", "clamp", "mul"]);
     const document = sample();
     expect(moveNode(document, [1], -1)).toBe(document);
     expect(moveNode(document, [0, 1], 1)).toBe(document);
@@ -177,12 +183,7 @@ describe("edits of a behavior document", () => {
 
   it("detach a node to the top level, and attach a detached one", () => {
     const detached = reparent(sample(), [0, 1], null, 1);
-    expect(detached.nodes.map((n) => n.function.name)).toEqual([
-      "fallback",
-      "fail",
-      "mul",
-      "clamp",
-    ]);
+    expect(detached.nodes.map(fn)).toEqual(["fallback", "fail", "mul", "clamp"]);
     const attached = reparent(sample(), [2], [0], 0);
     expect(functions(attached).slice(0, 2)).toEqual(["0 fallback", "0.0 clamp"]);
     expect(attached.nodes).toHaveLength(2);
@@ -198,25 +199,19 @@ describe("edits of a behavior document", () => {
   it("rename a node and every reference to it", () => {
     const edited = renameNode(sample(), [1], "centimetres");
     expect(nodeAt(edited, [1])?.name?.text).toBe("centimetres");
-    expect(nodeAt(edited, [2])?.arguments[0]?.value).toMatchObject({ node: "centimetres" });
-    expect(nodeAt(edited, [0, 0, 0])?.arguments[0]?.value).toMatchObject({ node: "cm" });
+    expect(nodeAt(edited, [2])?.call.arguments[0]?.value).toEqual(ref("centimetres"));
+    expect(nodeAt(edited, [0, 0, 0])?.call.arguments[0]?.value).toEqual(ref("cm"));
   });
 
   it("rename references in nested calls and targets", () => {
-    const nested: Expression = {
-      kind: "call",
-      function: { module: null, name: "mul", span: NO_SPAN },
-      arguments: [{ name: "a", value: ref("raw", "state"), span: NO_SPAN }],
-      span: NO_SPAN,
-    };
+    const nested = expression({ type: "call", call: call("mul", [["a", ref("raw", "state")]]) });
     const document = setTarget(setArgument(sample(), [2], "x", nested), [2], ref("raw", "x"));
     const edited = renameNode(document, [1], "r");
     const node = nodeAt(edited, [2])!;
-    expect(node.arguments[0]?.value).toMatchObject({
-      kind: "call",
-      arguments: [{ value: { node: "r", parameter: "state" } }],
-    });
-    expect(node.target).toMatchObject({ node: "r", parameter: "x" });
+    expect(node.call.arguments[0]?.value).toEqual(
+      expression({ type: "call", call: call("mul", [["a", ref("r", "state")]]) }),
+    );
+    expect(node.target).toEqual(ref("r", "x"));
   });
 
   it("refuse a name another node has, and unname without touching references", () => {
@@ -224,28 +219,28 @@ describe("edits of a behavior document", () => {
     expect(renameNode(document, [1], "cm")).toBe(document);
     const unnamed = renameNode(document, [1], null);
     expect(nodeAt(unnamed, [1])?.name).toBeNull();
-    expect(nodeAt(unnamed, [2])?.arguments[0]?.value).toMatchObject({ node: "raw" });
+    expect(nodeAt(unnamed, [2])?.call.arguments[0]?.value).toEqual(ref("raw"));
   });
 
   it("set a function, dropping arguments the new one does not take", () => {
-    const fn = { module: "math", name: "max", span: NO_SPAN };
-    const kept = setFunction(sample(), [2], fn);
-    expect(nodeAt(kept, [2])?.function).toEqual(fn);
-    expect(nodeAt(kept, [2])?.arguments.map((a) => a.name)).toEqual(["x", "min"]);
-    const pruned = setFunction(sample(), [2], fn, ["x", "max"]);
-    expect(nodeAt(pruned, [2])?.arguments.map((a) => a.name)).toEqual(["x"]);
+    const max = { ...functionName("max"), module: name("77a83264-60a2-467c-9292-092cc08f051a") };
+    const kept = setFunction(sample(), [2], max);
+    expect(nodeAt(kept, [2])?.call.function).toEqual(max);
+    expect(args(nodeAt(kept, [2]))).toEqual(["x", "min"]);
+    const pruned = setFunction(sample(), [2], max, ["x", "max"]);
+    expect(args(nodeAt(pruned, [2]))).toEqual(["x"]);
   });
 
   it("set an argument in place or append it, and clear one", () => {
     const replaced = setArgument(sample(), [2], "min", num("5"));
-    expect(nodeAt(replaced, [2])?.arguments.map((a) => [a.name, a.value])).toEqual([
+    expect(nodeAt(replaced, [2])?.call.arguments.map((a) => [a.name.text, a.value])).toEqual([
       ["x", ref("raw")],
       ["min", num("5")],
     ]);
     const added = setArgument(sample(), [2], "max", num("80"));
-    expect(nodeAt(added, [2])?.arguments.map((a) => a.name)).toEqual(["x", "min", "max"]);
+    expect(args(nodeAt(added, [2]))).toEqual(["x", "min", "max"]);
     const cleared = clearArgument(sample(), [2], "x");
-    expect(nodeAt(cleared, [2])?.arguments.map((a) => a.name)).toEqual(["min"]);
+    expect(args(nodeAt(cleared, [2]))).toEqual(["min"]);
     const document = sample();
     expect(clearArgument(document, [2], "nothing")).toBe(document);
   });

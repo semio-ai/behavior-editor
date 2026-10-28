@@ -1,5 +1,6 @@
 import type { MethodSignature } from "../model/signature";
 import * as N from "../runtime/natives";
+import { functionName } from "../model/edit";
 import type { FunctionName } from "../text/ast";
 
 /** A function the palette offers and a node may call. */
@@ -8,56 +9,65 @@ export interface FunctionEntry {
   native: boolean;
   /** The group the palette lists it under. */
   group: string;
-  /** How a node names it: bare, or `module::name` when another module has the name too. */
+  /**
+   * How a node names it: bare, or `<module id>::name` when a native or
+   * another module has the name too.
+   */
   name: FunctionName;
 }
 
 /** The functions a behavior may call: the natives, then each module's. */
 export interface FunctionIndex {
   entries: FunctionEntry[];
-  /** The function a node's name refers to, when exactly one has it. */
+  /** The function a node's name refers to, as the resolver finds it. */
   lookup(name: FunctionName): FunctionEntry | undefined;
 }
 
 const NATIVE_GROUP = "Behavior tree";
 
 /**
- * The index of `natives` and `functions`, the modules' named after
- * `moduleNames` where it names them.
+ * The index of `natives` and `functions`, the modules' listed under the
+ * names `moduleNames` gives their ids. A name is a native's when a native has
+ * it; otherwise a module function's, told apart by its module's id when two
+ * modules have it.
  */
 export function functionIndex(
   natives: readonly MethodSignature[],
   functions: readonly MethodSignature[],
   moduleNames: Readonly<Record<string, string>> = {},
 ): FunctionIndex {
-  const moduleName = (id: string) => moduleNames[id] ?? id;
-  const all = [
-    ...natives.map((signature) => ({ signature, native: true })),
-    ...functions.map((signature) => ({ signature, native: false })),
-  ];
   const count = new Map<string, number>();
-  for (const { signature } of all) count.set(signature.name, (count.get(signature.name) ?? 0) + 1);
-  const entries: FunctionEntry[] = all.map(({ signature, native }) => ({
-    signature,
-    native,
-    group: native ? NATIVE_GROUP : moduleName(signature.module_id),
-    name: {
-      module: count.get(signature.name)! > 1 ? moduleName(signature.module_id) : null,
-      name: signature.name,
-      span: { start: 0, end: 0, line: 0, column: 0 },
-    },
-  }));
+  for (const signature of [...natives, ...functions]) {
+    count.set(signature.name, (count.get(signature.name) ?? 0) + 1);
+  }
+  const entries: FunctionEntry[] = [
+    ...natives.map((signature) => ({
+      signature,
+      native: true,
+      group: NATIVE_GROUP,
+      name: functionName(signature.name),
+    })),
+    ...functions.map((signature) => {
+      const name = functionName(signature.name);
+      return {
+        signature,
+        native: false,
+        group: moduleNames[signature.module_id] ?? signature.module_id,
+        name:
+          count.get(signature.name)! > 1
+            ? { ...name, module: { span: name.span, text: signature.module_id } }
+            : name,
+      };
+    }),
+  ];
   return {
     entries,
     lookup(name) {
-      const found = entries.filter(
-        (e) =>
-          e.signature.name === name.name &&
-          (name.module === null ||
-            name.module === e.signature.module_id ||
-            name.module === moduleNames[e.signature.module_id]),
-      );
-      return found.length === 1 ? found[0] : undefined;
+      const named = entries.filter((e) => e.signature.name === name.name.text);
+      if (name.module === null) {
+        return named.find((e) => e.native) ?? (named.length === 1 ? named[0] : undefined);
+      }
+      return named.find((e) => !e.native && e.signature.module_id === name.module!.text);
     },
   };
 }

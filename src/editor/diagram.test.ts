@@ -1,19 +1,28 @@
-import { describe, expect, it } from "vitest";
-import { GREET, READERS_PARALLEL, idOf } from "../../fixtures/examples";
-import { NATIVES } from "../../fixtures/fixture-language";
-import { mathModule } from "../runtime/math-module";
+import { beforeAll, describe, expect, it } from "vitest";
+import { type Example, GREET, READERS_PARALLEL, idOf } from "../../fixtures/examples";
+import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import type { WasmBehaviorText } from "../text/wasm-language";
 import { dropAt } from "./Diagram";
 import { layoutDiagram } from "./diagram-layout";
 import { diagramRows } from "./diagram-rows";
 import { functionIndex } from "./functions";
 
-const index = functionIndex(
-  NATIVES,
-  mathModule().functions.map((f) => f.signature),
-);
+let language: WasmBehaviorText;
+beforeAll(async () => {
+  language = await loadLanguage();
+});
 
-const rowsOf = (example: typeof GREET) =>
-  diagramRows(example.document, index, example.loaded.nodes);
+/** The example's text, parsed and resolved against the mock device's functions. */
+function resolved(example: Example) {
+  const { document } = language.parse(example.text);
+  return { document, loaded: language.resolve(document, MATH_FUNCTIONS) };
+}
+
+function rowsOf(example: Example) {
+  const { document, loaded } = resolved(example);
+  const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+  return diagramRows(document, index, loaded.nodes);
+}
 
 describe("the diagram's rows", () => {
   it("list the tree from its root, then the detached nodes, each with its graph node", () => {
@@ -37,8 +46,9 @@ describe("the diagram's rows", () => {
       ["4", "rest_raise: damp"],
       ["5", "rest_wave: damp"],
     ]);
-    expect(rows.find((r) => r.key === "3")?.graphId).toBe(idOf(GREET, "sway"));
-    expect(rows.find((r) => r.key === "0.0.2")?.graphId).toBe(idOf(GREET, "root.0.2"));
+    const { loaded } = resolved(GREET);
+    expect(rows.find((r) => r.key === "3")?.graphId).toBe(idOf(loaded, "sway"));
+    expect(rows.find((r) => r.key === "0.0.2")?.graphId).toBe(idOf(loaded, "root.0.2"));
   });
 
   it("shape nodes by what they do and where they are", () => {

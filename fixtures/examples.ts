@@ -1,19 +1,20 @@
 /**
- * The NGBT spectrum's examples as fixtures: each one's file text, the document
- * the parser makes of it, and the graph and node sources the resolver makes of
- * that, written out by hand. They stand in for the language service until its
- * wasm build lands; then the documents and graphs come from the text.
+ * The NGBT spectrum's examples as fixtures: each one's file text, and the
+ * graph a device runs for it with the sources of its nodes, written out by
+ * hand. The runtime's tests run each scenario on both: the hand-written graph
+ * pins the runtime's semantics on its own, and the graph the resolver makes
+ * of the text checks that the text says the same.
  *
- * Each example's nodes are stated once below, and the document, graph and
- * node sources are spelled from that statement mechanically: one node per
- * line of the text, in order, its parameters by the ids the math module and
- * the natives declare.
+ * Each example's nodes are stated once below, and the graph and node sources
+ * are spelled from that statement mechanically: one node per line of the
+ * text, in order, its parameters by the ids the math module and the natives
+ * declare.
  */
 import { MATH } from "../src/runtime/math-module";
 import * as N from "../src/runtime/natives";
 import type { Graph, GraphNode, Link, LinkSource } from "../src/model/graph";
 import type { Value } from "../src/model/value";
-import type { Argument, BehaviorDocument, Expression, SourceNode, Span } from "../src/text/ast";
+import type { Span } from "../src/text/ast";
 import type { Loaded, LoadedNode } from "../src/text/language";
 import breathing from "./examples/breathing.bt?raw";
 import greet from "./examples/greet.bt?raw";
@@ -70,7 +71,7 @@ export interface Example {
   /** The file's name, for the demo. */
   file: string;
   text: string;
-  document: BehaviorDocument;
+  /** The graph, written out by hand, and its nodes' sources. */
   loaded: Loaded;
   /** The store's values to start from. */
   store: Record<string, Value>;
@@ -202,49 +203,11 @@ function build(
     }
   });
 
-  const expression = (arg: Arg): Expression => {
-    if (arg === "none") return { kind: "none", span: NO_SPAN };
-    if (typeof arg === "boolean") return { kind: "bool", value: arg, span: NO_SPAN };
-    if (typeof arg === "number")
-      return { kind: "number", text: String(arg), suffix: null, span: NO_SPAN };
-    if ("key" in arg) return { kind: "variable", name: arg.key, span: NO_SPAN };
-    if ("ref" in arg)
-      return { kind: "node", node: arg.ref, parameter: arg.param ?? null, span: NO_SPAN };
-    return {
-      kind: "call",
-      function: { module: null, name: arg.call.name, span: NO_SPAN },
-      arguments: argumentsOf(arg.args),
-      span: NO_SPAN,
-    };
-  };
-  const argumentsOf = (args: Record<string, Arg> = {}): Argument[] =>
-    Object.entries(args).map(([name, value]) => ({
-      name,
-      value: expression(value),
-      span: NO_SPAN,
-    }));
-  let line = 0;
-  const sourceNode = (spec: Spec): SourceNode => {
-    const span = lines[line++]!;
-    return {
-      name: spec.name ? { text: spec.name, span } : null,
-      target: spec.target ? { kind: "variable", name: spec.target, span: NO_SPAN } : null,
-      function: { module: null, name: spec.fn.name, span: NO_SPAN },
-      arguments: argumentsOf(spec.args),
-      children: (spec.children ?? []).map(sourceNode),
-      span,
-    };
-  };
-  const document: BehaviorDocument = {
-    nodes: [tree, ...detached].map(sourceNode),
-    comments: [],
-  };
   return {
     id: exampleId,
     title,
     file,
     text,
-    document,
     loaded: { graph, nodes: loadedNodes, diagnostics: [] },
     store,
     plot,
@@ -445,9 +408,9 @@ export const EXAMPLES: readonly Example[] = [
   ORDER,
 ];
 
-/** The graph node id of the node an example names `name`. */
-export function idOf(example: Example, name: string): string {
-  const node = example.loaded.nodes.find((n) => n.name === name || n.path === name);
-  if (!node) throw new Error(`${example.id} has no node ${name}`);
+/** The graph node id of the node `loaded` names `name`, or whose path is `name`. */
+export function idOf(loaded: Loaded, name: string): string {
+  const node = loaded.nodes.find((n) => n.name === name || n.path === name);
+  if (!node) throw new Error(`no node ${name}`);
   return node.id;
 }

@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react";
-import { NO_SPAN } from "../model/edit";
+import { call, expression, name, withArgument, withoutArgument } from "../model/edit";
 import { type FrozenTy, formatType, orderedParameters, primitiveKind } from "../model/signature";
-import type { Argument, Expression } from "../text/ast";
+import type { Expression, ExpressionKind } from "../text/ast";
 import { expressionText } from "./expression-text";
 import type { FunctionIndex } from "./functions";
 
@@ -25,34 +25,37 @@ const MODE_LABELS: Record<Mode, string> = {
   other: "as written",
 };
 
-export function modeOf(expression: Expression | undefined): Mode {
-  if (!expression) return "unset";
-  switch (expression.kind) {
+function modeOf(value: Expression | undefined): Mode {
+  if (!value) return "unset";
+  switch (value.kind.type) {
     case "variable":
-      return expression.name.startsWith(".") ? "local" : "key";
-    case "node":
+      return value.kind.name.startsWith(".") ? "local" : "key";
+    case "port":
       return "node";
     case "call":
       return "call";
     case "select":
+    case "json":
       return "other";
     default:
       return "literal";
   }
 }
 
-const NUMBER = /^-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+const NUMBER = /^-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$|^-?(NaN|inf)$/;
 const NUMERIC_KINDS = new Set(["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "f32", "f64"]);
+
+const number = (text: string, suffix: string | null = null) =>
+  expression({ type: "number", text, suffix });
 
 /** The literal a parameter of type `ty` starts from. */
 function defaultLiteral(ty: FrozenTy | undefined): Expression {
-  if (ty?.type === "frozenOption") return { kind: "none", span: NO_SPAN };
+  if (ty?.type === "frozenOption") return expression({ type: "none" });
   const kind = ty && primitiveKind(ty);
-  if (kind === "boolean") return { kind: "bool", value: false, span: NO_SPAN };
-  if (kind === "string") return { kind: "string", value: "", span: NO_SPAN };
-  if (kind?.startsWith("array"))
-    return { kind: "array", element_type: null, items: [], span: NO_SPAN };
-  return { kind: "number", text: "0", suffix: null, span: NO_SPAN };
+  if (kind === "boolean") return expression({ type: "bool", value: false });
+  if (kind === "string") return expression({ type: "string", value: "" });
+  if (kind?.startsWith("array")) return expression({ type: "array", element: null, elements: [] });
+  return number("0");
 }
 
 export interface ArgumentEditorProps {
@@ -74,7 +77,7 @@ const ALL_MODES: readonly Mode[] = ["unset", "literal", "key", "local", "node", 
 
 /** One argument: what feeds it, and an editor for that. */
 export function ArgumentEditor({
-  name,
+  name: parameter,
   ty,
   mutable,
   value,
@@ -84,7 +87,6 @@ export function ArgumentEditor({
   index,
   modes = ALL_MODES,
 }: ArgumentEditorProps) {
-  const id = useId();
   const mode = modeOf(value);
   const offered = mode === "other" ? [...modes, "other" as const] : modes;
   const setMode = (next: Mode) => {
@@ -94,35 +96,31 @@ export function ArgumentEditor({
       case "literal":
         return onChange(defaultLiteral(ty));
       case "key":
-        return onChange({ kind: "variable", name: keys[0] ?? "", span: NO_SPAN });
+        return onChange(expression({ type: "variable", name: keys[0] ?? "key" }));
       case "local":
-        return onChange({ kind: "variable", name: ".", span: NO_SPAN });
+        return onChange(expression({ type: "variable", name: ".local" }));
       case "node":
-        return onChange({
-          kind: "node",
-          node: producers[0]?.name ?? "",
-          parameter: null,
-          span: NO_SPAN,
-        });
+        return onChange(
+          expression({ type: "port", node: name(producers[0]?.name ?? ""), parameter: null }),
+        );
       case "call": {
         const first = index.entries.find((e) => !e.native);
-        if (!first) return undefined;
-        return onChange({ kind: "call", function: first.name, arguments: [], span: NO_SPAN });
+        return first ? onChange(expression({ type: "call", call: call(first.name) })) : undefined;
       }
       default:
         return undefined;
     }
   };
+  const kind = value?.kind;
   return (
     <fieldset className="be-argument">
       <legend>
-        <span className="be-param">{name}</span>
+        <span className="be-param">{parameter}</span>
         {ty && <span className="be-type">{`${mutable ? "mut " : ""}${formatType(ty)}`}</span>}
       </legend>
       <div className="be-argument-row">
         <select
-          id={`${id}-mode`}
-          aria-label={`${name}: source`}
+          aria-label={`${parameter}: source`}
           value={mode}
           onChange={(event) => setMode(event.target.value as Mode)}
         >
@@ -133,27 +131,27 @@ export function ArgumentEditor({
           ))}
         </select>
         {value && mode === "literal" && (
-          <LiteralEditor name={name} ty={ty} value={value} onChange={onChange} />
+          <LiteralEditor name={parameter} ty={ty} value={value} onChange={onChange} />
         )}
-        {value?.kind === "variable" && (
+        {kind?.type === "variable" && (
           <VariableEditor
-            name={name}
-            value={value.name}
+            name={parameter}
+            value={kind.name}
             local={mode === "local"}
             keys={keys}
             onChange={onChange}
           />
         )}
-        {value?.kind === "node" && (
-          <NodeRefEditor name={name} value={value} producers={producers} onChange={onChange} />
+        {kind?.type === "port" && (
+          <NodeRefEditor name={parameter} value={kind} producers={producers} onChange={onChange} />
         )}
         {mode === "other" && value && (
           <code className="be-as-written">{expressionText(value)}</code>
         )}
       </div>
-      {value?.kind === "call" && (
+      {kind?.type === "call" && (
         <CallEditor
-          value={value}
+          value={kind}
           onChange={onChange}
           producers={producers}
           keys={keys}
@@ -206,7 +204,7 @@ function CommitField({
 }
 
 function LiteralEditor({
-  name,
+  name: label,
   ty,
   value,
   onChange,
@@ -216,9 +214,10 @@ function LiteralEditor({
   value: Expression;
   onChange(value: Expression): void;
 }) {
+  const { kind } = value;
   if (ty?.type === "frozenOption") {
-    const present = value.kind !== "none";
-    const inner = value.kind === "some" ? value.value : value;
+    const present = kind.type !== "none";
+    const inner = kind.type === "some" ? kind.value : value;
     return (
       <span className="be-literal">
         <label className="be-check">
@@ -229,85 +228,78 @@ function LiteralEditor({
               onChange(
                 event.target.checked
                   ? defaultLiteral(ty.value.element)
-                  : { kind: "none", span: NO_SPAN },
+                  : expression({ type: "none" }),
               )
             }
           />
-          {`${name} present`}
+          {`${label} present`}
         </label>
         {present && (
-          <LiteralEditor name={name} ty={ty.value.element} value={inner} onChange={onChange} />
+          <LiteralEditor name={label} ty={ty.value.element} value={inner} onChange={onChange} />
         )}
       </span>
     );
   }
-  const kind = ty ? primitiveKind(ty) : undefined;
-  if (value.kind === "bool" || kind === "boolean") {
+  const primitive = ty ? primitiveKind(ty) : undefined;
+  if (kind.type === "bool" || primitive === "boolean") {
     return (
       <label className="be-check">
         <input
           type="checkbox"
-          checked={value.kind === "bool" && value.value}
-          onChange={(event) =>
-            onChange({ kind: "bool", value: event.target.checked, span: NO_SPAN })
-          }
+          checked={kind.type === "bool" && kind.value}
+          onChange={(event) => onChange(expression({ type: "bool", value: event.target.checked }))}
         />
-        {name}
+        {label}
       </label>
     );
   }
-  if (value.kind === "string" || kind === "string") {
+  if (kind.type === "string" || primitive === "string") {
     return (
       <CommitField
-        label={name}
-        value={value.kind === "string" ? value.value : ""}
-        onCommit={(text) => onChange({ kind: "string", value: text, span: NO_SPAN })}
+        label={label}
+        value={kind.type === "string" ? kind.value : ""}
+        onCommit={(text) => onChange(expression({ type: "string", value: text }))}
       />
     );
   }
-  if (value.kind === "array" || kind?.startsWith("array")) {
-    const numeric = kind !== "arrayString" && kind !== "arrayBoolean";
-    const items = value.kind === "array" ? value.items : [];
+  if (kind.type === "array" || primitive?.startsWith("array")) {
+    const numeric = primitive !== "arrayString" && primitive !== "arrayBoolean";
+    const elements = kind.type === "array" ? kind.elements : [];
     return (
       <CommitField
-        label={`${name}, comma separated`}
-        value={items.map(expressionText).join(", ")}
+        label={`${label}, comma separated`}
+        value={elements.map(expressionText).join(", ")}
         invalid={(text) => numeric && splitList(text).some((t) => !NUMBER.test(t))}
         onCommit={(text) =>
-          onChange({
-            kind: "array",
-            element_type: value.kind === "array" ? value.element_type : null,
-            items: splitList(text).map((t) => listItem(t, kind)),
-            span: NO_SPAN,
-          })
+          onChange(
+            expression({
+              type: "array",
+              element: kind.type === "array" ? kind.element : null,
+              elements: splitList(text).map((t) => listItem(t, primitive)),
+            }),
+          )
         }
       />
     );
   }
-  if (value.kind === "uuid") {
+  if (kind.type === "uuid") {
     return (
       <CommitField
-        label={name}
-        value={value.value}
-        onCommit={(text) => onChange({ kind: "uuid", value: text, span: NO_SPAN })}
+        label={label}
+        value={kind.value}
+        onCommit={(text) => onChange(expression({ type: "uuid", value: text }))}
       />
     );
   }
-  const numeric = value.kind === "number" || (kind !== undefined && NUMERIC_KINDS.has(kind));
-  if (numeric) {
+  if (kind.type === "number" || (primitive !== undefined && NUMERIC_KINDS.has(primitive))) {
     return (
       <CommitField
-        label={name}
+        label={label}
         className="be-number"
-        value={value.kind === "number" ? value.text : ""}
+        value={kind.type === "number" ? kind.text : ""}
         invalid={(text) => !NUMBER.test(text.trim())}
         onCommit={(text) =>
-          onChange({
-            kind: "number",
-            text: text.trim(),
-            suffix: value.kind === "number" ? value.suffix : null,
-            span: NO_SPAN,
-          })
+          onChange(number(text.trim(), kind.type === "number" ? kind.suffix : null))
         }
       />
     );
@@ -322,17 +314,18 @@ function splitList(text: string): string[] {
     .filter(Boolean);
 }
 
-function listItem(text: string, kind: string | undefined): Expression {
-  if (kind === "arrayBoolean") return { kind: "bool", value: text === "true", span: NO_SPAN };
-  if (kind === "arrayString")
-    return { kind: "string", value: text.replace(/^"|"$/g, ""), span: NO_SPAN };
-  return { kind: "number", text, suffix: null, span: NO_SPAN };
+function listItem(text: string, primitive: string | undefined): Expression {
+  if (primitive === "arrayBoolean") return expression({ type: "bool", value: text === "true" });
+  if (primitive === "arrayString") {
+    return expression({ type: "string", value: text.replace(/^"|"$/g, "") });
+  }
+  return number(text);
 }
 
 const KEY = /^[^{}\s]+$/;
 
 function VariableEditor({
-  name,
+  name: label,
   value,
   local,
   keys,
@@ -349,12 +342,12 @@ function VariableEditor({
     <span className="be-variable">
       <span aria-hidden="true">{local ? "{." : "{"}</span>
       <CommitField
-        label={local ? `${name}: local variable` : `${name}: store key`}
+        label={local ? `${label}: local variable` : `${label}: store key`}
         value={local ? value.slice(1) : value}
         list={local ? undefined : listId}
         invalid={(text) => !KEY.test(text)}
         onCommit={(text) =>
-          onChange({ kind: "variable", name: local ? `.${text}` : text, span: NO_SPAN })
+          onChange(expression({ type: "variable", name: local ? `.${text}` : text }))
         }
       />
       <span aria-hidden="true">{"}"}</span>
@@ -370,27 +363,30 @@ function VariableEditor({
 }
 
 function NodeRefEditor({
-  name,
+  name: label,
   value,
   producers,
   onChange,
 }: {
   name: string;
-  value: Extract<Expression, { kind: "node" }>;
+  value: Extract<ExpressionKind, { type: "port" }>;
   producers: readonly Producer[];
   onChange(value: Expression): void;
 }) {
-  const producer = producers.find((p) => p.name === value.node);
+  const node = value.node.text;
+  const parameter = value.parameter?.text ?? "";
+  const producer = producers.find((p) => p.name === node);
   const names = producers.map((p) => p.name);
-  if (value.node && !names.includes(value.node)) names.unshift(value.node);
+  if (node && !names.includes(node)) names.unshift(node);
+  const ports = producer?.ports ?? (parameter ? [parameter] : []);
   return (
     <span className="be-node-ref">
       <span aria-hidden="true">@</span>
       <select
-        aria-label={`${name}: node`}
-        value={value.node}
+        aria-label={`${label}: node`}
+        value={node}
         onChange={(event) =>
-          onChange({ kind: "node", node: event.target.value, parameter: null, span: NO_SPAN })
+          onChange(expression({ type: "port", node: name(event.target.value), parameter: null }))
         }
       >
         {names.length === 0 && <option value="">no named node</option>}
@@ -401,14 +397,20 @@ function NodeRefEditor({
         ))}
       </select>
       <select
-        aria-label={`${name}: port`}
-        value={value.parameter ?? ""}
+        aria-label={`${label}: port`}
+        value={parameter}
         onChange={(event) =>
-          onChange({ ...value, parameter: event.target.value || null, span: NO_SPAN })
+          onChange(
+            expression({
+              type: "port",
+              node: value.node,
+              parameter: event.target.value ? name(event.target.value) : null,
+            }),
+          )
         }
       >
         <option value="">its return value</option>
-        {(producer?.ports ?? (value.parameter ? [value.parameter] : [])).map((p) => (
+        {ports.map((p) => (
           <option key={p} value={p}>
             {`.${p}`}
           </option>
@@ -425,29 +427,25 @@ function CallEditor({
   keys,
   index,
 }: {
-  value: Extract<Expression, { kind: "call" }>;
+  value: Extract<ExpressionKind, { type: "call" }>;
   onChange(value: Expression): void;
   producers: readonly Producer[];
   keys: readonly string[];
   index: FunctionIndex;
 }) {
-  const entry = index.lookup(value.function);
+  const nested = value.call;
+  const entry = index.lookup(nested.function);
   const modules = index.entries.filter((e) => !e.native);
   const params = entry ? orderedParameters(entry.signature.function) : [];
-  const setArgument = (param: string, expression: Expression | null) => {
-    const rest = value.arguments.filter((a) => a.name !== param);
-    const next: Argument[] = expression
-      ? params.some((p) => p.parameter.name === param)
-        ? params.flatMap((p) => {
-            if (p.parameter.name === param)
-              return [{ name: param, value: expression, span: NO_SPAN }];
-            const kept = rest.find((a) => a.name === p.parameter.name);
-            return kept ? [kept] : [];
-          })
-        : [...rest, { name: param, value: expression, span: NO_SPAN }]
-      : rest;
-    onChange({ ...value, arguments: next, span: NO_SPAN });
-  };
+  const setArgument = (parameter: string, argument: Expression | null) =>
+    onChange(
+      expression({
+        type: "call",
+        call: argument
+          ? withArgument(nested, parameter, argument)
+          : withoutArgument(nested, parameter),
+      }),
+    );
   return (
     <div className="be-call">
       <select
@@ -457,15 +455,19 @@ function CallEditor({
           const picked = modules[Number(event.target.value)];
           if (!picked) return;
           const names = orderedParameters(picked.signature.function).map((p) => p.parameter.name);
-          onChange({
-            ...value,
-            function: picked.name,
-            arguments: value.arguments.filter((a) => names.includes(a.name)),
-            span: NO_SPAN,
-          });
+          onChange(
+            expression({
+              type: "call",
+              call: {
+                ...nested,
+                function: picked.name,
+                arguments: nested.arguments.filter((a) => names.includes(a.name.text)),
+              },
+            }),
+          );
         }}
       >
-        {!entry && <option value={-1}>{expressionText({ ...value, arguments: [] })}</option>}
+        {!entry && <option value={-1}>{expressionText(expression(value))}</option>}
         {modules.map((e, i) => (
           <option key={`${e.signature.module_id}/${e.signature.id}`} value={i}>
             {`${e.group} · ${e.signature.name}`}
@@ -478,8 +480,8 @@ function CallEditor({
           name={parameter.name}
           ty={parameter.type}
           mutable={parameter.mutable}
-          value={value.arguments.find((a) => a.name === parameter.name)?.value}
-          onChange={(expression) => setArgument(parameter.name, expression)}
+          value={nested.arguments.find((a) => a.name.text === parameter.name)?.value}
+          onChange={(argument) => setArgument(parameter.name, argument)}
           producers={producers}
           keys={keys}
           index={index}

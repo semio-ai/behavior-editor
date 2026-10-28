@@ -3,14 +3,20 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { type Example, GREET, ORDER, SMILE } from "../../fixtures/examples";
-import { fixtureLanguage } from "../../fixtures/fixture-language";
+import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
 import type { BehaviorDocument, SourceNode } from "../text/ast";
+import type { WasmBehaviorText } from "../text/wasm-language";
 import { MATH_MODULE_ID } from "../runtime/math-module";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
 import { BehaviorEditor, type BehaviorEditorProps } from "./BehaviorEditor";
+
+let language: WasmBehaviorText;
+beforeAll(async () => {
+  language = await loadLanguage();
+});
 
 afterEach(() => {
   cleanup();
@@ -28,7 +34,7 @@ function setup(example: Example, props: Partial<BehaviorEditorProps> = {}) {
     const [text, setText] = useState(example.text);
     return (
       <BehaviorEditor
-        language={fixtureLanguage()}
+        language={language}
         runtime={runtime}
         text={text}
         onTextChange={(next) => {
@@ -44,13 +50,13 @@ function setup(example: Example, props: Partial<BehaviorEditorProps> = {}) {
   }
   const user = userEvent.setup();
   render(<Host />);
-  /** The document the editor's last change wrote, as the test double encodes it. */
-  const written = () => JSON.parse(texts.at(-1)!) as BehaviorDocument;
+  /** The document of the text the editor's last change wrote. */
+  const written = (): BehaviorDocument => language.parse(texts.at(-1)!).document;
   return { runtime, texts, user, written };
 }
 
 const item = (name: RegExp | string) => screen.getByRole("treeitem", { name });
-const names = (nodes: readonly SourceNode[]) => nodes.map((n) => n.function.name);
+const names = (nodes: readonly SourceNode[]) => nodes.map((n) => n.call.function.name.text);
 
 describe("BehaviorEditor", () => {
   it("draws the tree, and the detached nodes beside it, as a tree of items", async () => {
@@ -98,7 +104,10 @@ describe("BehaviorEditor", () => {
     const document = written();
     expect(document.nodes[2]?.name?.text).toBe("lift");
     const wave = document.nodes[0]!.children[0]!.children[2]!.children[0]!;
-    expect(wave.arguments[0]?.value).toMatchObject({ kind: "node", node: "lift" });
+    expect(wave.call.arguments[0]?.value.kind).toMatchObject({
+      type: "port",
+      node: { text: "lift" },
+    });
   });
 
   it("refuses a name another node has", async () => {
@@ -119,7 +128,11 @@ describe("BehaviorEditor", () => {
     expect(b).toHaveValue("0.6");
     await user.clear(b);
     await user.type(b, "0.9{Enter}");
-    expect(written().nodes[4]?.arguments[1]?.value).toMatchObject({ kind: "number", text: "0.9" });
+    expect(written().nodes[4]?.call.arguments[1]?.value.kind).toEqual({
+      type: "number",
+      text: "0.9",
+      suffix: null,
+    });
   });
 
   it("feeds an argument from another node's output", async () => {
@@ -127,9 +140,9 @@ describe("BehaviorEditor", () => {
     await user.click(await screen.findByRole("treeitem", { name: /^cheek: / }));
     await user.selectOptions(screen.getByRole("combobox", { name: "b: source" }), "node");
     await user.selectOptions(screen.getByRole("combobox", { name: "b: node" }), "corner");
-    expect(written().nodes[4]?.arguments[1]?.value).toMatchObject({
-      kind: "node",
-      node: "corner",
+    expect(written().nodes[4]?.call.arguments[1]?.value.kind).toMatchObject({
+      type: "port",
+      node: { text: "corner" },
       parameter: null,
     });
   });
@@ -185,14 +198,26 @@ describe("BehaviorEditor", () => {
     await user.click(screen.getByRole("tab", { name: "Text" }));
     const text = screen.getByRole("textbox", { name: "Behavior text" });
     expect(text).toHaveValue(ORDER.text);
-    await user.type(text, "x");
+    await user.type(text, "x(");
     expect(texts).toEqual([]);
-    await waitFor(() => expect(texts).toEqual([`${ORDER.text}x`]));
+    await waitFor(() => expect(texts).toEqual([`${ORDER.text}x(`]));
     const diagnostics = await screen.findByRole("list", { name: "Diagnostics" });
-    expect(within(diagnostics).getByRole("button")).toHaveTextContent(
-      "the fixture language knows no such text",
-    );
+    // `(` opens on line 11, the line after the file's last, at column 2.
+    expect(within(diagnostics).getAllByRole("button")[0]).toHaveTextContent(/^11:2 error/);
     expect(text).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("edits nothing from the diagram while the text has errors", async () => {
+    const { user, texts } = setup(ORDER);
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    await user.type(screen.getByRole("textbox", { name: "Behavior text" }), "x(");
+    await waitFor(() => expect(texts).toHaveLength(1));
+    await user.click(screen.getByRole("tab", { name: "Diagram" }));
+    expect(screen.getByText(/^The text has errors/)).toBeVisible();
+    await user.click((await screen.findAllByRole("treeitem", { name: /^equal/ }))[0]!);
+    await user.keyboard("{Delete}");
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(texts).toHaveLength(1);
   });
 
   it("writes a store key from its control, through the runtime", async () => {
@@ -221,7 +246,7 @@ describe("BehaviorEditor", () => {
   it("says why the runtime refused the behavior", async () => {
     const refusing: BehaviorRuntime = {
       ...new MockArora(),
-      functions: () => Promise.resolve([]),
+      functions: () => Promise.resolve(MATH_FUNCTIONS),
       start: () => Promise.reject(new Error("the device has no interpreter")),
       step: () => Promise.reject(new Error("not started")),
       write: () => Promise.resolve(),
@@ -229,10 +254,7 @@ describe("BehaviorEditor", () => {
       keys: () => Promise.resolve([]),
       stop: () => Promise.resolve(),
     };
-    setup(ORDER, {
-      runtime: refusing,
-      language: { ...fixtureLanguage(), resolve: () => ORDER.loaded },
-    });
+    setup(ORDER, { runtime: refusing });
     expect(await screen.findByRole("alert")).toHaveTextContent("the device has no interpreter");
   });
 

@@ -64,7 +64,7 @@ export function diagramRows(
   for (const { node, path } of nodes) {
     const key = rowKey(path);
     const detached = path[0]! > 0;
-    const entry = functions.lookup(node.function);
+    const entry = functions.lookup(node.call.function);
     const shape = nodeShape(entry, node.children.length > 0, !detached);
     const parentKey = path.length > 1 ? rowKey(path.slice(0, -1)) : null;
     const name = node.name ? `${node.name.text}: ` : "";
@@ -80,7 +80,7 @@ export function diagramRows(
       descendantKeys: [],
       shape,
       glyph: shape === "control" ? controlGlyph(entry) : "",
-      title: `${name}${target}${functionText(node.function)}`,
+      title: `${name}${target}${functionText(node.call.function)}`,
       ports: ports(node, entry, producers),
       produces: node.name !== null,
       graphId:
@@ -106,12 +106,10 @@ function ports(
   const params = entry
     ? orderedParameters(entry.signature.function).map((p) => p.parameter.name)
     : [];
-  const names = [
-    ...params,
-    ...node.arguments.map((a) => a.name).filter((n) => !params.includes(n)),
-  ];
+  const written = node.call.arguments.map((a) => a.name.text);
+  const names = [...params, ...written.filter((n) => !params.includes(n))];
   return names.map((name) => {
-    const argument = node.arguments.find((a) => a.name === name);
+    const argument = node.call.arguments.find((a) => a.name.text === name);
     return {
       name,
       text: argument ? expressionText(argument.value) : "·",

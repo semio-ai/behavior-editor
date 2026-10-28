@@ -107,14 +107,19 @@ export function BehaviorEditor({
     [parsed.diagnostics, resolved.diagnostics],
   );
 
+  // While the text has errors, it is the only whole account of the behavior:
+  // the parse left out the lines it could not read, so an edit formatted from
+  // it would drop them. The diagram shows the parse and edits nothing.
+  const editable = !parsed.diagnostics.some((d) => d.severity === "error");
   const edit = useCallback(
     (change: Edit, select?: NodePath | null) => {
+      if (!editable) return;
       const next = change(parsed.document);
       if (next === parsed.document) return;
-      setText(language.format(next));
+      setText(language.format(next, functions));
       if (select !== undefined) setSelected(select === null ? null : rowKey(select));
     },
-    [parsed.document, language, setText],
+    [editable, parsed.document, language, functions, setText],
   );
 
   const drop = (key: string, target: Drop) => {
@@ -203,6 +208,12 @@ export function BehaviorEditor({
           </button>
         </span>
       </div>
+      {!editable && (
+        <p className="be-notice" role="status">
+          The text has errors: the diagram shows what parses, and edits wait until the text is
+          fixed.
+        </p>
+      )}
       <div className="be-canvas">
         {rows.length ? (
           <Diagram
@@ -240,6 +251,7 @@ export function BehaviorEditor({
       rows={rows}
       index={index}
       keys={[...playback.store.keys()]}
+      editable={editable}
       onEdit={edit}
     />
   );

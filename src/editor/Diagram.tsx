@@ -39,6 +39,8 @@ type NodeState = Status | "changed" | "same" | "cached" | "idle";
 /** A row's state this tick, and its return value with whether it changed since the tick before. */
 interface RowState {
   state: NodeState | null;
+  /** Whether the runtime said what the node did: a device may not. */
+  known?: boolean;
   value?: Value;
   change?: "changed" | "same";
 }
@@ -64,9 +66,11 @@ function stateOf(
         ? "changed"
         : "same";
   const shown = value === undefined ? {} : { value, change };
-  if (!row.detached) return { state: report.statuses?.[id] ?? null, ...shown };
+  if (!row.detached) {
+    return { state: report.statuses?.[id] ?? null, known: !!report.statuses, ...shown };
+  }
   const activity: DetachedActivity | undefined = report.detached?.[id];
-  if (activity === undefined) return { state: null, ...shown };
+  if (activity === undefined) return { state: null, known: !!report.detached, ...shown };
   if (activity !== "called") return { state: activity, ...shown };
   return { state: change ?? "changed", ...shown };
 }
@@ -338,7 +342,7 @@ interface DiagramNodeProps {
 function DiagramNode({
   box,
   position,
-  state: { state, value, change },
+  state: { state, known = true, value, change },
   miniStates,
   selected,
   focusable,
@@ -364,7 +368,7 @@ function DiagramNode({
   const classes = [
     "be-node",
     `be-${row.shape}`,
-    state === null ? "be-idle" : `be-${state}`,
+    state === null ? (known ? "be-idle" : "be-unknown") : `be-${state}`,
     selected ? "be-selected" : "",
     dropTarget ? "be-drop" : "",
     dragged ? "be-dragged" : "",

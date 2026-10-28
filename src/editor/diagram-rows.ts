@@ -97,7 +97,11 @@ export function diagramRows(
   return [...rows.values()];
 }
 
-/** One port per parameter in declared order, then any argument the function does not take. */
+/**
+ * One port per argument written: the function's parameters in declared order,
+ * then any argument the function does not take. A parameter left out has no
+ * port; the inspector lists it.
+ */
 function ports(
   node: SourceNode,
   entry: FunctionEntry | undefined,
@@ -107,18 +111,19 @@ function ports(
     ? orderedParameters(entry.signature.function).map((p) => p.parameter.name)
     : [];
   const written = node.call.arguments.map((a) => a.name.text);
-  const names = [...params, ...written.filter((n) => !params.includes(n))];
+  const names = [
+    ...params.filter((n) => written.includes(n)),
+    ...written.filter((n) => !params.includes(n)),
+  ];
   return names.map((name) => {
-    const argument = node.call.arguments.find((a) => a.name.text === name);
+    const { value } = node.call.arguments.find((a) => a.name.text === name)!;
     return {
       name,
-      text: argument ? expressionText(argument.value) : "·",
-      sources: argument
-        ? [...new Set(nodesRead(argument.value))].flatMap((n) => {
-            const key = producers.get(n);
-            return key === undefined ? [] : [key];
-          })
-        : [],
+      text: expressionText(value),
+      sources: [...new Set(nodesRead(value))].flatMap((n) => {
+        const key = producers.get(n);
+        return key === undefined ? [] : [key];
+      }),
     };
   });
 }

@@ -96,6 +96,29 @@ export function Inspector({ document, row, rows, index, keys, editable, onEdit }
   };
 
   const params = entry ? orderedParameters(entry.signature.function) : [];
+  const valueOf = (name: string) => node.call.arguments.find((a) => a.name.text === name)?.value;
+  // The arguments written come first; a function's other parameters wait behind a disclosure.
+  const given = params.filter(({ parameter }) => valueOf(parameter.name) !== undefined);
+  const unset = params.filter(({ parameter }) => valueOf(parameter.name) === undefined);
+  const argumentEditor = ({ id, parameter }: (typeof params)[number]) => (
+    <ArgumentEditor
+      key={id}
+      name={parameter.name}
+      ty={parameter.type}
+      mutable={parameter.mutable}
+      value={valueOf(parameter.name)}
+      onChange={(value) =>
+        onEdit((d) =>
+          value === null
+            ? clearArgument(d, path, parameter.name)
+            : setArgument(d, path, parameter.name, value),
+        )
+      }
+      producers={producers}
+      keys={keys}
+      index={index}
+    />
+  );
   const unknown = node.call.arguments.filter(
     (a) => !params.some((p) => p.parameter.name === a.name.text),
   );
@@ -165,25 +188,13 @@ export function Inspector({ document, row, rows, index, keys, editable, onEdit }
         )}
 
         {params.length > 0 && <h4 className="be-subhead">Arguments</h4>}
-        {params.map(({ id, parameter }) => (
-          <ArgumentEditor
-            key={id}
-            name={parameter.name}
-            ty={parameter.type}
-            mutable={parameter.mutable}
-            value={node.call.arguments.find((a) => a.name.text === parameter.name)?.value}
-            onChange={(value) =>
-              onEdit((d) =>
-                value === null
-                  ? clearArgument(d, path, parameter.name)
-                  : setArgument(d, path, parameter.name, value),
-              )
-            }
-            producers={producers}
-            keys={keys}
-            index={index}
-          />
-        ))}
+        {given.map(argumentEditor)}
+        {unset.length > 0 && (
+          <details className="be-unset">
+            <summary>{`${unset.length} more parameter${unset.length === 1 ? "" : "s"}`}</summary>
+            {unset.map(argumentEditor)}
+          </details>
+        )}
         {unknown.length > 0 && (
           <div className="be-unknown">
             <h4 className="be-subhead">Arguments the function does not take</h4>

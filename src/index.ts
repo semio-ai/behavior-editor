@@ -1,3 +1,5 @@
+export { BehaviorEditor, type BehaviorEditorProps } from "./editor/BehaviorEditor";
+
 export type { BehaviorText, Diagnostic, Loaded, LoadedNode, ParseResult } from "./text/language";
 export type {
   Argument,

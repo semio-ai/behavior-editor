@@ -36,6 +36,48 @@ export function sliderRange(value: number): [number, number] {
   return value < 0 ? [-top, top] : [0, top];
 }
 
+/**
+ * The values each integer type holds; the 64-bit ones as far as a JavaScript
+ * number holds an integer exactly.
+ */
+const INTEGER_LIMITS: Readonly<Partial<Record<NumericTag, readonly [number, number]>>> = {
+  u8: [0, 2 ** 8 - 1],
+  u16: [0, 2 ** 16 - 1],
+  u32: [0, 2 ** 32 - 1],
+  u64: [0, Number.MAX_SAFE_INTEGER],
+  i8: [-(2 ** 7), 2 ** 7 - 1],
+  i16: [-(2 ** 15), 2 ** 15 - 1],
+  i32: [-(2 ** 31), 2 ** 31 - 1],
+  i64: [Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
+};
+
+/**
+ * The values a key of type `tag` may be written: within the bounds its
+ * runtime declares, and within what its type holds.
+ */
+export function keyBounds(tag: NumericTag, info: KeyInfo | undefined): [number, number] {
+  const [low, high] = INTEGER_LIMITS[tag] ?? [-Infinity, Infinity];
+  return [Math.max(low, info?.min ?? -Infinity), Math.min(high, info?.max ?? Infinity)];
+}
+
+/**
+ * The range of a key's slider. Declared bounds are the range. A side with no
+ * bound spans the values the key held lately, `seen`, so the slider holds
+ * still while the value moves; the type's limits cut it.
+ */
+export function keySliderRange(
+  tag: NumericTag,
+  info: KeyInfo | undefined,
+  seen: readonly number[],
+): [number, number] {
+  const [low, high] = keyBounds(tag, info);
+  const declared = [info?.min, info?.max].filter((n) => n !== undefined);
+  const ranges = [...seen, ...declared].map(sliderRange);
+  const lo = info?.min ?? Math.max(low, Math.min(...ranges.map((r) => r[0])));
+  const hi = info?.max ?? Math.min(high, Math.max(...ranges.map((r) => r[1])));
+  return [lo, hi];
+}
+
 const SERIES = 4;
 
 /** What a key is, and so what a person may do with it. */
@@ -102,10 +144,10 @@ const NUMERIC: readonly NumericTag[] = [
 
 /**
  * The store, key by key, as the last tick left it, with the keys the behavior
- * reads that hold nothing yet. An editable key has a slider for a number, a
- * switch for a boolean, a field for a string, each writing through the
- * runtime; any other key shows its value and why it cannot be written. Any
- * number can be plotted.
+ * reads that hold nothing yet. An editable key has a field and a slider for
+ * a number, a switch for a boolean, a field for a string, each writing
+ * through the runtime; any other key shows its value and why it cannot be
+ * written. Any number can be plotted.
  */
 export function StorePanel({
   store,
@@ -120,19 +162,18 @@ export function StorePanel({
   const rows = keyRows(store, keys, behavior, pending);
   // A key is in an id encoded: it may hold spaces, which would split an id reference.
   const ids = useId();
-  // A key's slider spans the values it held lately, so it holds still while the value moves.
-  const rangeOf = (key: string, n: number): [number, number] => {
-    const seen = [n, ...(history.get(key) ?? []).filter((v): v is number => v !== null)];
-    const ranges = seen.map(sliderRange);
-    return [Math.min(...ranges.map((r) => r[0])), Math.max(...ranges.map((r) => r[1]))];
-  };
+  const seenOf = (key: string, n: number) => [
+    n,
+    ...(history.get(key) ?? []).filter((v): v is number => v !== null),
+  ];
   return (
     <section className="be-store" aria-label="Store">
       <h3>Store</h3>
       {rows.length === 0 && <p className="be-fine">The store holds no key yet.</p>}
       <ul className="be-keys">
         {rows.map(({ key, value, editable, note }) => {
-          const shown = value ?? startingValue(keys.get(key)?.ty);
+          const info = keys.get(key);
+          const shown = value ?? startingValue(info?.ty);
           const n = valueNumber(value);
           const plottable = n !== undefined || valueBoolean(value) !== undefined;
           const series = plotted.indexOf(key);
@@ -144,9 +185,8 @@ export function StorePanel({
                   <KeyEditor
                     name={key}
                     value={shown}
-                    range={
-                      valueNumber(shown) === undefined ? null : rangeOf(key, valueNumber(shown)!)
-                    }
+                    info={info}
+                    seen={seenOf(key, valueNumber(shown) ?? 0)}
                     describedBy={note ? noteId : undefined}
                     onWrite={(next) => onWrite(key, next)}
                   />
@@ -194,13 +234,16 @@ export function StorePanel({
 function KeyEditor({
   name,
   value,
-  range,
+  info,
+  seen,
   describedBy,
   onWrite,
 }: {
   name: string;
   value: Value;
-  range: [number, number] | null;
+  info: KeyInfo | undefined;
+  /** The numbers the key held lately. */
+  seen: readonly number[];
   describedBy: string | undefined;
   onWrite(value: Value): void;
 }) {
@@ -209,13 +252,22 @@ function KeyEditor({
   const tag = numericTag(value);
   const b = valueBoolean(value);
   const s = valueString(value);
-  if (n !== undefined && tag && range) {
+  if (n !== undefined && tag) {
     const integer = !tag.startsWith("f");
+    const range = keySliderRange(tag, info, seen);
+    const bounds = keyBounds(tag, info);
     const step = integer ? 1 : (range[1] - range[0]) / 200;
     return (
       <div className="be-control">
         <label htmlFor={id}>{name}</label>
-        <output htmlFor={id}>{formatNumber(n)}</output>
+        <NumberField
+          name={name}
+          describedBy={describedBy}
+          value={n}
+          integer={integer}
+          bounds={bounds}
+          onCommit={(next) => onWrite(numberValue(tag, next))}
+        />
         <input
           id={id}
           aria-describedby={describedBy}
@@ -264,6 +316,59 @@ function KeyEditor({
       <span className="be-label">{name}</span>
       <code className="be-as-written">{formatValue(value)}</code>
     </div>
+  );
+}
+
+/**
+ * A number typed in, written when it is committed: on Enter or on leaving the
+ * field. A number outside `bounds` is brought within them, and an integer
+ * type's is rounded; text that is no number is not written.
+ */
+function NumberField({
+  name,
+  describedBy,
+  value,
+  integer,
+  bounds,
+  onCommit,
+}: {
+  name: string;
+  describedBy: string | undefined;
+  value: number;
+  integer: boolean;
+  bounds: [number, number];
+  onCommit(n: number): void;
+}) {
+  const shown = integer ? String(value) : formatNumber(value);
+  const [text, setText] = useState(shown);
+  useEffect(() => setText(shown), [shown]);
+  // Only a change is written: the value shown may be rounded.
+  const commit = () => {
+    if (text === shown) return;
+    const typed = text.trim() === "" ? NaN : Number(text);
+    if (!Number.isFinite(typed)) {
+      setText(shown);
+      return;
+    }
+    const n = Math.min(Math.max(integer ? Math.round(typed) : typed, bounds[0]), bounds[1]);
+    if (n === value) setText(shown);
+    else onCommit(n);
+  };
+  return (
+    <input
+      className="be-number"
+      aria-label={`${name} value`}
+      aria-describedby={describedBy}
+      type="number"
+      inputMode={integer ? "numeric" : "decimal"}
+      {...(Number.isFinite(bounds[0]) ? { min: bounds[0] } : {})}
+      {...(Number.isFinite(bounds[1]) ? { max: bounds[1] } : {})}
+      step={integer ? 1 : "any"}
+      value={text}
+      onChange={(event) => setText(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => event.key === "Enter" && commit()}
+    />
   );
 }
 

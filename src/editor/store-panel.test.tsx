@@ -11,6 +11,7 @@ import { type AroraDevice, DeviceRuntime } from "../runtime/device-runtime";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorText } from "../text/language";
 import { BehaviorEditor } from "./BehaviorEditor";
+import { keySliderRange } from "./StorePanel";
 
 let language: BehaviorText;
 beforeAll(async () => {
@@ -166,6 +167,21 @@ describe("the store panel", () => {
     expect(loads.lastIndexOf("empty")).toBeGreaterThan(loads.findLastIndex((l) => l !== "empty"));
   });
 
+  it("spans a key's declared bounds, and types a value past the slider", async () => {
+    const device = new FakeDevice();
+    device.meta.set("face/smile", { ty: "f64", editable: true, min: 0, max: 2 });
+    device.store.set("face/smile", { f64: 0.3 });
+    const { user } = renderEditor(SMILE.text, deviceRuntime(device));
+    const store = await openStore(user);
+    const slider = await within(store).findByRole("slider", { name: "face/smile" });
+    expect([slider.getAttribute("min"), slider.getAttribute("max")]).toEqual(["0", "2"]);
+    const field = within(store).getByRole("spinbutton", { name: "face/smile value" });
+    await user.clear(field);
+    await user.type(field, "7{Enter}");
+    // Brought within the declared bounds.
+    await waitFor(() => expect(device.pending.at(-1)).toEqual({ "face/smile": { f64: 2 } }));
+  });
+
   it("describes a key holding a space by its note", async () => {
     const { user } = renderEditor(
       'running\n\nx: {"face/a key"} = add(a: 1, b: 1)\n',
@@ -178,5 +194,18 @@ describe("the store panel", () => {
         "published by the behavior every tick",
       ),
     );
+  });
+});
+
+describe("a key's slider", () => {
+  it("keeps within its type's limits and its declared bounds", () => {
+    expect(keySliderRange("u8", undefined, [200])).toEqual([0, 255]);
+    expect(keySliderRange("f64", { key: "k", editable: true, min: 0, max: 2 }, [0.3])).toEqual([
+      0, 2,
+    ]);
+    expect(keySliderRange("f64", { key: "k", editable: true, min: -5 }, [0.3])).toEqual([-5, 10]);
+    expect(keySliderRange("i8", undefined, [-3])).toEqual([-10, 10]);
+    // One bound declared: the other side spans it and the values seen.
+    expect(keySliderRange("f64", { key: "k", editable: true, min: 5 }, [0.3])).toEqual([5, 10]);
   });
 });

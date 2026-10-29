@@ -343,6 +343,27 @@ describe("BehaviorEditor", () => {
     expect(screen.getByText("(unsaved changes)")).toBeTruthy();
   });
 
+  it("shows a refused edit until the text is back to the behavior running", async () => {
+    const runtime = new MockArora({ store: SMILE.store });
+    const calls: string[] = [];
+    runtime.edit = () => {
+      calls.push("edit");
+      return Promise.reject(new Error("the device refused the edit"));
+    };
+    const { user } = setup(SMILE, { runtime });
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    await user.click(screen.getByRole("treeitem", { name: /^cheeks: / }));
+    const b = screen.getByRole("textbox", { name: "b" });
+    await user.clear(b);
+    await user.type(b, "0.9{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("the device refused the edit");
+    await user.clear(screen.getByRole("textbox", { name: "b" }));
+    await user.type(screen.getByRole("textbox", { name: "b" }), "0.6{Enter}");
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(calls).toEqual(["edit"]);
+  });
+
   it("edits the behavior running when the text changes, and starts it afresh on Reset", async () => {
     const runtime = new MockArora({ store: SMILE.store });
     const calls: string[] = [];

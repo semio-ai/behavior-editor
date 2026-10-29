@@ -465,6 +465,31 @@ describe("BehaviorEditor", () => {
     expect(written).toHaveLength(2);
   });
 
+  it("saves a graph file from the text as typed, before it is parsed again", async () => {
+    const written: string[] = [];
+    vi.stubGlobal("showSaveFilePicker", (options: { suggestedName: string }) =>
+      Promise.resolve({
+        name: options.suggestedName,
+        createWritable: () =>
+          Promise.resolve({
+            write: (data: string) => {
+              written.push(data);
+              return Promise.resolve();
+            },
+            close: () => Promise.resolve(),
+          }),
+      }),
+    );
+    const { user } = setup(SMILE);
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    await user.type(screen.getByRole("textbox", { name: "Behavior text" }), "late: not(x: true)\n");
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Graph, JSON" }));
+    await waitFor(() => expect(written).toHaveLength(1));
+    expect(written[0]).toContain('"id": "late"');
+    expect(screen.queryByText("(unsaved changes)")).toBeNull();
+  });
+
   it("writes no file whose name says another format than the one saved", async () => {
     const written: string[] = [];
     const offered: unknown[] = [];

@@ -220,16 +220,19 @@ export function BehaviorEditor({
   const contents = (format: FileFormat): { written: string; notice: string | null } => {
     if (format === "bt") return { written: text, notice: null };
     const label = FILE_FORMATS.find((f) => f.format === format)!.label;
-    if (diagnostics.some((d) => d.severity === "error")) {
+    // The text as typed, which typing may not have had parsed yet.
+    const now = source === text ? parsed : language.parse(text);
+    const graph = source === text ? resolved : language.resolve(now.document, functions);
+    if ([...now.diagnostics, ...graph.diagnostics].some((d) => d.severity === "error")) {
       throw new Error(`The text has errors: a ${label} file is written from the graph it resolves to`);
     }
-    const out = language.writeFile(resolved, format, functions);
+    const out = language.writeFile(graph, format, functions);
     if ("problems" in out) {
       throw new Error(`${label} cannot hold this behavior: ${problemsText(out.problems)}`);
     }
     return {
       written: out.text,
-      notice: hasComments(parsed.document)
+      notice: hasComments(now.document)
         ? `Saved as ${label}, which keeps no comments: the text's stay in its .bt`
         : null,
     };

@@ -259,7 +259,9 @@ export function BehaviorEditor({
     if (!opened) return;
     let next = opened.text;
     if (opened.format !== "bt") {
-      const out = language.openFile(opened.text, opened.format, functions);
+      // The runtime's functions as it says them now, which it may not have
+      // said yet when the picker opened.
+      const out = language.openFile(opened.text, opened.format, await active.functions());
       if ("problems" in out) {
         throw new Error(`${opened.name} does not open: ${problemsText(out.problems)}`);
       }

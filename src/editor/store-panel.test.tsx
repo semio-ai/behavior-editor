@@ -156,6 +156,36 @@ describe("the store panel", () => {
     expect(device.store.get("face/smile")).toEqual({ f64: written });
   });
 
+  it("shows another runtime's store without the writes pending on the last one", async () => {
+    const a = new FakeDevice();
+    a.meta.set("face/smile", { ty: "f64", editable: true });
+    a.store.set("face/smile", { f64: 0.2 });
+    const b = new FakeDevice();
+    b.meta.set("face/smile", { ty: "f64", editable: true });
+    b.store.set("face/smile", { f64: 0.3 });
+    const { user, view } = renderEditor(SMILE.text, deviceRuntime(a));
+    const store = await openStore(user);
+    const slider = await within(store).findByRole("slider", { name: "face/smile" });
+    fireEvent.change(slider, { target: { value: "0.8" } });
+    await waitFor(() => expect(slider).toHaveAccessibleDescription("applies at the next step"));
+    view.rerender(
+      <BehaviorEditor
+        language={language}
+        runtime={deviceRuntime(b)}
+        defaultText={SMILE.text}
+        autoPlay={false}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        Number((within(store).getByRole("slider", { name: "face/smile" }) as HTMLInputElement).value),
+      ).toBeCloseTo(0.3, 6),
+    );
+    expect(within(store).getByRole("slider", { name: "face/smile" })).not.toHaveAccessibleDescription(
+      "applies at the next step",
+    );
+  });
+
   it("stops the behavior after it started, however soon the editor unmounts", async () => {
     const device = new FakeDevice();
     const { view } = renderEditor(SMILE.text, deviceRuntime(device));

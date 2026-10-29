@@ -6,6 +6,7 @@ import { useState } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { type Example, GREET, ORDER, SMILE } from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import type { MethodSignature } from "../model/signature";
 import type { BehaviorDocument, SourceNode } from "../text/ast";
 import type { BehaviorText } from "../text/language";
 import { MATH_MODULE_ID } from "../runtime/math-module";
@@ -488,6 +489,51 @@ describe("BehaviorEditor", () => {
     await waitFor(() => expect(written).toHaveLength(1));
     expect(written[0]).toContain('"id": "late"');
     expect(screen.queryByText("(unsaved changes)")).toBeNull();
+  });
+
+  it("downloads a file named without an extension under the extension of its format", async () => {
+    const downloads: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloads.push(this.download);
+    });
+    const { createObjectURL, revokeObjectURL } = URL;
+    URL.createObjectURL = () => "blob:behavior";
+    URL.revokeObjectURL = () => undefined;
+    const { user } = setup(ORDER, { fileName: "draft" });
+    await screen.findByRole("tree", { name: "Behavior diagram" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(downloads).toEqual(["draft.bt"]));
+    expect(screen.getByText("draft.bt")).toBeTruthy();
+    click.mockRestore();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+  });
+
+  it("opens a graph file with the functions the runtime says once the picker returns", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const runtime = new MockArora({ store: GREET.store });
+    let said: (functions: MethodSignature[]) => void = () => {};
+    const saying = new Promise<MethodSignature[]>((resolve) => (said = resolve));
+    runtime.functions = () => saying;
+    let pick: (handles: unknown[]) => void = () => {};
+    vi.stubGlobal(
+      "showOpenFilePicker",
+      () => new Promise((resolve) => (pick = resolve)),
+    );
+    const { user, texts } = setup(SMILE, { runtime });
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    said(MATH_FUNCTIONS);
+    pick([
+      {
+        name: "greet.json",
+        getFile: () =>
+          Promise.resolve({ name: "greet.json", text: () => Promise.resolve(json.text) }),
+      },
+    ]);
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
   });
 
   it("writes no file whose name says another format than the one saved", async () => {

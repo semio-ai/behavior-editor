@@ -364,41 +364,53 @@ export function BehaviorEditor({
       )}
       {wide ? (
         <div className="be-main">
-          <ViewTabs tabs={WIDE_TABS} tab={tab === "store" ? "diagram" : tab} onTab={setTab}>
-            {tab === "text" ? textView : diagram}
-          </ViewTabs>
+          <ViewTabs
+            tabs={WIDE_TABS}
+            tab={tab === "store" ? "diagram" : tab}
+            onTab={setTab}
+            panels={{ diagram, text: textView }}
+          />
           <aside className="be-side">
             {inspector}
             {store}
           </aside>
         </div>
       ) : (
-        <ViewTabs tabs={NARROW_TABS} tab={tab} onTab={setTab}>
-          {tab === "diagram" && (
-            <>
-              {diagram}
-              {inspector}
-            </>
-          )}
-          {tab === "text" && textView}
-          {tab === "store" && store}
-        </ViewTabs>
+        <ViewTabs
+          tabs={NARROW_TABS}
+          tab={tab}
+          onTab={setTab}
+          panels={{
+            diagram: (
+              <>
+                {diagram}
+                {inspector}
+              </>
+            ),
+            text: textView,
+            store,
+          }}
+        />
       )}
     </div>
   );
 }
 
-/** Tabs over the editor's views, the arrow keys moving between them. */
+/**
+ * Tabs over the editor's views, the arrow keys moving between them. Every
+ * panel stays mounted, hidden while its tab is not selected, so a view keeps
+ * its own state across tab changes: the text's undo history, for one.
+ */
 function ViewTabs({
   tabs,
   tab,
   onTab,
-  children,
+  panels,
 }: {
   tabs: readonly TabInfo[];
   tab: Tab;
   onTab(tab: Tab): void;
-  children: ReactNode;
+  panels: Partial<Record<Tab, ReactNode>>;
 }) {
   return (
     <div className="be-tabs">
@@ -426,9 +438,17 @@ function ViewTabs({
           </button>
         ))}
       </div>
-      <div role="tabpanel" id={`be-panel-${tab}`} aria-labelledby={`be-tab-${tab}`}>
-        {children}
-      </div>
+      {tabs.map((t) => (
+        <div
+          key={t.id}
+          role="tabpanel"
+          id={`be-panel-${t.id}`}
+          aria-labelledby={`be-tab-${t.id}`}
+          hidden={tab !== t.id}
+        >
+          {panels[t.id]}
+        </div>
+      ))}
     </div>
   );
 }

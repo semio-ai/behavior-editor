@@ -50,6 +50,10 @@ function plotted(value: Value | undefined): number | null {
  * it at the chosen rate while playing, and keep the store as the ticks leave
  * it. Every call to the runtime waits for the one before, so a tick never
  * overtakes the start it follows.
+ *
+ * While `loaded` is `null`, the text being one that does not run, nothing
+ * ticks: the behavior last started stays loaded, as it last ticked, and the
+ * next behavior that runs takes its place.
  */
 export function usePlayback(
   runtime: BehaviorRuntime,
@@ -74,6 +78,8 @@ export function usePlayback(
   );
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const started = useRef(false);
+  /** Whether there is a behavior to tick: `loaded` is not `null`. */
+  const runnable = useRef(loaded !== null);
   const stepping = useRef(false);
 
   const enqueue = useCallback(<T>(task: () => Promise<T>) => {
@@ -129,6 +135,7 @@ export function usePlayback(
   );
 
   useEffect(() => {
+    runnable.current = loaded !== null;
     if (loaded) start(loaded);
   }, [loaded, start]);
 
@@ -142,9 +149,11 @@ export function usePlayback(
   );
 
   const step = useCallback(() => {
-    if (!started.current || stepping.current) return;
+    if (!started.current || !runnable.current || stepping.current) return;
     stepping.current = true;
     enqueue(async () => {
+      // A stop, or a text that does not run, may have come while this waited.
+      if (!started.current || !runnable.current) return;
       const tick = await runtime.step(1000 / rate);
       setReports((last) => ({ report: tick, previous: last.report }));
       const next = new Map(storeRef.current);
@@ -179,11 +188,12 @@ export function usePlayback(
       });
   }, [runtime, rate, enqueue, setStore, setPending, readKeys]);
 
+  const ticking = playing && loaded !== null;
   useEffect(() => {
-    if (!playing) return undefined;
+    if (!ticking) return undefined;
     const timer = setInterval(step, 1000 / rate);
     return () => clearInterval(timer);
-  }, [playing, rate, step]);
+  }, [ticking, rate, step]);
 
   const reset = useCallback(() => {
     if (!loaded) return;

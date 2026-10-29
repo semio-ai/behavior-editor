@@ -269,6 +269,22 @@ describe("BehaviorEditor", () => {
     expect(texts).toHaveLength(2);
   });
 
+  it("ticks nothing while the text does not run, and runs it again once it does", async () => {
+    const { user } = setup(ORDER, { autoPlay: true });
+    const tick = () => Number(/\d+/.exec(screen.getByLabelText("Tick").textContent ?? "")![0]);
+    await waitFor(() => expect(tick()).toBeGreaterThan(0));
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    const text = screen.getByRole("textbox", { name: "Behavior text" });
+    await user.type(text, "x(");
+    await screen.findByRole("list", { name: "Diagnostics" });
+    const stopped = tick();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(tick()).toBe(stopped);
+    await user.type(text, "{Backspace}{Backspace}");
+    await waitFor(() => expect(screen.queryByRole("list", { name: "Diagnostics" })).toBeNull());
+    await waitFor(() => expect(tick()).toBeGreaterThan(0));
+  });
+
   it("keeps what was typed when the tab changes before the text is parsed", async () => {
     const { user, texts } = setup(ORDER);
     await user.click(screen.getByRole("tab", { name: "Text" }));

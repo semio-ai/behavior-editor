@@ -256,6 +256,11 @@ class Program {
   readonly #cells = new Map<string, Cell>();
   /** The cells each literal argument owns, by port: what a rebuilt graph carries over. */
   readonly #literalCells = new Map<string, LocalCell>();
+  /**
+   * The cells of the ports no binding names, by port, made as a port is first
+   * used: a node's own state, such as a `sequence_star`'s place.
+   */
+  readonly #unboundCells = new Map<string, LocalCell>();
   readonly #variables = new Map<string, Cell>();
   readonly #attached = new Set<string>();
   /** The detached nodes, in the order the tree lists them. */
@@ -344,7 +349,9 @@ class Program {
     const source = this.#bindings.get(at);
     let cell: Cell;
     if (!source) {
-      cell = new LocalCell();
+      const own = new LocalCell();
+      this.#unboundCells.set(at, own);
+      cell = own;
     } else if ("value" in source) {
       const own = new LocalCell(source.value);
       this.#literalCells.set(at, own);
@@ -456,14 +463,27 @@ class Program {
 
   /**
    * Take over the state `previous` holds for every node an edit left in
-   * place, `fresh` naming those it set or bound: its literal cells, and the
-   * tree-local variables those nodes read.
+   * place, `fresh` naming those it set or bound: its literal cells, the cells
+   * of its unbound ports, the tree-local variables it reads, and a detached
+   * node's last call, so it is called again only when its arguments change.
    */
   #keepState(previous: Program, fresh: ReadonlySet<string>) {
     const same = (id: string) => !fresh.has(id) && previous.#nodes.has(id);
+    const nodeOf = (at: string) => at.split("|")[0]!;
     for (const [at, cell] of this.#literalCells) {
       const held = previous.#literalCells.get(at);
-      if (held && same(at.split("|")[0]!)) cell.set(held.get());
+      if (held && same(nodeOf(at))) cell.set(held.get());
+    }
+    for (const [at, held] of previous.#unboundCells) {
+      const id = nodeOf(at);
+      if (!same(id) || this.#bindings.has(at)) continue;
+      this.#cell(id, at.slice(id.length + 1)).set(held.get());
+    }
+    for (const [id, state] of this.#state) {
+      const held = previous.#state.get(id);
+      if (!held || !same(id)) continue;
+      if (held.args) state.args = [...held.args];
+      state.outputs = new Map(held.outputs);
     }
     for (const node of this.#nodes.values()) {
       if (!same(node.id)) continue;

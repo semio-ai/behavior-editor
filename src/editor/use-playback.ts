@@ -130,9 +130,13 @@ export function usePlayback(
     return next;
   }, [runtime, readKeys, setStore]);
 
+  // A runtime's store starts with no write of a person's pending: those were another's.
   useEffect(() => {
-    enqueue(readStore).catch((e: unknown) => setError(message(e)));
-  }, [enqueue, readStore]);
+    enqueue(async () => {
+      setPending(new Set());
+      await readStore();
+    }).catch((e: unknown) => setError(message(e)));
+  }, [enqueue, readStore, setPending]);
 
   /** Start `behavior` when none runs, or edit the one running into it. */
   const run = useCallback(

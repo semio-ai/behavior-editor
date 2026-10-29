@@ -81,6 +81,21 @@ describe("DeviceRuntime", () => {
     expect(device.calls).toEqual([JSON.stringify({ load: 1 })]);
   });
 
+  it("reports a step's changes from the store an edit left", async () => {
+    const { device, runtime } = setup();
+    device.store.set("k", { f64: 1 });
+    await runtime.start(ORDER.loaded);
+    // As a device applying the call with a step at zero dt.
+    const call = device.call.bind(device);
+    device.call = (json: string) => {
+      device.store.set("k", { f64: 2 });
+      return call(json);
+    };
+    await runtime.edit({ remove: ["n"] });
+    device.onStep = (store) => store.set("k", { f64: 1 });
+    expect((await runtime.step(10)).changes).toEqual([{ key: "k", value: { f64: 1 } }]);
+  });
+
   it("edits the behavior running through the device's call path, and refuses with none", async () => {
     const { device, runtime, edited } = setup();
     const diff: GraphDiff = { remove: ["n"] };

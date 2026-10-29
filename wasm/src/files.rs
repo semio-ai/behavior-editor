@@ -416,7 +416,10 @@ fn graph_text(
         .to_string()
     };
     let written = display(&labels);
-    if !keep_ids || resolves_to(&written, graph, functions) {
+    if !keep_ids {
+        return reads_back_alike(written, functions);
+    }
+    if resolves_to(&written, graph, functions) {
         return Ok(written);
     }
     // A node the text gives another id is named by its id.
@@ -446,6 +449,42 @@ fn graph_text(
         Err(Problem::new(
             "the graph has no text that reads back as the same graph",
         ))
+    }
+}
+
+/// `text`, the display of a graph whose nodes take the ids of their paths,
+/// when it reads back as the same behavior: it resolves without errors, and
+/// what it resolves to displays as `text` again. A text past the language's
+/// limits, such as its nesting depth, leaves part of the graph out.
+fn reads_back_alike(text: String, functions: &FunctionIndex) -> Result<String, Problem> {
+    let parsed = text::parse(&text);
+    let loaded = text::resolve(&parsed.document, functions);
+    let errors: Vec<&str> = parsed
+        .diagnostics
+        .iter()
+        .chain(&loaded.diagnostics)
+        .filter(|d| d.severity == Severity::Error)
+        .map(|d| d.message.as_str())
+        .collect();
+    if !errors.is_empty() {
+        return Err(Problem::new(format!(
+            "its text does not read back: {}",
+            errors.join("; ")
+        )));
+    }
+    let again = build_behavior_tree(&unseeded(&loaded.graph), &|_| None)
+        .map(|tree| {
+            tree.display(Names {
+                functions: Some(functions),
+                ..Names::default()
+            })
+            .to_string()
+        })
+        .map_err(|e| Problem::new(format!("its text does not read back: {e}")))?;
+    if again == text {
+        Ok(text)
+    } else {
+        Err(Problem::new("its text reads back as another behavior"))
     }
 }
 
@@ -721,6 +760,26 @@ mod tests {
         let refused = open_graph(&deep, GraphFormat::Json, &index).unwrap_err();
         assert!(refused[0].message.contains("nests deeper"), "{refused:?}");
         assert_eq!(json_depth(r#"{"a": "[[{", "b": ["\"]"]}"#), 2);
+    }
+
+    #[test]
+    fn a_groot_tree_past_the_language_s_depth_is_refused_not_cut() {
+        let index = FunctionIndex::new();
+        let tree = |depth: usize| {
+            format!(
+                "<root main_tree_to_execute=\"MainTree\"><BehaviorTree ID=\"MainTree\">{}<Succeed/>{}</BehaviorTree></root>",
+                "<Sequence>".repeat(depth),
+                "</Sequence>".repeat(depth)
+            )
+        };
+        assert!(open_groot(&tree(3), &index).is_ok());
+        let problems = open_groot(&tree(text::MAX_DEPTH + 2), &index).unwrap_err();
+        assert!(
+            problems[0]
+                .message
+                .starts_with("its text does not read back"),
+            "{problems:?}"
+        );
     }
 
     #[test]

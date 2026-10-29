@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { type NodePath, deleteNode, moveNode, reparent, siblingPath, walk } from "../model/edit";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
@@ -45,6 +45,9 @@ const TABS: { id: Tab; label: string }[] = [
 
 const WIDE = "(min-width: 1100px)";
 
+/** How long typing pauses before the text is parsed again. */
+export const REPARSE_DELAY_MS = 250;
+
 /**
  * An editor for a behavior: its tree and detached nodes as a diagram, and
  * its file as text, either editing the other; run on a device or a mock, its
@@ -81,7 +84,26 @@ export function BehaviorEditor({
     [controlled, onTextChange],
   );
 
-  const parsed = useMemo(() => language.parse(text), [language, text]);
+  // The text is current at every keystroke: what is saved, what a tab shows.
+  // Typing parses it again once it pauses; any other change, a diagram edit or
+  // a file opened, parses it at once, and makes a parse still waiting moot.
+  const [typed, setTyped] = useState<string | null>(null);
+  const [settled, setSettled] = useState(text);
+  useEffect(() => {
+    if (typed !== text) return undefined;
+    const timer = setTimeout(() => setSettled(text), REPARSE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [typed, text]);
+  const source = typed === text ? settled : text;
+  const type = useCallback(
+    (next: string) => {
+      setTyped(next);
+      setText(next);
+    },
+    [setText],
+  );
+
+  const parsed = useMemo(() => language.parse(source), [language, source]);
   const natives = useMemo(() => language.natives(), [language]);
   const { functions, error: functionsError } = useRuntimeFunctions(active);
   const resolved = useMemo(
@@ -111,12 +133,13 @@ export function BehaviorEditor({
 
   // While the text has errors, it is the only whole account of the behavior:
   // the parse left out the lines it could not read, so an edit formatted from
-  // it would drop them. The diagram shows the parse and edits nothing.
+  // it would drop them. The diagram shows the parse and edits nothing. Nor
+  // does it while typing waits to be parsed: the parse is of an older text.
   const editable = !parsed.diagnostics.some((d) => d.severity === "error");
   const [editError, setEditError] = useState<string | null>(null);
   const edit = useCallback(
     (change: Edit, select?: NodePath | null) => {
-      if (!editable) return;
+      if (!editable || source !== text) return;
       const next = change(parsed.document);
       if (next === parsed.document) return;
       let written: string;
@@ -130,7 +153,7 @@ export function BehaviorEditor({
       setText(written);
       if (select !== undefined) setSelected(select === null ? null : rowKey(select));
     },
-    [editable, parsed.document, language, functions, setText],
+    [editable, source, text, parsed.document, language, functions, setText],
   );
 
   const drop = (key: string, target: Drop) => {
@@ -155,7 +178,7 @@ export function BehaviorEditor({
   };
 
   const onCaret = (offset: number) => {
-    const line = text.slice(0, offset).split("\n").length;
+    const line = source.slice(0, offset).split("\n").length;
     const found = walk(parsed.document)
       .filter(({ node }) => node.span.line === line)
       .at(-1);
@@ -274,9 +297,10 @@ export function BehaviorEditor({
       </div>
       <TextView
         text={text}
+        parsed={source === text}
         diagnostics={diagnostics}
         highlight={selectedRow?.node.span ?? null}
-        onChange={setText}
+        onChange={type}
         onCaret={onCaret}
       />
     </div>

@@ -11,7 +11,7 @@ import type { BehaviorText } from "../text/language";
 import { MATH_MODULE_ID } from "../runtime/math-module";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
-import { BehaviorEditor, type BehaviorEditorProps } from "./BehaviorEditor";
+import { BehaviorEditor, type BehaviorEditorProps, REPARSE_DELAY_MS } from "./BehaviorEditor";
 
 let language: BehaviorText;
 beforeAll(async () => {
@@ -248,8 +248,9 @@ describe("BehaviorEditor", () => {
     const text = screen.getByRole("textbox", { name: "Behavior text" });
     expect(text).toHaveValue(ORDER.text);
     await user.type(text, "x(");
-    expect(texts).toEqual([]);
-    await waitFor(() => expect(texts).toEqual([`${ORDER.text}x(`]));
+    // Every keystroke reaches the text; the parse waits for typing to pause.
+    expect(texts).toEqual([`${ORDER.text}x`, `${ORDER.text}x(`]);
+    expect(screen.queryByRole("list", { name: "Diagnostics" })).toBeNull();
     const diagnostics = await screen.findByRole("list", { name: "Diagnostics" });
     // `(` opens on line 11, the line after the file's last, at column 2.
     expect(within(diagnostics).getAllByRole("button")[0]).toHaveTextContent(/^11:2 error/);
@@ -260,13 +261,37 @@ describe("BehaviorEditor", () => {
     const { user, texts } = setup(ORDER);
     await user.click(screen.getByRole("tab", { name: "Text" }));
     await user.type(screen.getByRole("textbox", { name: "Behavior text" }), "x(");
-    await waitFor(() => expect(texts).toHaveLength(1));
     await user.click(screen.getByRole("tab", { name: "Diagram" }));
-    expect(screen.getByText(/^The text has errors/)).toBeVisible();
+    expect(await screen.findByText(/^The text has errors/)).toBeVisible();
     await user.click((await screen.findAllByRole("treeitem", { name: /^truthy/ }))[0]!);
     await user.keyboard("{Delete}");
     expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
-    expect(texts).toHaveLength(1);
+    expect(texts).toHaveLength(2);
+  });
+
+  it("keeps what was typed when the tab changes before the text is parsed", async () => {
+    const { user, texts } = setup(ORDER);
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    await user.type(screen.getByRole("textbox", { name: "Behavior text" }), "# note");
+    await user.click(screen.getByRole("tab", { name: "Diagram" }));
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    expect(screen.getByRole("textbox", { name: "Behavior text" })).toHaveValue(
+      `${ORDER.text}# note`,
+    );
+    expect(texts.at(-1)).toBe(`${ORDER.text}# note`);
+  });
+
+  it("parses a file replacing the text at once, whatever typing left waiting", async () => {
+    const { user } = setup(ORDER);
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    await user.type(screen.getByRole("textbox", { name: "Behavior text" }), "x(");
+    await user.click(screen.getByRole("button", { name: "New" }));
+    await user.click(await screen.findByRole("button", { name: /^Discard/ }));
+    expect(screen.getByRole("textbox", { name: "Behavior text" })).toHaveValue("");
+    await new Promise((resolve) => setTimeout(resolve, REPARSE_DELAY_MS * 2));
+    expect(screen.getByRole("textbox", { name: "Behavior text" })).toHaveValue("");
+    // What the typed `x(` on line 11 broke is no longer reported.
+    expect(screen.queryByText(/^11:/)).toBeNull();
   });
 
   it("writes a store key from its control, through the runtime", async () => {

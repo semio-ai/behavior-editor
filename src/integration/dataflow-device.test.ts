@@ -1,74 +1,55 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import initStudioArora, { StudioAroraWorld } from "@semio/studio-arora";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import initDataflowDevice, { DataflowDevice, editCall } from "../../device/pkg/dataflow_device.js";
+import { DATAFLOW_INPUTS } from "../../fixtures/devices/dataflow";
 import { loadLanguage } from "../../fixtures/language";
 import type { MethodSignature } from "../model/signature";
 import { type Value, valueNumber, valueString } from "../model/value";
-import { type AroraDevice, DeviceRuntime } from "../runtime/device-runtime";
+import { DeviceRuntime } from "../runtime/device-runtime";
 import type { BehaviorText, Loaded } from "../text/language";
 
 /**
- * The editor's behavior on a real Arora runtime: an emulated device of
- * `@semio/studio-arora`'s World, which carries `@arora/dataflow`, driven
- * through `DeviceRuntime` with the language from the editor's wasm build. Both
- * wasm builds are read from disk (`npm run build -w @semio/studio-arora`,
- * `npm run build:wasm` here); a missing build fails here rather than skipping.
+ * The editor's behavior on a real Arora runtime: `DataflowDevice`, arora-web's
+ * browser device over arora's runtime with `@arora/dataflow` as a host module,
+ * built from crates.io by `device/`, driven through `DeviceRuntime` with the
+ * language from the editor's wasm build. Both wasm builds are read from disk
+ * (`npm run build:device`, `npm run build:wasm`); a missing build fails here
+ * rather than skipping.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repository = join(here, "..", "..", "..", "..");
-const FILE = join(here, "..", "..", "fixtures", "devices", "dataflow.bt");
-const DEVICE = "D";
+const root = join(here, "..", "..");
+const FILE = join(root, "fixtures", "devices", "dataflow.bt");
+const NAMESPACE = "D";
 const DT_MS = 20;
 
 let language: BehaviorText;
 let text: string;
 
 beforeAll(async () => {
-  await initStudioArora({
-    module_or_path: await readFile(
-      join(repository, "packages", "studio-arora", "pkg", "studio_arora_bg.wasm"),
-    ),
+  await initDataflowDevice({
+    module_or_path: await readFile(join(root, "device", "pkg", "dataflow_device_bg.wasm")),
   });
   language = await loadLanguage();
   text = await readFile(FILE, "utf8");
 });
 
-let world: StudioAroraWorld;
+let device: DataflowDevice;
 let runtime: DeviceRuntime;
 
-/** The World's methods bound to the device `DEVICE`, as `DeviceRuntime` takes a device. */
-function bound(target: StudioAroraWorld): AroraDevice {
-  return {
-    describeMethods: (prefix) => target.describeMethods(DEVICE, prefix),
-    call: (callJson) => target.call(DEVICE, callJson),
-    update: (changesJson) => target.update(DEVICE, changesJson),
-    read: (key) => target.read(key),
-    listKeys: (prefix) => target.listKeys(DEVICE, prefix),
-    step: (dtMs) => target.step(dtMs),
-  };
-}
-
 beforeEach(() => {
-  world = new StudioAroraWorld();
-  world.spawnEntity("E", "[]");
-  world.attachEmulated("E", DEVICE);
-  // A key written from outside the device is one its meta opens, of its type.
-  for (const key of ["sensor/distance", "face/smile_target"]) {
-    world.setMeta(DEVICE, key, JSON.stringify({ ty: "f32", editable: true }));
-  }
+  device = new DataflowDevice(NAMESPACE, JSON.stringify(DATAFLOW_INPUTS));
   runtime = new DeviceRuntime({
-    device: bound(world),
-    deviceId: DEVICE,
+    device,
+    deviceId: NAMESPACE,
     loadCall: (graph) => language.loadCall(graph),
   });
 });
 
 afterEach(() => {
-  world.dispose();
-  world.free();
+  device.free();
 });
 
 /** The file resolved against the device's functions. */
@@ -88,7 +69,7 @@ async function step(changes: Record<string, Value> = {}) {
   return runtime.step(DT_MS);
 }
 
-describe("a behavior file on an emulated studio-arora device", () => {
+describe("a behavior file on an Arora device carrying @arora/dataflow", () => {
   it("resolves against the device's own functions and the natives", async () => {
     const { loaded, functions } = await resolved();
     expect(loaded.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
@@ -115,10 +96,15 @@ describe("a behavior file on an emulated studio-arora device", () => {
 
   it("runs on the device: conditions, a cascade, the clock and a stateful node", async () => {
     const { loaded } = await resolved();
+    // The inputs hold their first values as the behavior starts: the step at a
+    // zero dt that applies the load applies the writes before it, then ticks
+    // the behavior once, so the smile starts at its target.
+    await runtime.write("sensor/distance", f32(0.3));
+    await runtime.write("face/smile_target", f32(1));
     await runtime.start(loaded);
 
     // Near: the condition holds, and the cascade gives clamp(100 d, 0, 50) + 1.
-    await step({ "sensor/distance": f32(0.3), "face/smile_target": f32(1) });
+    await step();
     await step();
     expect(valueString(await runtime.read("face/mood"))).toBe("near");
     expect(await number("face/level")).toBeCloseTo(31, 4);
@@ -170,5 +156,11 @@ describe("a behavior file on an emulated studio-arora device", () => {
     await step();
     expect(await number("face/level")).toBeCloseTo(31, 4);
     expect(valueString(await runtime.read("face/mood"))).toBe("near");
+  });
+
+  it("takes the interpreter's edit through the call path a load takes", async () => {
+    const { loaded } = await resolved();
+    await runtime.start(loaded);
+    expect(JSON.parse(device.call(editCall("{}")))).toHaveProperty("ret");
   });
 });

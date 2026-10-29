@@ -1,5 +1,7 @@
 node_modules/
 dist/
-# The language's wasm build, and cargo's outputs.
+# The wasm builds: the language's package and the test device's, and cargo's outputs.
 /wasm/pkg
 /wasm/target
+/device/pkg
+/device/target

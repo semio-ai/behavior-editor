@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { EXAMPLES } from "../fixtures/examples";
+import { DATAFLOW_INPUTS } from "../fixtures/devices/dataflow";
 import dataflow from "../fixtures/devices/dataflow.bt?raw";
 import {
   BehaviorEditor,
@@ -12,6 +13,7 @@ import {
   createBehaviorText,
 } from "../src";
 import "../src/styles.css";
+import initDataflowDevice, { DataflowDevice } from "../device/pkg/dataflow_device.js";
 import initBehaviorText, * as behaviorText from "../wasm/pkg/behavior_text.js";
 
 /** An example the demo opens: its file, and the runtime it runs on. */
@@ -29,52 +31,34 @@ const DEVICE = "D";
 
 /**
  * The NGBT spectrum's examples, each on a mock device seeded as the spectrum
- * seeds it; and, when `@semio/studio-arora`'s wasm build is present, a
- * behavior calling `@arora/dataflow` on an emulated device of Studio's World.
+ * seeds it, and a behavior calling `@arora/dataflow` on an Arora device
+ * (`device/`), its inputs seeded.
  */
-async function examples(language: BehaviorText): Promise<DemoExample[]> {
+function examples(language: BehaviorText): DemoExample[] {
   const mocked: DemoExample[] = EXAMPLES.map((e) => ({
     ...e,
     runtime: () => ({ runtime: new MockArora({ store: e.store }), dispose: () => {} }),
   }));
-  const studioArora = await import("@semio/studio-arora")
-    .then(async (module) => {
-      await module.default();
-      return module;
-    })
-    .catch(() => null);
-  if (!studioArora) return mocked;
-  const device: DemoExample = {
+  const onDevice: DemoExample = {
     id: "dataflow",
-    title: "Dataflow, on an emulated device",
+    title: "Dataflow, on an Arora device",
     file: "dataflow.bt",
     text: dataflow,
     plot: ["face/level", "rig/sway", "face/smile"],
     runtime: () => {
-      const world = new studioArora.StudioAroraWorld();
-      world.spawnEntity("E", "[]");
-      world.attachEmulated("E", DEVICE);
-      for (const key of ["sensor/distance", "face/smile_target"]) {
-        world.setMeta(DEVICE, key, JSON.stringify({ ty: "f32", editable: true }));
-      }
-      world.update(DEVICE, JSON.stringify({ "sensor/distance": { f32: 0.3 } }));
-      world.update(DEVICE, JSON.stringify({ "face/smile_target": { f32: 1 } }));
+      const device = new DataflowDevice(DEVICE, JSON.stringify(DATAFLOW_INPUTS));
+      device.update(
+        JSON.stringify({ "sensor/distance": { f32: 0.3 }, "face/smile_target": { f32: 1 } }),
+      );
       const runtime = new DeviceRuntime({
-        device: {
-          describeMethods: (prefix) => world.describeMethods(DEVICE, prefix),
-          call: (callJson) => world.call(DEVICE, callJson),
-          update: (changesJson) => world.update(DEVICE, changesJson),
-          read: (key) => world.read(key),
-          listKeys: (prefix) => world.listKeys(DEVICE, prefix),
-          step: (dtMs) => world.step(dtMs),
-        },
+        device,
         deviceId: DEVICE,
         loadCall: (graph) => language.loadCall(graph),
       });
-      return { runtime, dispose: () => world.free() };
+      return { runtime, dispose: () => device.free() };
     },
   };
-  return [...mocked, device];
+  return [...mocked, onDevice];
 }
 
 function Demo({ language, all }: { language: BehaviorText; all: DemoExample[] }) {
@@ -114,10 +98,10 @@ function Demo({ language, all }: { language: BehaviorText; all: DemoExample[] })
   );
 }
 
-await initBehaviorText();
+await Promise.all([initBehaviorText(), initDataflowDevice()]);
 const language = createBehaviorText(behaviorText);
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Demo language={language} all={await examples(language)} />
+    <Demo language={language} all={examples(language)} />
   </StrictMode>,
 );

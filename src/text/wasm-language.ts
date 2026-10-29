@@ -1,5 +1,6 @@
 import type { Graph } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
+import { holdsExactly } from "../model/value";
 import type { BehaviorDocument } from "./ast";
 import type { BehaviorText, Diagnostic, Loaded, ParseResult } from "./language";
 
@@ -38,10 +39,34 @@ export function createBehaviorText(exports: BehaviorTextExports): BehaviorText {
       }
     },
     resolve: (document: BehaviorDocument, functions: MethodSignature[]) =>
-      JSON.parse(exports.resolve(JSON.stringify(document), JSON.stringify(functions))) as Loaded,
+      refuseInexact(
+        JSON.parse(exports.resolve(JSON.stringify(document), JSON.stringify(functions))) as Loaded,
+      ),
     natives: () => (natives ??= JSON.parse(exports.natives()) as MethodSignature[]),
     loadCall: (graph: Graph) => exports.loadCall(JSON.stringify(graph)),
   };
+}
+
+/**
+ * `loaded`, with an error for each literal holding a 64-bit integer the
+ * decoded graph no longer holds exactly: the behavior does not run rather
+ * than run on a rounded value. Its text keeps the digits as written.
+ */
+function refuseInexact(loaded: Loaded): Loaded {
+  const spans = new Map(loaded.nodes.map((n) => [n.id, n.span]));
+  const inexact = loaded.graph.links.flatMap((link) =>
+    "literal" in link.source && !holdsExactly(link.source.literal)
+      ? [
+          {
+            severity: "error" as const,
+            message:
+              "This 64-bit integer is past ±9007199254740991, which the editor cannot hold exactly",
+            span: spans.get(link.target.node) ?? { start: 0, end: 0, line: 1, column: 1 },
+          },
+        ]
+      : [],
+  );
+  return inexact.length ? { ...loaded, diagnostics: [...loaded.diagnostics, ...inexact] } : loaded;
 }
 
 /** What a refusal to format says, from the JSON of its diagnostics. */

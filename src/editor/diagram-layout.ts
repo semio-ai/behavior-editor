@@ -312,14 +312,15 @@ export function layoutDiagram(
         }@${direct ? i : "folded"}`;
         if (seen.has(id)) continue;
         seen.add(id);
-        // A wire that runs back and down goes around the right of both nodes
-        // and into the port from above, so it crosses neither.
+        // A wire that runs back goes around the right of both nodes, over
+        // the top of both, and into the port from above, so it crosses neither.
         const xr = Math.max(x1, to.x + to.w) + 9;
+        const over = Math.min(from.y, to.y) - 8;
         const bend = Math.max(36, (x2 - x1) / 2);
         const d =
-          x2 >= x1 + 24 || y2 < y1
+          x2 >= x1 + 24
             ? `M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`
-            : `M${x1},${y1} H${xr} V${to.y - 8} H${x2 - 10} V${y2} H${x2}`;
+            : `M${x1},${y1} H${xr} V${over} H${x2 - 10} V${y2} H${x2}`;
         wires.push({ id, from: from.row.key, to: to.row.key, port: direct ? i : null, d });
       }
     });

@@ -141,6 +141,21 @@ describe("the diagram's outputs", () => {
     expect(ids.filter((id) => id.endsWith(">5@0"))).toEqual(["3._ret>5@0", "3.state>5@0"]);
   });
 
+  it("routes a wire back to a reader on its left over both nodes", () => {
+    const text =
+      "sequence\n  identity(x: @m.state)\n  m: damp(target: 1, half_life: 0.1, state: none)\n";
+    const { document } = language.parse(text);
+    const loaded = language.resolve(document, MATH_FUNCTIONS);
+    const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+    const layout = layoutDiagram(diagramRows(document, index, loaded.nodes), new Set());
+    const [reader, producer] = [layout.boxes.get("0.0")!, layout.boxes.get("0.1")!];
+    expect(reader.x + reader.w).toBeLessThan(producer.x);
+    const wire = layout.wires.find((w) => w.from === "0.1" && w.to === "0.0")!;
+    expect(wire.d).not.toContain("C");
+    const ys = [...wire.d.matchAll(/V(-?[\d.]+)/g)].map((m) => Number(m[1]));
+    expect(Math.min(...ys)).toBeLessThan(Math.min(reader.y, producer.y));
+  });
+
   it("starts a wire at the output it reads", () => {
     const layout = layoutDiagram(rowsOf(RETURN_VALUES), new Set());
     const level = layout.boxes.get("3")!;

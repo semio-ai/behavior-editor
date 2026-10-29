@@ -613,6 +613,26 @@ describe("MockArora", () => {
       expect(restarted.statuses?.[id("root.0")]).toBeDefined();
     });
 
+    it("keeps the place of a sequence_star whose place no binding holds", async () => {
+      const device = new MockArora({ store: { now: { f64: 0 } } });
+      await device.start(
+        loaded(
+          node("r", N.SEQUENCE_STAR, {}, ["a", "w", "b"]),
+          node("a", MATH.identity.id, { [MATH.identity.x]: value({ f64: 1 }) }),
+          node("w", MATH.wait.id, {
+            [MATH.wait.seconds]: value({ f64: 0.03 }),
+            [MATH.wait.now]: key(TIME_KEY),
+            [MATH.wait.since]: value({ option: null }),
+          }),
+          node("b", N.SUCCEED),
+        ),
+      );
+      expect((await device.step(DT)).statuses).toEqual({ r: "R", a: "S", w: "R" });
+      await device.edit({});
+      // On from the wait: the first child does not run again.
+      expect((await device.step(DT)).statuses).toEqual({ r: "S", w: "S", b: "S" });
+    });
+
     it("is refused when no behavior runs", async () => {
       await expect(new MockArora().edit({})).rejects.toThrow(/no behavior runs/);
     });

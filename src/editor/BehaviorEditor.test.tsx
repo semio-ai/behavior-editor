@@ -71,6 +71,12 @@ describe("BehaviorEditor", () => {
     expect(item(/^fallback/)).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("describes a node by its outputs", async () => {
+    setup(SMILE);
+    const mouth = await screen.findByRole("treeitem", { name: /^mouth: / });
+    expect(mouth).toHaveAccessibleDescription("{rig/mouth_corner} ← _ret state");
+  });
+
   it("steps the behavior and shows what each node did", async () => {
     const { user, runtime } = setup(ORDER);
     await user.click(await screen.findByRole("button", { name: "Step" }));

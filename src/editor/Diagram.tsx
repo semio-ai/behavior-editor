@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { type Value, formatValue, valueEquals } from "../model/value";
 import { statusOf } from "../runtime/natives";
 import type { DetachedActivity, Status, TickReport } from "../runtime/runtime";
@@ -361,6 +361,9 @@ function DiagramNode({
   onPointerDown,
 }: DiagramNodeProps) {
   const { row, w, h } = box;
+  // The outputs describe the node: its name says what it is and did.
+  const outputsId = useId();
+  const outputIds = box.outputLines.map((_, i) => `${outputsId}-${i}`);
   const rx =
     row.shape === "condition"
       ? row.ports.length
@@ -401,6 +404,7 @@ function DiagramNode({
       aria-selected={selected}
       aria-expanded={hasChildren ? !box.folded : undefined}
       aria-label={label}
+      aria-describedby={outputIds.length ? outputIds.join(" ") : undefined}
       tabIndex={focusable ? 0 : -1}
       data-key={row.key}
       onFocus={onFocus}
@@ -436,6 +440,7 @@ function DiagramNode({
       {box.outputLines.map((line, i) => (
         <text
           key={`out-${i}`}
+          id={outputIds[i]}
           className="be-line be-output"
           x={w - 11}
           y={4 + outputY(box, i)}

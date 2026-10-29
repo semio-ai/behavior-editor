@@ -400,6 +400,10 @@ fn graph_text(
     mut labels: HashMap<Uuid, String>,
     keep_ids: bool,
 ) -> Result<String, Problem> {
+    // A tree needs a node: the empty graph is the empty text.
+    if graph.root.is_none() && graph.nodes.is_empty() {
+        return Ok(String::new());
+    }
     let graph = &unseeded(graph);
     let tree = build_behavior_tree(graph, &|_| None)
         .map_err(|e| Problem::new(format!("the graph is not a behavior: {e}")))?;
@@ -717,6 +721,20 @@ mod tests {
         let refused = open_graph(&deep, GraphFormat::Json, &index).unwrap_err();
         assert!(refused[0].message.contains("nests deeper"), "{refused:?}");
         assert_eq!(json_depth(r#"{"a": "[[{", "b": ["\"]"]}"#), 2);
+    }
+
+    #[test]
+    fn an_empty_behavior_saves_and_opens_again() {
+        let loaded = text::resolve(&text::parse("").document, &FunctionIndex::new());
+        let index = FunctionIndex::new();
+        for format in [GraphFormat::Json, GraphFormat::Yaml] {
+            let file = write_graph(&loaded.graph, &HashMap::new(), format, &index).unwrap();
+            assert_eq!(
+                open_graph(&file, format, &index).unwrap(),
+                "",
+                "{format:?}: {file}"
+            );
+        }
     }
 
     #[test]

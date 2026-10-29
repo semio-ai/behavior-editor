@@ -1,10 +1,10 @@
 # Order within a tick: write v, read v × 10, write again, read again.
 sequence
-  {v} = identity(x: @inc)
-  truthy(x: @ok)
-  {v} = identity(x: @inc)
-  truthy(x: @ok)
+  {v} = identity(x: @inc._ret)
+  truthy(x: @ok._ret)
+  {v} = identity(x: @inc._ret)
+  truthy(x: @ok._ret)
 
 inc: add(a: {v}, b: 1)
 scaled: mul(a: {v}, b: 10)
-ok: lt(a: @scaled, b: 1000000000000)
+ok: lt(a: @scaled._ret, b: 1000000000000)

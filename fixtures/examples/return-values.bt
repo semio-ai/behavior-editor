@@ -1,12 +1,12 @@
-# Return values: `@name` reads the return value (`_ret`) of the node named
+# Return values: `@name._ret` reads the return value (`_ret`) of the node named
 # `name`, `{key} = …` writes a node's return value to the store, and a nested
 # call hands its return value straight to the parameter it fills.
 fallback
   sequence
-    truthy(x: @near)
-    {face/look} = identity(x: @level)
+    truthy(x: @near._ret)
+    {face/look} = identity(x: @level._ret)
   {face/look} = identity(x: 0f64)
 
 near: lt(a: {sensor/distance}, b: 0.5)
 cm: clamp(x: mul(a: {sensor/distance}, b: 100), min: 0, max: 50)
-level: {face/level} = add(a: @cm, b: 1)
+level: {face/level} = add(a: @cm._ret, b: 1)

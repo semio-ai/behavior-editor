@@ -20,12 +20,8 @@ import {
   walk,
 } from "./edit";
 
-const ref = (node: string, parameter: string | null = null): Expression =>
-  expression({
-    type: "port",
-    node: name(node),
-    parameter: parameter === null ? null : name(parameter),
-  });
+const ref = (node: string, parameter = "_ret"): Expression =>
+  expression({ type: "port", node: name(node), parameter: name(parameter) });
 const num = (text: string): Expression => expression({ type: "number", text, suffix: null });
 const key = (variable: string): Expression => expression({ type: "variable", name: variable });
 
@@ -43,12 +39,12 @@ function withChildren(node: SourceNode, children: SourceNode[]): SourceNode {
 /**
  * fallback
  *   sequence
- *     below(x: @cm, limit: 30)
+ *     below(x: @cm._ret, limit: 30)
  *     succeed
  *   fail
  *
  * raw: mul(a: {sensor/distance}, b: 100)
- * cm: clamp(x: @raw, min: 0)
+ * cm: clamp(x: @raw._ret, min: 0)
  */
 function sample(): BehaviorDocument {
   return {

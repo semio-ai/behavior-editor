@@ -187,7 +187,7 @@ export function reparent(
 
 /**
  * Name the node at `path` `name`, or unname it with `null`, and make every
- * `@old` reference read the new name. Refused when another node has the name.
+ * `@old.<port>` reference read the new name. Refused when another node has the name.
  */
 export function renameNode(
   document: BehaviorDocument,

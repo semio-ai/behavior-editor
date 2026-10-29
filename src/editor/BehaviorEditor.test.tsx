@@ -180,7 +180,7 @@ describe("BehaviorEditor", () => {
     expect(written().nodes[4]?.call.arguments[1]?.value.kind).toMatchObject({
       type: "port",
       node: { text: "corner" },
-      parameter: null,
+      parameter: { text: "_ret" },
     });
   });
 
@@ -192,7 +192,7 @@ describe("BehaviorEditor", () => {
     await user.clear(key);
     await user.type(key, "face/a key{Enter}");
     expect(texts.at(-1)).toContain(
-      'cheeks: {rig/cheek_raise} = mul(a: @amount, b: {"face/a key"})',
+      'cheeks: {rig/cheek_raise} = mul(a: @amount._ret, b: {"face/a key"})',
     );
   });
 

@@ -9,14 +9,14 @@ wasm and shipped with the package, so the editor reads a file exactly as the
 device does:
 
 ```text
-fallback                                   # the first node is the root
+fallback                                       # the first node is the root
   sequence
-    equal(a: {person/visible}, b: true)    # {key}: a store key
-    equal(a: @fresh, b: true)              # @node: a node's return value
+    equal(a: {person/visible}, b: true)        # {key}: a store key
+    equal(a: @fresh._ret, b: true)             # @node._ret: a node's return value
   succeed
 
-fresh: not(x: {social/greeted})            # no node holds it: a detached node
-level: {face/level} = add(a: @cm, b: 1)    # its return value written to a key
+fresh: not(x: {social/greeted})                # no node holds it: a detached node
+level: {face/level} = add(a: @cm._ret, b: 1)   # its return value written to a key
 ```
 
 ## Use

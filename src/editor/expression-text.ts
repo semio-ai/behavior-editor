@@ -13,7 +13,7 @@ export function callText(call: Call): string {
 
 /**
  * An argument's value as the diagram and the inspector show it, on one line:
- * `0.6`, `{face/smile}`, `@raw`, `osc(t: {arora/time}, frequency: 1.6)`. The
+ * `0.6`, `{face/smile}`, `@raw._ret`, `osc(t: {arora/time}, frequency: 1.6)`. The
  * file's own text is the language service's to write.
  */
 export function expressionText(expression: Expression): string {
@@ -42,7 +42,7 @@ export function expressionText(expression: Expression): string {
     case "variable_id":
       return `{${kind.value}}`;
     case "port":
-      return `@${kind.node.text}${kind.parameter === null ? "" : `.${kind.parameter.text}`}`;
+      return `@${kind.node.text}.${kind.parameter.text}`;
     case "select":
       return `${expressionText(kind.source)}[${kind.path}]`;
     case "call":
@@ -62,7 +62,7 @@ export function variableText(key: string): string {
   return plain ? `{${key}}` : `{${JSON.stringify(key)}}`;
 }
 
-/** The nodes `expression` reads, as `@node`, at any depth. */
+/** The nodes `expression` reads, as `@node.<port>`, at any depth. */
 export function nodesRead(expression: Expression): string[] {
   const { kind } = expression;
   switch (kind.type) {

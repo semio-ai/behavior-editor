@@ -327,7 +327,7 @@ class Program {
       const name = source.key;
       if (!name.startsWith(".") && this.#isDetachedOutput(id, param)) {
         // A detached node's output bound to a store key keeps a cell of its
-        // own, which `@node` reads, and publishes to the key after the tree.
+        // own, which `@node._ret` reads, and publishes to the key after the tree.
         this.#publish.set(at, name);
         cell = new LocalCell();
       } else {

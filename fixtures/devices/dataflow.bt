@@ -1,14 +1,14 @@
 parallel
   fallback
     sequence
-      equal(a: @near, b: true)
+      equal(a: @near._ret, b: true)
       set_string(variable: {face/mood}, value: "near")
     set_string(variable: {face/mood}, value: "far")
   running
 
 near: lessthan(lhs: {sensor/distance}, rhs: 0.5f32)
 raw: multiply(operand_0: {sensor/distance}, operand_1: 100f32)
-cm: clamp(in: @raw, min: 0f32, max: 50f32)
-level: {face/level} = add(operand_0: @cm, operand_1: 1f32)
+cm: clamp(in: @raw._ret, min: 0f32, max: 50f32)
+level: {face/level} = add(operand_0: @cm._ret, operand_1: 1f32)
 sway: {rig/sway} = multiply(operand_0: oscillator(frequency: 1f32, t: {arora/time}), operand_1: 0.5f32)
 smile: {face/smile} = damp(in: {face/smile_target}, param.half_life: 0.05f32, dt: {arora/dt}, state: ())

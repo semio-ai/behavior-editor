@@ -118,6 +118,8 @@ export function StorePanel({
   onWrite,
 }: StorePanelProps) {
   const rows = keyRows(store, keys, behavior, pending);
+  // A key is in an id encoded: it may hold spaces, which would split an id reference.
+  const ids = useId();
   // A key's slider spans the values it held lately, so it holds still while the value moves.
   const rangeOf = (key: string, n: number): [number, number] => {
     const seen = [n, ...(history.get(key) ?? []).filter((v): v is number => v !== null)];
@@ -134,7 +136,7 @@ export function StorePanel({
           const n = valueNumber(value);
           const plottable = n !== undefined || valueBoolean(value) !== undefined;
           const series = plotted.indexOf(key);
-          const noteId = `be-note-${key}`;
+          const noteId = `${ids}-note-${encodeURIComponent(key)}`;
           return (
             <li key={key} className="be-key">
               <div className="be-key-body">

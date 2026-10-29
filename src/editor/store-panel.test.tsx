@@ -165,4 +165,18 @@ describe("the store panel", () => {
     expect(loads.filter((l) => l !== "empty").length).toBeGreaterThanOrEqual(1);
     expect(loads.lastIndexOf("empty")).toBeGreaterThan(loads.findLastIndex((l) => l !== "empty"));
   });
+
+  it("describes a key holding a space by its note", async () => {
+    const { user } = renderEditor(
+      'running\n\nx: {"face/a key"} = add(a: 1, b: 1)\n',
+      new MockArora(),
+    );
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    const store = await openStore(user);
+    await waitFor(() =>
+      expect(within(store).getByRole("status", { name: "face/a key" })).toHaveAccessibleDescription(
+        "published by the behavior every tick",
+      ),
+    );
+  });
 });

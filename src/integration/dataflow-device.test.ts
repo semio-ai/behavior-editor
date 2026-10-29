@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import initDataflowDevice, { DataflowDevice, editCall } from "../../device/pkg/dataflow_device.js";
+import initDataflowDevice, { DataflowDevice } from "../../device/pkg/dataflow_device.js";
 import { DATAFLOW_INPUTS } from "../../fixtures/devices/dataflow";
 import { loadLanguage } from "../../fixtures/language";
 import type { MethodSignature } from "../model/signature";
@@ -45,6 +45,7 @@ beforeEach(() => {
     device,
     deviceId: NAMESPACE,
     loadCall: (graph) => language.loadCall(graph),
+    editCall: (diff) => language.editCall(diff),
   });
 });
 
@@ -52,10 +53,12 @@ afterEach(() => {
   device.free();
 });
 
-/** The file resolved against the device's functions. */
-async function resolved(): Promise<{ loaded: Loaded; functions: MethodSignature[] }> {
+/** The file, or `edited`, resolved against the device's functions. */
+async function resolved(
+  edited: string = text,
+): Promise<{ loaded: Loaded; functions: MethodSignature[] }> {
   const functions = await runtime.functions();
-  const parsed = language.parse(text);
+  const parsed = language.parse(edited);
   expect(parsed.diagnostics).toEqual([]);
   return { loaded: language.resolve(parsed.document, functions), functions };
 }
@@ -158,9 +161,41 @@ describe("a behavior file on an Arora device carrying @arora/dataflow", () => {
     expect(valueString(await runtime.read("face/mood"))).toBe("near");
   });
 
-  it("takes the interpreter's edit through the call path a load takes", async () => {
+  it("edits the behavior running: a damp keeps its state across an edit elsewhere, and restarts when the edit binds it", async () => {
     const { loaded } = await resolved();
+    await runtime.write("sensor/distance", f32(0.3));
+    await runtime.write("face/smile_target", f32(1));
     await runtime.start(loaded);
-    expect(JSON.parse(device.call(editCall("{}")))).toHaveProperty("ret");
+    await step();
+    await step({ "face/smile_target": f32(0.2) });
+    for (let i = 0; i < 4; i++) await step();
+    const easing = (await number("face/smile"))!;
+    expect(easing).toBeLessThan(0.9);
+    expect(easing).toBeGreaterThan(0.3);
+
+    // Another node's binding: only `level` restarts, and the smile eases on.
+    const level = text.replace("operand_1: 1f32)", "operand_1: 2f32)");
+    const elsewhere = language.diff(loaded.graph, (await resolved(level)).loaded.graph);
+    expect(elsewhere.set).toBeUndefined();
+    expect(elsewhere.bind?.length).toBe(1);
+    await runtime.edit(elsewhere);
+    await step();
+    expect(await number("face/level")).toBeCloseTo(32, 4);
+    const eased = (await number("face/smile"))!;
+    expect(eased).toBeLessThan(easing);
+    expect(eased).toBeGreaterThan(0.25);
+
+    // The damp's own binding: it restarts, from its target.
+    const halfLife = level.replace("param.half_life: 0.05f32", "param.half_life: 0.5f32");
+    const smile = language.diff(
+      (await resolved(level)).loaded.graph,
+      (await resolved(halfLife)).loaded.graph,
+    );
+    expect(smile.bind?.map((b) => b.node)).toEqual([
+      loaded.nodes.find((n) => n.name === "smile")!.id,
+    ]);
+    await runtime.edit(smile);
+    await step();
+    expect(await number("face/smile")).toBeCloseTo(0.2, 3);
   });
 });

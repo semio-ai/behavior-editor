@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GREET, SMILE } from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
-import type { Graph } from "../model/graph";
+import type { Graph, GraphDiff } from "../model/graph";
 import type { Value } from "../model/value";
 import { type AroraDevice, DeviceRuntime } from "../runtime/device-runtime";
 import { MockArora } from "../runtime/mock-arora";
@@ -60,6 +60,7 @@ function deviceRuntime(device: FakeDevice) {
     device,
     deviceId: "D",
     loadCall: (graph: Graph) => JSON.stringify({ load: graph.root ?? "empty" }),
+    editCall: (diff: GraphDiff) => JSON.stringify({ edit: diff }),
   });
 }
 

@@ -54,6 +54,7 @@ function examples(language: BehaviorText): DemoExample[] {
         device,
         deviceId: DEVICE,
         loadCall: (graph) => language.loadCall(graph),
+        editCall: (diff) => language.editCall(diff),
       });
       return { runtime, dispose: () => device.free() };
     },

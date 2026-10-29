@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ORDER } from "../../fixtures/examples";
-import type { Graph } from "../model/graph";
+import type { Graph, GraphDiff } from "../model/graph";
 import type { Value } from "../model/value";
 import { type AroraDevice, DeviceRuntime } from "./device-runtime";
 import { MATH, mathModule } from "./math-module";
@@ -50,6 +50,7 @@ class FakeDevice implements AroraDevice {
 function setup() {
   const device = new FakeDevice();
   const loaded: Graph[] = [];
+  const edited: GraphDiff[] = [];
   const runtime = new DeviceRuntime({
     device,
     deviceId: "robot",
@@ -57,8 +58,12 @@ function setup() {
       loaded.push(graph);
       return JSON.stringify({ load: loaded.length });
     },
+    editCall: (diff) => {
+      edited.push(diff);
+      return JSON.stringify({ edit: edited.length });
+    },
   });
-  return { device, runtime, loaded };
+  return { device, runtime, loaded, edited };
 }
 
 describe("DeviceRuntime", () => {
@@ -74,6 +79,18 @@ describe("DeviceRuntime", () => {
     await runtime.start(ORDER.loaded);
     expect(loaded).toEqual([ORDER.loaded.graph]);
     expect(device.calls).toEqual([JSON.stringify({ load: 1 })]);
+  });
+
+  it("edits the behavior running through the device's call path, and refuses with none", async () => {
+    const { device, runtime, edited } = setup();
+    const diff: GraphDiff = { remove: ["n"] };
+    await expect(runtime.edit(diff)).rejects.toThrow(/no behavior runs/);
+    await runtime.start(ORDER.loaded);
+    await runtime.edit(diff);
+    expect(edited).toEqual([diff]);
+    expect(device.calls).toEqual([JSON.stringify({ load: 1 }), JSON.stringify({ edit: 1 })]);
+    await runtime.stop();
+    await expect(runtime.edit(diff)).rejects.toThrow(/no behavior runs/);
   });
 
   it("reports what each step changed", async () => {

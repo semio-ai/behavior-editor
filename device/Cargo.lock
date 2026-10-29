@@ -471,7 +471,6 @@ name = "dataflow-device"
 version = "0.0.0"
 dependencies = [
  "arora",
- "arora-behavior",
  "arora-dataflow-nodes",
  "arora-simple-data-store",
  "arora-types",

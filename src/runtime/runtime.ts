@@ -1,3 +1,4 @@
+import type { GraphDiff } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import type { Value } from "../model/value";
 import type { Loaded } from "../text/language";
@@ -51,8 +52,18 @@ export interface KeyInfo {
 export interface BehaviorRuntime {
   /** The modules' functions; the natives come from the language service. */
   functions(): Promise<MethodSignature[]>;
-  /** Run this behavior, in place of the previous one. */
+  /**
+   * Run this behavior from its first tick, in place of the previous one:
+   * every node starts afresh.
+   */
   start(loaded: Loaded): Promise<void>;
+  /**
+   * Apply `diff` to the behavior running, the diff from the graph it runs
+   * to the next: the nodes the diff sets or binds restart, and every other
+   * node keeps its state and goes on from where it was. Refused when no
+   * behavior runs.
+   */
+  edit(diff: GraphDiff): Promise<void>;
   /** Advance one tick of `dtMs` milliseconds. */
   step(dtMs: number): Promise<TickReport>;
   /** Write a store key; `null` unsets it. */

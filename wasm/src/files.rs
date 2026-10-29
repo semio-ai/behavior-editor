@@ -20,6 +20,7 @@ use arora_behavior_tree::schema_groot;
 use arora_behavior_tree::text::{self, Severity};
 use arora_behavior_tree::tree_node::TreeNode;
 use arora_behavior_tree::{readable, ModuleFunction};
+use serde::Deserialize;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -78,23 +79,7 @@ impl GraphFormat {
 /// The text of the readable graph `file` holds, in `format`, its names
 /// resolved against `functions` and the natives.
 pub fn open_graph(file: &str, format: GraphFormat, functions: &FunctionIndex) -> Outcome {
-    let readable: readable::Graph = match format {
-        GraphFormat::Json => serde_json::from_str(file).map_err(|e| {
-            vec![Problem::at_line(
-                format!("not a graph in JSON: {e}"),
-                e.line(),
-                e.column(),
-            )]
-        })?,
-        GraphFormat::Yaml => serde_yaml::from_str(file).map_err(|e| {
-            let (line, column) = e.location().map_or((0, 0), |at| (at.line(), at.column()));
-            vec![Problem {
-                line: (line > 0).then_some(line),
-                column: (line > 0).then_some(column),
-                ..Problem::new(format!("not a graph in YAML: {e}"))
-            }]
-        })?,
-    };
+    let readable = read_graph(file, format).map_err(|problem| vec![problem])?;
     let graph = readable.resolve(functions).map_err(|errors| {
         errors
             .into_iter()
@@ -133,7 +118,7 @@ pub fn open_groot(file: &str, functions: &FunctionIndex) -> Outcome {
 
 /// `graph` as a readable graph in `format`: each node by `names` (a text's
 /// node names, and the paths of the nodes it does not name), each function
-/// and port by its name.
+/// and port by its name. A graph whose file would not open again is refused.
 pub fn write_graph(
     graph: &Graph,
     names: &HashMap<Uuid, String>,
@@ -148,12 +133,78 @@ pub fn write_graph(
             ..Names::default()
         },
     );
-    match format {
+    let file = match format {
         GraphFormat::Json => serde_json::to_string_pretty(&readable)
             .map(|json| json + "\n")
             .map_err(|e| e.to_string()),
         GraphFormat::Yaml => serde_yaml::to_string(&readable).map_err(|e| e.to_string()),
+    }?;
+    // A file is written only when it opens again: one nested deeper than its
+    // format reads is refused.
+    read_graph(&file, format).map_err(|problem| problem.message)?;
+    Ok(file)
+}
+
+/// The deepest a JSON graph file may nest: deeper than serde_json's default
+/// of 128, which a value the language nests to its own limit passes once
+/// wrapped in the graph, and bounded, so a file cannot exhaust the stack.
+const MAX_JSON_DEPTH: usize = 4 * text::MAX_DEPTH;
+
+/// The readable graph `file` holds in `format`. YAML nests at most 128 deep,
+/// serde_yaml's fixed limit; JSON at most `MAX_JSON_DEPTH`.
+fn read_graph(file: &str, format: GraphFormat) -> Result<readable::Graph, Problem> {
+    match format {
+        GraphFormat::Json => {
+            if json_depth(file) > MAX_JSON_DEPTH {
+                return Err(Problem::new(format!(
+                    "not a graph in JSON: it nests deeper than {MAX_JSON_DEPTH} levels"
+                )));
+            }
+            let mut reader = serde_json::Deserializer::from_str(file);
+            reader.disable_recursion_limit();
+            readable::Graph::deserialize(&mut reader)
+                .and_then(|graph| reader.end().map(|()| graph))
+                .map_err(|e| {
+                    Problem::at_line(format!("not a graph in JSON: {e}"), e.line(), e.column())
+                })
+        }
+        GraphFormat::Yaml => serde_yaml::from_str(file).map_err(|e| {
+            let (line, column) = e.location().map_or((0, 0), |at| (at.line(), at.column()));
+            Problem {
+                line: (line > 0).then_some(line),
+                column: (line > 0).then_some(column),
+                ..Problem::new(format!("not a graph in YAML: {e}"))
+            }
+        }),
     }
+}
+
+/// How deep `json`'s arrays and objects nest, read off its brackets outside
+/// its strings.
+fn json_depth(json: &str) -> usize {
+    let (mut depth, mut deepest) = (0usize, 0usize);
+    let (mut in_string, mut escaped) = (false, false);
+    for byte in json.bytes() {
+        if in_string {
+            match byte {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest
 }
 
 /// `graph` as a Groot tree, or what in it Groot cannot hold: a node the tree
@@ -596,6 +647,33 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn a_value_nested_to_the_language_s_limit_reads_back_as_json() {
+        let depth = text::MAX_DEPTH - 2;
+        let text = format!(
+            "running\n\nx: equal(a: {}1f64{}, b: 1f64)\n",
+            "some(".repeat(depth),
+            ")".repeat(depth)
+        );
+        let loaded = text::resolve(&text::parse(&text).document, &FunctionIndex::new());
+        let index = FunctionIndex::new();
+        let json = write_graph(&loaded.graph, &names(&loaded), GraphFormat::Json, &index).unwrap();
+        assert!(json_depth(&json) > 128, "deeper than serde_json's default");
+        assert!(open_graph(&json, GraphFormat::Json, &index).is_ok());
+        // serde_yaml reads 128 levels at most: the YAML is refused, not written.
+        let yaml = write_graph(&loaded.graph, &names(&loaded), GraphFormat::Yaml, &index);
+        assert!(yaml.unwrap_err().contains("recursion limit"));
+        // Past the bound, a file is refused before it is decoded.
+        let deep = format!(
+            "{}{}",
+            "[".repeat(MAX_JSON_DEPTH + 1),
+            "]".repeat(MAX_JSON_DEPTH + 1)
+        );
+        let refused = open_graph(&deep, GraphFormat::Json, &index).unwrap_err();
+        assert!(refused[0].message.contains("nests deeper"), "{refused:?}");
+        assert_eq!(json_depth(r#"{"a": "[[{", "b": ["\"]"]}"#), 2);
     }
 
     #[test]

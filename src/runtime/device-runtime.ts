@@ -91,6 +91,8 @@ export class DeviceRuntime implements BehaviorRuntime {
     return this.#attempt(() => {
       if (!this.#running) throw new Error("no behavior runs on the device: start one to edit it");
       this.#options.device.call(this.#options.editCall(diff));
+      // The device applies a call with a step: a step reports what changed since.
+      this.#seen = this.#snapshot();
     });
   }
 

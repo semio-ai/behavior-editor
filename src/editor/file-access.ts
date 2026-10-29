@@ -11,6 +11,7 @@ import {
   formatOf,
   labelOf,
   mimeOf,
+  withExtension,
 } from "./file-formats";
 
 /**
@@ -104,15 +105,17 @@ export async function saveBehaviorFile(
   saveAs: boolean,
 ): Promise<BehaviorFile | null> {
   const { showSaveFilePicker } = pickers();
+  // A file opens in the format its name says: a name saying none takes the format's extension.
+  const name = formatOf(file.name) === null ? withExtension(file.name, file.format) : file.name;
   if (!showSaveFilePicker) {
-    download(text, file.name, mimeOf(file.format));
-    return { ...file, handle: null };
+    download(text, name, mimeOf(file.format));
+    return { ...file, name, handle: null };
   }
   let handle = saveAs ? null : file.handle;
   if (!handle) {
     try {
       handle = await showSaveFilePicker.call(window, {
-        suggestedName: file.name,
+        suggestedName: name,
         types: typesOf(file.format),
         excludeAcceptAllOption: true,
       });

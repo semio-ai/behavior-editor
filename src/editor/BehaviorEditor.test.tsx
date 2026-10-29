@@ -490,6 +490,25 @@ describe("BehaviorEditor", () => {
     expect(screen.queryByText("(unsaved changes)")).toBeNull();
   });
 
+  it("downloads a file named without an extension under the extension of its format", async () => {
+    const downloads: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloads.push(this.download);
+    });
+    const { createObjectURL, revokeObjectURL } = URL;
+    URL.createObjectURL = () => "blob:behavior";
+    URL.revokeObjectURL = () => undefined;
+    const { user } = setup(ORDER, { fileName: "draft" });
+    await screen.findByRole("tree", { name: "Behavior diagram" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(downloads).toEqual(["draft.bt"]));
+    expect(screen.getByText("draft.bt")).toBeTruthy();
+    click.mockRestore();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+  });
+
   it("writes no file whose name says another format than the one saved", async () => {
     const written: string[] = [];
     const offered: unknown[] = [];

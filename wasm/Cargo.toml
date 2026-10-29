@@ -2,9 +2,10 @@
 name = "behavior-text"
 version = "0.0.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 publish = false
-description = "The behavior text language of arora-behavior-tree, for @semio/behavior-editor: parse, format and resolve a behavior file in the browser."
+repository = "https://github.com/semio-ai/behavior-editor"
+description = "The behavior text language of arora-behavior-tree in the browser: parse, format and resolve a behavior file, and the call that loads it on an Arora device."
 
 [lib]
 crate-type = ["cdylib", "rlib"]

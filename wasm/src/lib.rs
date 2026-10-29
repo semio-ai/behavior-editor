@@ -98,8 +98,8 @@ pub fn natives() -> Result<String, JsError> {
 /// The `Call` JSON that loads `graph_json` as a device's behavior:
 /// `arora_behavior::interpreter_module`'s `load`. The loaded behavior is the
 /// interpreter's main one, ticked at every tick and re-evaluated once it
-/// completes, and it replaces the previous one, keeping the state of the nodes
-/// the new graph left in place. The empty graph loads no behavior.
+/// completes, and it replaces the previous one, restarting every node of the
+/// behavior. The empty graph loads no behavior.
 #[wasm_bindgen(js_name = loadCall)]
 pub fn load_call(graph_json: &str) -> Result<String, JsError> {
     let graph: Graph = from_json(graph_json).map_err(error)?;

@@ -13,8 +13,12 @@ interface KeyMeta {
 }
 
 /**
- * A device as Studio's World offers it, bound to one device: the methods of
- * `StudioAroraWorld` with the device id applied. Values cross as tagged JSON.
+ * An Arora device as its host offers it to the page, each operation answering
+ * when it returns: a remote client's operations on the device (describe its
+ * methods, call one, write its inputs, list its keys), a read of the host's
+ * store, and the device's step. Keys are relative to the device, except
+ * `read`'s: the host's store holds the device's keys under its id. Values
+ * cross as the JSON of Arora's `Value`.
  */
 export interface AroraDevice {
   /** The module functions the device exposes: a JSON `MethodSignature[]`. */
@@ -23,11 +27,11 @@ export interface AroraDevice {
   call(callJson: string): string;
   /** Write device-relative keys, `{ "<key>": <Value JSON> | null }`, applied at the next step. */
   update(changesJson: string): void;
-  /** Read one key, namespaced `<device>/<key>`: its Value JSON, or `null`. */
+  /** Read one key of the host's store, `<deviceId>/<key>`: its Value JSON, or `null`. */
   read(key: string): string;
   /** The device's keys and what they are: a JSON array of `[key, KeyMeta]`, device-relative. */
   listKeys(prefix?: string): string;
-  /** Advance the World by `dtMs` milliseconds. */
+  /** Advance the device by `dtMs` milliseconds. */
   step(dtMs: number): void;
 }
 
@@ -46,10 +50,11 @@ const EMPTY: Graph = { nodes: {}, links: [], variables: {} };
  * A behavior running on a device, through the device's own call path:
  * starting one loads its graph on the interpreter, as any client's call would.
  * The loaded behavior is ticked at every step and re-evaluated once it
- * completes, as a behavior tree is; loading another replaces it, keeping the
- * state of the nodes the new graph left in place, and loading the empty graph
- * stops it. The device reports its store; it does not say which nodes ticked
- * or what the root returned.
+ * completes, as a behavior tree is; loading another replaces it and restarts
+ * every node of the behavior, and loading the empty graph stops it. What keeps
+ * the state of the nodes left in place is an edit, the interpreter's EDIT,
+ * which this runtime does not make. The device reports its store; it does not
+ * say which nodes ticked or what the root returned.
  */
 export class DeviceRuntime implements BehaviorRuntime {
   readonly #options: DeviceRuntimeOptions;
@@ -121,7 +126,7 @@ export class DeviceRuntime implements BehaviorRuntime {
     });
   }
 
-  /** `run`'s result, or its exception as a rejection: the World throws its refusals. */
+  /** `run`'s result, or its exception as a rejection: the device throws its refusals. */
   #attempt<T>(run: () => T): Promise<T> {
     try {
       return Promise.resolve(run());

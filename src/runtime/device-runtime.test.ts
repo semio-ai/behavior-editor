@@ -6,9 +6,9 @@ import { type AroraDevice, DeviceRuntime } from "./device-runtime";
 import { MATH, mathModule } from "./math-module";
 
 /**
- * A device whose store is a map of device-relative keys, as `StudioAroraWorld`
- * bound to the device `robot` would present it. An update is queued until the
- * next step, and a step runs `onStep`, the device's own behavior.
+ * A device whose store is a map of device-relative keys, the host's store
+ * holding them under its id, `robot`. An update is queued until the next step,
+ * and a step runs `onStep`, the device's own behavior.
  */
 class FakeDevice implements AroraDevice {
   store = new Map<string, Value>();

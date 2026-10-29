@@ -297,6 +297,16 @@ describe("BehaviorEditor", () => {
     expect(texts.at(-1)).toBe(`${ORDER.text}# note`);
   });
 
+  it("keeps the text's own field across tab changes, and its undo history with it", async () => {
+    const { user } = setup(ORDER);
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    const field = screen.getByRole("textbox", { name: "Behavior text" });
+    await user.click(screen.getByRole("tab", { name: "Diagram" }));
+    expect(screen.queryByRole("textbox", { name: "Behavior text" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    expect(screen.getByRole("textbox", { name: "Behavior text" })).toBe(field);
+  });
+
   it("parses a file replacing the text at once, whatever typing left waiting", async () => {
     const { user } = setup(ORDER);
     await user.click(screen.getByRole("tab", { name: "Text" }));
@@ -331,6 +341,52 @@ describe("BehaviorEditor", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Discard unsaved changes?");
     await user.click(screen.getByRole("button", { name: "Keep editing" }));
     expect(screen.getByText("(unsaved changes)")).toBeTruthy();
+  });
+
+  it("shows a refused edit until the text is back to the behavior running", async () => {
+    const runtime = new MockArora({ store: SMILE.store });
+    const calls: string[] = [];
+    runtime.edit = () => {
+      calls.push("edit");
+      return Promise.reject(new Error("the device refused the edit"));
+    };
+    const { user } = setup(SMILE, { runtime });
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    await user.click(screen.getByRole("treeitem", { name: /^cheeks: / }));
+    const b = screen.getByRole("textbox", { name: "b" });
+    await user.clear(b);
+    await user.type(b, "0.9{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("the device refused the edit");
+    await user.clear(screen.getByRole("textbox", { name: "b" }));
+    await user.type(screen.getByRole("textbox", { name: "b" }), "0.6{Enter}");
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(calls).toEqual(["edit"]);
+  });
+
+  it("shows what an edit wrote to the store without a tick", async () => {
+    const runtime = new MockArora({ store: SMILE.store });
+    const edit = runtime.edit.bind(runtime);
+    // As a device applying the call with a step at zero dt.
+    runtime.edit = async (diff) => {
+      await edit(diff);
+      await runtime.write("rig/cheek_raise", { f64: 0.42 });
+    };
+    const { user } = setup(SMILE, { runtime });
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    await user.click(screen.getByRole("treeitem", { name: /^cheeks: / }));
+    const b = screen.getByRole("textbox", { name: "b" });
+    await user.clear(b);
+    await user.type(b, "0.9{Enter}");
+    await user.click(screen.getByRole("tab", { name: "Store" }));
+    const store = screen.getByRole("region", { name: "Store" });
+    await waitFor(() =>
+      expect(within(store).getByRole("status", { name: "rig/cheek_raise" })).toHaveTextContent(
+        "0.42",
+      ),
+    );
+    expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1");
   });
 
   it("edits the behavior running when the text changes, and starts it afresh on Reset", async () => {
@@ -407,6 +463,31 @@ describe("BehaviorEditor", () => {
       "Groot XML cannot hold this behavior: Groot holds no node outside the tree",
     );
     expect(written).toHaveLength(2);
+  });
+
+  it("saves a graph file from the text as typed, before it is parsed again", async () => {
+    const written: string[] = [];
+    vi.stubGlobal("showSaveFilePicker", (options: { suggestedName: string }) =>
+      Promise.resolve({
+        name: options.suggestedName,
+        createWritable: () =>
+          Promise.resolve({
+            write: (data: string) => {
+              written.push(data);
+              return Promise.resolve();
+            },
+            close: () => Promise.resolve(),
+          }),
+      }),
+    );
+    const { user } = setup(SMILE);
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    await user.type(screen.getByRole("textbox", { name: "Behavior text" }), "late: not(x: true)\n");
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Graph, JSON" }));
+    await waitFor(() => expect(written).toHaveLength(1));
+    expect(written[0]).toContain('"id": "late"');
+    expect(screen.queryByText("(unsaved changes)")).toBeNull();
   });
 
   it("writes no file whose name says another format than the one saved", async () => {

@@ -66,12 +66,15 @@ The editor:
   Alt+arrow keys, are selected with the arrow keys, and deleted with Delete.
 - reparses the text once typing pauses, and lists and underlines what the
   parser and the resolver report. While the text has errors, the diagram
-  edits nothing: the text is the only whole account of the behavior.
-- ticks the behavior at 10, 30 or 60 Hz and plots the keys chosen. It lists
-  the store's keys and the keys the behavior reads, set or not, and edits with
-  sliders, switches and fields the ones its runtime lets a person write (a
-  device's key meta, the mock's inputs), save a key the behavior publishes
-  after every tick. A key a tree node writes stays editable, marked as such,
+  edits nothing: the text is the only whole account of the behavior. A
+  literal holding a 64-bit integer past ±(2^53 − 1), which a JavaScript number
+  does not hold exactly, is an error.
+- ticks the behavior at 10, 30 or 60 Hz, and nothing while the text does not
+  run, and plots the keys chosen. It lists the store's keys and the keys the
+  behavior reads, set or not, and edits with fields, sliders and switches the
+  ones its runtime lets a person write (a device's key meta, the mock's
+  inputs), save a key the behavior publishes after every tick. A number's
+  slider spans the bounds its runtime declares, within its type's limits. A key a tree node writes stays editable, marked as such,
   and a write a device applies at its next step shows as pending until then.
 - opens and saves behavior files in four formats (below) through the File
   System Access API, or a file input and a download where the browser lacks

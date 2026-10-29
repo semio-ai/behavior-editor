@@ -1,4 +1,4 @@
-import type { Graph } from "../model/graph";
+import type { Graph, LinkSource } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import { holdsExactly } from "../model/value";
 import type { BehaviorDocument } from "./ast";
@@ -54,8 +54,14 @@ export function createBehaviorText(exports: BehaviorTextExports): BehaviorText {
  */
 function refuseInexact(loaded: Loaded): Loaded {
   const spans = new Map(loaded.nodes.map((n) => [n.id, n.span]));
+  const exact = (source: LinkSource): boolean =>
+    "literal" in source
+      ? holdsExactly(source.literal)
+      : "select" in source
+        ? exact(source.select.source)
+        : true;
   const inexact = loaded.graph.links.flatMap((link) =>
-    "literal" in link.source && !holdsExactly(link.source.literal)
+    !exact(link.source)
       ? [
           {
             severity: "error" as const,

@@ -17,4 +17,23 @@ describe("the examples' text", () => {
       );
     },
   );
+
+});
+
+describe("a 64-bit literal", () => {
+  it("past what a JavaScript number holds exactly is an error, not a rounded value", async () => {
+    const language = await loadLanguage();
+    const resolve = (text: string) =>
+      language
+        .resolve(language.parse(text).document, MATH_FUNCTIONS)
+        .diagnostics.filter((d) => d.severity === "error");
+    const literals = ["9007199254740993u64", "u64[1, 9007199254740993]", "-9007199254740993i64"];
+    for (const literal of literals) {
+      const errors = resolve(`running\n\nx: identity(x: ${literal})\n`);
+      expect(errors.map((d) => [d.span.line, d.message])).toEqual([
+        [3, expect.stringContaining("cannot hold exactly")],
+      ]);
+    }
+    expect(resolve("running\n\nx: identity(x: 9007199254740991u64)\n")).toEqual([]);
+  });
 });

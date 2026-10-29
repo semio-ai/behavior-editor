@@ -6,6 +6,7 @@ import {
   ORDER,
   READERS_FALLBACK,
   READERS_PARALLEL,
+  RETURN_VALUES,
   SMILE,
   idOf,
 } from "../../fixtures/examples";
@@ -312,6 +313,25 @@ describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_,
         expect(report.values?.[id("scaled")]).toEqual({ f64: 10 * n });
         expect(await number("v")).toBe(n);
       }
+    });
+  });
+
+  describe("Return values", () => {
+    it("reads one node's return value in another, and writes a return value to a key", async () => {
+      const { device, tick, number, id } = await start(RETURN_VALUES);
+      let { report } = await tick();
+      // 0.3 m is near: the sequence holds, and face/look takes level's return value.
+      expect(report.root).toBe("S");
+      expect(report.values?.[id("cm")]).toEqual({ f64: 30 });
+      expect(await number("face/level")).toBe(31);
+      expect(await number("face/look")).toBe(31);
+
+      await device.write("sensor/distance", { f64: 0.8 });
+      ({ report } = await tick());
+      // 0.8 m is not near: the fallback's second branch writes 0; level still publishes.
+      expect(report.root).toBe("S");
+      expect(await number("face/level")).toBe(51);
+      expect(await number("face/look")).toBe(0);
     });
   });
 });

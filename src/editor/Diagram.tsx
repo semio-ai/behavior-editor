@@ -290,7 +290,7 @@ export function Diagram({
         <g aria-hidden="true">
           {layout.wires.map((w) => (
             <path
-              key={`${w.from}>${w.to}@${w.port ?? "folded"}`}
+              key={w.id}
               className={`be-wire${isLive(w.from) && isLive(w.to) ? " be-live" : ""}${
                 hot !== null && (w.from === hot || w.to === hot) ? " be-hot" : ""
               }`}

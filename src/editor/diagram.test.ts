@@ -130,6 +130,17 @@ describe("the diagram's outputs", () => {
     expect(wire.d.startsWith(`M${box.x + box.w},${box.y + outputY(box, 1)} `)).toBe(true);
   });
 
+  it("tells apart the wires of one argument reading two outputs of a node", () => {
+    const text = `${SMILE.text}watch: identity(x: f64[@mouth._ret, @mouth.state])\n`;
+    const { document } = language.parse(text);
+    const loaded = language.resolve(document, MATH_FUNCTIONS);
+    const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+    const layout = layoutDiagram(diagramRows(document, index, loaded.nodes), new Set());
+    const ids = layout.wires.map((w) => w.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.filter((id) => id.endsWith(">5@0"))).toEqual(["3._ret>5@0", "3.state>5@0"]);
+  });
+
   it("starts a wire at the output it reads", () => {
     const layout = layoutDiagram(rowsOf(RETURN_VALUES), new Set());
     const level = layout.boxes.get("3")!;

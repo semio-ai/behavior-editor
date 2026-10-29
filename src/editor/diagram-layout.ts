@@ -39,6 +39,8 @@ export interface Box {
 }
 
 export interface Wire {
+  /** What tells it from every other wire: its ends, with the output and the port it joins. */
+  id: string;
   from: string;
   to: string;
   /** The port the wire reaches, or `null` when it reaches a folded node standing for the reader. */
@@ -305,7 +307,9 @@ export function layoutDiagram(
         const y1 = from.y + (output >= 0 ? outputY(from, output) : 15);
         const x2 = to.x;
         const y2 = to.y + (direct ? portY(to, i) : 15);
-        const id = `${from.row.key}@${y1}>${to.row.key}@${y2}`;
+        const id = `${from.row.key}.${output >= 0 ? from.row.outputs[output]!.name : "top"}>${
+          to.row.key
+        }@${direct ? i : "folded"}`;
         if (seen.has(id)) continue;
         seen.add(id);
         // A wire that runs back and down goes around the right of both nodes
@@ -316,7 +320,7 @@ export function layoutDiagram(
           x2 >= x1 + 24 || y2 < y1
             ? `M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`
             : `M${x1},${y1} H${xr} V${to.y - 8} H${x2 - 10} V${y2} H${x2}`;
-        wires.push({ from: from.row.key, to: to.row.key, port: direct ? i : null, d });
+        wires.push({ id, from: from.row.key, to: to.row.key, port: direct ? i : null, d });
       }
     });
   }

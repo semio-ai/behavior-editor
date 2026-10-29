@@ -6,6 +6,7 @@ import { useState } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { type Example, GREET, ORDER, SMILE } from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import type { MethodSignature } from "../model/signature";
 import type { BehaviorDocument, SourceNode } from "../text/ast";
 import type { BehaviorText } from "../text/language";
 import { MATH_MODULE_ID } from "../runtime/math-module";
@@ -507,6 +508,32 @@ describe("BehaviorEditor", () => {
     expect(screen.getByText("draft.bt")).toBeTruthy();
     click.mockRestore();
     Object.assign(URL, { createObjectURL, revokeObjectURL });
+  });
+
+  it("opens a graph file with the functions the runtime says once the picker returns", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const runtime = new MockArora({ store: GREET.store });
+    let said: (functions: MethodSignature[]) => void = () => {};
+    const saying = new Promise<MethodSignature[]>((resolve) => (said = resolve));
+    runtime.functions = () => saying;
+    let pick: (handles: unknown[]) => void = () => {};
+    vi.stubGlobal(
+      "showOpenFilePicker",
+      () => new Promise((resolve) => (pick = resolve)),
+    );
+    const { user, texts } = setup(SMILE, { runtime });
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    said(MATH_FUNCTIONS);
+    pick([
+      {
+        name: "greet.json",
+        getFile: () =>
+          Promise.resolve({ name: "greet.json", text: () => Promise.resolve(json.text) }),
+      },
+    ]);
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
   });
 
   it("writes no file whose name says another format than the one saved", async () => {

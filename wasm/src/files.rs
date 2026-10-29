@@ -20,6 +20,7 @@ use arora_behavior_tree::schema_groot;
 use arora_behavior_tree::text::{self, Severity};
 use arora_behavior_tree::tree_node::TreeNode;
 use arora_behavior_tree::{readable, ModuleFunction};
+use serde::Deserialize;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -78,23 +79,7 @@ impl GraphFormat {
 /// The text of the readable graph `file` holds, in `format`, its names
 /// resolved against `functions` and the natives.
 pub fn open_graph(file: &str, format: GraphFormat, functions: &FunctionIndex) -> Outcome {
-    let readable: readable::Graph = match format {
-        GraphFormat::Json => serde_json::from_str(file).map_err(|e| {
-            vec![Problem::at_line(
-                format!("not a graph in JSON: {e}"),
-                e.line(),
-                e.column(),
-            )]
-        })?,
-        GraphFormat::Yaml => serde_yaml::from_str(file).map_err(|e| {
-            let (line, column) = e.location().map_or((0, 0), |at| (at.line(), at.column()));
-            vec![Problem {
-                line: (line > 0).then_some(line),
-                column: (line > 0).then_some(column),
-                ..Problem::new(format!("not a graph in YAML: {e}"))
-            }]
-        })?,
-    };
+    let readable = read_graph(file, format).map_err(|problem| vec![problem])?;
     let graph = readable.resolve(functions).map_err(|errors| {
         errors
             .into_iter()
@@ -133,7 +118,7 @@ pub fn open_groot(file: &str, functions: &FunctionIndex) -> Outcome {
 
 /// `graph` as a readable graph in `format`: each node by `names` (a text's
 /// node names, and the paths of the nodes it does not name), each function
-/// and port by its name.
+/// and port by its name. A graph whose file would not open again is refused.
 pub fn write_graph(
     graph: &Graph,
     names: &HashMap<Uuid, String>,
@@ -148,12 +133,78 @@ pub fn write_graph(
             ..Names::default()
         },
     );
-    match format {
+    let file = match format {
         GraphFormat::Json => serde_json::to_string_pretty(&readable)
             .map(|json| json + "\n")
             .map_err(|e| e.to_string()),
         GraphFormat::Yaml => serde_yaml::to_string(&readable).map_err(|e| e.to_string()),
+    }?;
+    // A file is written only when it opens again: one nested deeper than its
+    // format reads is refused.
+    read_graph(&file, format).map_err(|problem| problem.message)?;
+    Ok(file)
+}
+
+/// The deepest a JSON graph file may nest: deeper than serde_json's default
+/// of 128, which a value the language nests to its own limit passes once
+/// wrapped in the graph, and bounded, so a file cannot exhaust the stack.
+const MAX_JSON_DEPTH: usize = 4 * text::MAX_DEPTH;
+
+/// The readable graph `file` holds in `format`. YAML nests at most 128 deep,
+/// serde_yaml's fixed limit; JSON at most `MAX_JSON_DEPTH`.
+fn read_graph(file: &str, format: GraphFormat) -> Result<readable::Graph, Problem> {
+    match format {
+        GraphFormat::Json => {
+            if json_depth(file) > MAX_JSON_DEPTH {
+                return Err(Problem::new(format!(
+                    "not a graph in JSON: it nests deeper than {MAX_JSON_DEPTH} levels"
+                )));
+            }
+            let mut reader = serde_json::Deserializer::from_str(file);
+            reader.disable_recursion_limit();
+            readable::Graph::deserialize(&mut reader)
+                .and_then(|graph| reader.end().map(|()| graph))
+                .map_err(|e| {
+                    Problem::at_line(format!("not a graph in JSON: {e}"), e.line(), e.column())
+                })
+        }
+        GraphFormat::Yaml => serde_yaml::from_str(file).map_err(|e| {
+            let (line, column) = e.location().map_or((0, 0), |at| (at.line(), at.column()));
+            Problem {
+                line: (line > 0).then_some(line),
+                column: (line > 0).then_some(column),
+                ..Problem::new(format!("not a graph in YAML: {e}"))
+            }
+        }),
     }
+}
+
+/// How deep `json`'s arrays and objects nest, read off its brackets outside
+/// its strings.
+fn json_depth(json: &str) -> usize {
+    let (mut depth, mut deepest) = (0usize, 0usize);
+    let (mut in_string, mut escaped) = (false, false);
+    for byte in json.bytes() {
+        if in_string {
+            match byte {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest
 }
 
 /// `graph` as a Groot tree, or what in it Groot cannot hold: a node the tree
@@ -313,9 +364,10 @@ fn signature(functions: &FunctionIndex, id: Uuid) -> Option<ModuleFunction> {
 ///
 /// The display names every node another reads, or the tree does not hold,
 /// by its id when it has no label; a node the tree holds and none reads goes
-/// unnamed, so the text gives it the id of its path. With `keep_ids`, a node
-/// whose id that is not is named by its id, so that the text resolves to
-/// every node the id it has.
+/// unnamed, so the text gives it the id of its path. With `keep_ids`, the
+/// text resolves to `graph` itself: a node whose id that is not is named by
+/// its id, and every unnamed node is when path ids would still land on other
+/// nodes. A graph no text reads back as is refused.
 fn graph_text(
     graph: &Graph,
     functions: &FunctionIndex,
@@ -334,23 +386,48 @@ fn graph_text(
         .to_string()
     };
     let written = display(&labels);
-    if !keep_ids {
+    if !keep_ids || resolves_to(&written, graph, functions) {
         return Ok(written);
     }
-    let lost: Vec<Uuid> = {
-        let ids: HashSet<Uuid> = resolved_ids(&written, functions);
+    // A node the text gives another id is named by its id.
+    let ids: HashSet<Uuid> = graph_of(&written, functions)
+        .nodes
+        .iter()
+        .map(|node| node.id)
+        .collect();
+    let lost = graph.nodes.iter().map(|node| node.id);
+    labels.extend(
+        lost.filter(|id| !ids.contains(id))
+            .map(|id| (id, id.to_string())),
+    );
+    let written = display(&labels);
+    if resolves_to(&written, graph, functions) {
+        return Ok(written);
+    }
+    // Ids the text derives from paths can land on other nodes, as when two
+    // nodes hold each other's: every node unnamed is then named by its id.
+    for node in &graph.nodes {
+        labels.entry(node.id).or_insert_with(|| node.id.to_string());
+    }
+    let written = display(&labels);
+    if resolves_to(&written, graph, functions) {
+        Ok(written)
+    } else {
+        Err(Problem::new(
+            "the graph has no text that reads back as the same graph",
+        ))
+    }
+}
+
+/// Whether `text` resolves to `graph`, a graph without the bindings a
+/// resolution seeds: the same nodes, with the same ids, bindings and children.
+fn resolves_to(text: &str, graph: &Graph, functions: &FunctionIndex) -> bool {
+    let by_id = |graph: Graph| {
+        let mut graph = graph;
+        graph.nodes.sort_by_key(|node| node.id);
         graph
-            .nodes
-            .iter()
-            .map(|node| node.id)
-            .filter(|id| !ids.contains(id))
-            .collect()
     };
-    if lost.is_empty() {
-        return Ok(written);
-    }
-    labels.extend(lost.into_iter().map(|id| (id, id.to_string())));
-    Ok(display(&labels))
+    by_id(unseeded(&graph_of(text, functions))) == by_id(graph.clone())
 }
 
 /// `graph` without the bindings a text's resolution gives a native node by
@@ -382,15 +459,9 @@ fn unseeded(graph: &Graph) -> Graph {
     graph
 }
 
-/// The ids of the nodes `text` resolves to.
-fn resolved_ids(text: &str, functions: &FunctionIndex) -> HashSet<Uuid> {
-    let parsed = text::parse(text);
-    text::resolve(&parsed.document, functions)
-        .graph
-        .nodes
-        .iter()
-        .map(|node| node.id)
-        .collect()
+/// The graph `text` resolves to.
+fn graph_of(text: &str, functions: &FunctionIndex) -> Graph {
+    text::resolve(&text::parse(text).document, functions).graph
 }
 
 /// Whether `name` is written as a node's name as it is: what a text names a
@@ -542,6 +613,67 @@ mod tests {
         let named = "root: done\nnodes:\n- id: done\n  function: succeed\n";
         let text = open_graph(named, GraphFormat::Yaml, &FunctionIndex::new()).unwrap();
         assert_eq!(text, "done: succeed\n");
+    }
+
+    #[test]
+    fn nodes_holding_each_other_s_path_ids_keep_them_in_the_text() {
+        for leaves in ["  succeed\n  running\n", "  succeed\n  succeed\n"] {
+            let loaded = resolved(&format!("sequence\n{leaves}"));
+            let mut graph = loaded.graph.clone();
+            let root = graph.root.unwrap();
+            let (a, b) = {
+                let children = graph.nodes.iter().find(|n| n.id == root).unwrap();
+                let children = children.children.as_ref().unwrap();
+                (children[0], children[1])
+            };
+            // Each leaf takes the other's id, in the same tree order.
+            let swap = |id: &mut Uuid| {
+                if *id == a {
+                    *id = b;
+                } else if *id == b {
+                    *id = a;
+                }
+            };
+            for node in &mut graph.nodes {
+                swap(&mut node.id);
+                node.children.iter_mut().flatten().for_each(swap);
+            }
+            let index = FunctionIndex::new();
+            let file = write_graph(&graph, &HashMap::new(), GraphFormat::Json, &index).unwrap();
+            let text = open_graph(&file, GraphFormat::Json, &index).unwrap();
+            assert_eq!(
+                sorted(resolved(&text).graph),
+                sorted(graph.clone()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_nested_to_the_language_s_limit_reads_back_as_json() {
+        let depth = text::MAX_DEPTH - 2;
+        let text = format!(
+            "running\n\nx: equal(a: {}1f64{}, b: 1f64)\n",
+            "some(".repeat(depth),
+            ")".repeat(depth)
+        );
+        let loaded = text::resolve(&text::parse(&text).document, &FunctionIndex::new());
+        let index = FunctionIndex::new();
+        let json = write_graph(&loaded.graph, &names(&loaded), GraphFormat::Json, &index).unwrap();
+        assert!(json_depth(&json) > 128, "deeper than serde_json's default");
+        assert!(open_graph(&json, GraphFormat::Json, &index).is_ok());
+        // serde_yaml reads 128 levels at most: the YAML is refused, not written.
+        let yaml = write_graph(&loaded.graph, &names(&loaded), GraphFormat::Yaml, &index);
+        assert!(yaml.unwrap_err().contains("recursion limit"));
+        // Past the bound, a file is refused before it is decoded.
+        let deep = format!(
+            "{}{}",
+            "[".repeat(MAX_JSON_DEPTH + 1),
+            "]".repeat(MAX_JSON_DEPTH + 1)
+        );
+        let refused = open_graph(&deep, GraphFormat::Json, &index).unwrap_err();
+        assert!(refused[0].message.contains("nests deeper"), "{refused:?}");
+        assert_eq!(json_depth(r#"{"a": "[[{", "b": ["\"]"]}"#), 2);
     }
 
     #[test]

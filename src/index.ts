@@ -24,7 +24,7 @@ export type {
   SourceNode,
   Span,
 } from "./text/ast";
-export type { Graph, GraphNode, Port, Source } from "./model/graph";
+export type { Binding, Graph, GraphDiff, GraphNode, Port, Source } from "./model/graph";
 export { EMPTY_GRAPH } from "./model/graph";
 export type {
   FrozenReference,

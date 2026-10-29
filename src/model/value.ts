@@ -127,6 +127,27 @@ function deepEqual(a: unknown, b: unknown): boolean {
   );
 }
 
+/**
+ * Whether every 64-bit integer in `value` is one a JavaScript number holds
+ * exactly, within ±(2^53 − 1). Decoding JSON rounds a larger one, so a value
+ * read with one is not the value that was written.
+ */
+export function holdsExactly(value: Value): boolean {
+  if (value === "unit") return true;
+  if ("i64" in value) return Number.isSafeInteger(value.i64);
+  if ("u64" in value) return Number.isSafeInteger(value.u64);
+  if ("i64s" in value) return value.i64s.every((n) => Number.isSafeInteger(n));
+  if ("u64s" in value) return value.u64s.every((n) => Number.isSafeInteger(n));
+  if ("option" in value) return value.option === null || holdsExactly(value.option);
+  if ("values" in value) return value.values.every(holdsExactly);
+  if ("struct" in value) return value.struct.fields.every((f) => holdsExactly(f.value));
+  if ("enum" in value) return holdsExactly(value.enum.value);
+  if ("structs" in value)
+    return value.structs.elements.every((e) => e.fields.every((f) => holdsExactly(f.value)));
+  if ("enums" in value) return value.enums.elements.every((e) => holdsExactly(e.value));
+  return true;
+}
+
 /** `value` as a short text for a person: `0.25`, `true`, `"text"`, `none`. */
 export function formatValue(value: Value | null | undefined): string {
   if (value == null) return "·";

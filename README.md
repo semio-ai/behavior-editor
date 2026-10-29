@@ -96,17 +96,20 @@ The editor edits a behavior as text, so a file opens as the text of the graph
 it holds: a readable graph is resolved against the runtime's functions (by
 names, by ids, or both, as `arora-behavior-tree`'s `readable` reads it), a
 Groot tree through its Groot loader, and the graph is written as text by its
-`display`. A node the file names keeps its name, and a readable graph's nodes
-keep their ids: one the text would give another id is named by its id. A call
+`display`, and that text is kept only when it resolves back to the same
+graph. A node the file names keeps its name, and a readable graph's nodes keep
+their ids: one the text would give another id is named by its id. A call
 in an argument is a node of the graph, which the text shows as a node of its
 own, named by its id. A file that does not load says why, with its place: a
 line and column, or the path of a reference (`nodes[2].bind.lo`).
 
-Save writes the file's own format, Save As the one picked. A graph file is
-written from the graph the text resolves to, so the text must resolve without
-errors; each node is written by its name, or by its path (`root.0.2`) when the
-text names it not. A graph file keeps no comments, which saving says. Saving a
-behavior Groot cannot hold is refused, naming what it cannot hold.
+Save writes the file's own format, Save As the one picked, to a name with that
+format's extension. A graph file is written from the graph the text resolves
+to, so the text must resolve without errors; each node is written by its name,
+or by its path (`root.0.2`) when the text names it not. A graph file keeps no
+comments, which saving says. A file is written only when it opens again: JSON
+reads as deep as four times the language's nesting limit, YAML 128 levels.
+Saving a behavior Groot cannot hold is refused, naming what it cannot hold.
 
 ## Runtimes
 

@@ -202,19 +202,30 @@ export function layoutDiagram(
     n.x = Math.min(Math.max(mid - n.w / 2, x), x + n.W - n.w);
   };
 
-  // The detached nodes, in columns: each after the columns it reads from.
+  // The detached nodes, in columns: each after the columns it reads from,
+  // whatever their order in the file. A node a cycle reaches again, in a
+  // document that does not resolve, counts as no column.
   const floats = [...boxes.values()].filter((b) => b.row.detached);
+  const detached = new Set(floats);
   const column = new Map<TreeBox, number>();
-  for (const f of floats) {
+  const ranking = new Set<TreeBox>();
+  const columnOf = (f: TreeBox): number => {
+    const known = column.get(f);
+    if (known !== undefined) return known;
+    if (ranking.has(f)) return -1;
+    ranking.add(f);
     let k = 0;
     for (const p of f.row.ports) {
       for (const s of p.sources) {
         const producer = boxes.get(s.key);
-        if (producer && column.has(producer)) k = Math.max(k, column.get(producer)! + 1);
+        if (producer && detached.has(producer)) k = Math.max(k, columnOf(producer) + 1);
       }
     }
+    ranking.delete(f);
     column.set(f, k);
-  }
+    return k;
+  };
+  floats.forEach(columnOf);
   const columnW: number[] = [];
   for (const f of floats) {
     const j = column.get(f)!;

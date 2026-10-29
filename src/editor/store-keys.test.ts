@@ -43,4 +43,9 @@ describe("the keys a behavior reads and writes", () => {
     expect([...writes.keys()]).toEqual(["face/mood"]);
     expect(reads.size).toBe(0);
   });
+
+  it("count a key read through a selection", () => {
+    const { reads } = keysOf("running\n\nx: add(a: {pose}[x], b: 1)\n");
+    expect([...reads]).toEqual(["pose"]);
+  });
 });

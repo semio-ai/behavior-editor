@@ -246,29 +246,35 @@ fn for_each_span(value: &mut Value, visit: &mut dyn FnMut(&mut serde_json::Map<S
     }
 }
 
-/// A text's byte offsets as UTF-16 offsets and 1-based lines and columns.
-struct Utf16Lines<'a> {
-    text: &'a str,
+/// A text's byte offsets as UTF-16 offsets and 1-based lines and columns,
+/// each conversion a lookup in tables built once per text.
+struct Utf16Lines {
     /// The byte offset each line starts at.
     starts: Vec<usize>,
+    /// The UTF-16 offset of each byte offset, up to and including the text's
+    /// length; a byte inside a character maps to that character's start.
+    units: Vec<usize>,
 }
 
-impl<'a> Utf16Lines<'a> {
-    fn new(text: &'a str) -> Self {
+impl Utf16Lines {
+    fn new(text: &str) -> Self {
         let starts = std::iter::once(0)
             .chain(text.match_indices('\n').map(|(at, _)| at + 1))
             .collect();
-        Self { text, starts }
+        let mut units = Vec::with_capacity(text.len() + 1);
+        let mut count = 0;
+        for c in text.chars() {
+            units.extend(std::iter::repeat_n(count, c.len_utf8()));
+            count += c.len_utf16();
+        }
+        units.push(count);
+        Self { starts, units }
     }
 
     /// The UTF-16 offset of the byte offset `at`, clamped to the text and
     /// moved back to a character boundary.
     fn utf16(&self, at: usize) -> usize {
-        let mut at = at.min(self.text.len());
-        while !self.text.is_char_boundary(at) {
-            at -= 1;
-        }
-        self.text[..at].encode_utf16().count()
+        self.units[at.min(self.units.len() - 1)]
     }
 
     fn convert(&self, span: &mut serde_json::Map<String, Value>) {
@@ -308,6 +314,13 @@ mod tests {
                 { "start": 5, "end": 7, "line": 2, "column": 1 },
             ])
         );
+    }
+
+    #[test]
+    fn an_offset_inside_a_character_or_past_the_text_is_moved_back() {
+        let lines = Utf16Lines::new("é😀a\nbc");
+        // Byte 1 is inside "é", byte 4 inside "😀"; the text is 7 units long.
+        assert_eq!([1, 4, 6, 99].map(|at| lines.utf16(at)), [0, 1, 3, 7]);
     }
 
     #[test]

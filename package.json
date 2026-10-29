@@ -4,8 +4,7 @@
   "version": "0.0.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/semio-ai/semio_studio.git",
-    "directory": "packages/behavior-editor"
+    "url": "git+https://github.com/semio-ai/behavior-editor.git"
   },
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -29,7 +28,7 @@
   "sideEffects": [
     "*.css"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "files": [
     "dist/**",
     "wasm/pkg/behavior_text.js",
@@ -46,31 +45,36 @@
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:unit": "vitest run",
     "test": "vitest run",
-    "clean": "rm -rf .turbo && rm -rf node_modules && rm -rf dist wasm/pkg wasm/target",
     "lint:rust": "cd wasm && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check",
-    "test:rust": "cd wasm && cargo test --locked --release"
+    "test:rust": "cd wasm && cargo test --locked --release",
+    "clean": "rm -rf node_modules dist wasm/pkg wasm/target"
   },
   "peerDependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@semio/eslint-config": "*",
-    "@semio/studio-arora": "*",
-    "@semio/typescript-config": "*",
+    "@eslint/js": "^9.39.4",
+    "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.0.1",
     "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.19.15",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.2.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "globals": "^17.11.0",
     "jsdom": "^25.0.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tsup": "^8.0.1",
     "typescript": "^5.3.3",
+    "typescript-eslint": "^8.59.3",
     "vite": "^7.3.2",
     "vitest": "^5.0.1"
   },

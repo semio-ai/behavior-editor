@@ -1,2 +1,5 @@
+node_modules/
+dist/
+# The language's wasm build, and cargo's outputs.
 /wasm/pkg
 /wasm/target

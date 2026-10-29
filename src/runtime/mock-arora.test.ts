@@ -633,6 +633,31 @@ describe("MockArora", () => {
       expect((await device.step(DT)).statuses).toEqual({ r: "S", w: "S", b: "S" });
     });
 
+    it("calls a detached node again only when its arguments change", async () => {
+      const device = new MockArora({ store: { in: { f64: 3 } } });
+      const graph = (b: number) =>
+        loaded(
+          node("r", MATH.identity.id, { [MATH.identity.x]: key(".x"), [N.RET]: key("out") }),
+          node("d", MATH.mul.id, {
+            [MATH.mul.a]: key("in"),
+            [MATH.mul.b]: value({ f64: 2 }),
+            [N.RET]: key(".x"),
+          }),
+          node("e", MATH.mul.id, {
+            [MATH.mul.a]: key("in"),
+            [MATH.mul.b]: value({ f64: b }),
+            [N.RET]: key("other"),
+          }),
+        );
+      await device.start(graph(1));
+      expect((await device.step(DT)).detached).toEqual({ d: "called", e: "called" });
+      await device.edit({ bind: [{ node: "e", port: MATH.mul.b, source: { value: { f64: 5 } } }] });
+      const report = await device.step(DT);
+      expect(report.detached).toEqual({ d: "cached", e: "called" });
+      expect(await device.read("out")).toEqual({ f64: 6 });
+      expect(await device.read("other")).toEqual({ f64: 15 });
+    });
+
     it("is refused when no behavior runs", async () => {
       await expect(new MockArora().edit({})).rejects.toThrow(/no behavior runs/);
     });

@@ -464,7 +464,8 @@ class Program {
   /**
    * Take over the state `previous` holds for every node an edit left in
    * place, `fresh` naming those it set or bound: its literal cells, the cells
-   * of its unbound ports, and the tree-local variables it reads.
+   * of its unbound ports, the tree-local variables it reads, and a detached
+   * node's last call, so it is called again only when its arguments change.
    */
   #keepState(previous: Program, fresh: ReadonlySet<string>) {
     const same = (id: string) => !fresh.has(id) && previous.#nodes.has(id);
@@ -478,7 +479,12 @@ class Program {
       if (!same(id) || this.#bindings.has(at)) continue;
       this.#cell(id, at.slice(id.length + 1)).set(held.get());
     }
-
+    for (const [id, state] of this.#state) {
+      const held = previous.#state.get(id);
+      if (!held || !same(id)) continue;
+      if (held.args) state.args = [...held.args];
+      state.outputs = new Map(held.outputs);
+    }
     for (const node of this.#nodes.values()) {
       if (!same(node.id)) continue;
       for (const source of Object.values(node.bind ?? {})) {

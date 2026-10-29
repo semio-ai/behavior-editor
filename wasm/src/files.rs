@@ -313,9 +313,10 @@ fn signature(functions: &FunctionIndex, id: Uuid) -> Option<ModuleFunction> {
 ///
 /// The display names every node another reads, or the tree does not hold,
 /// by its id when it has no label; a node the tree holds and none reads goes
-/// unnamed, so the text gives it the id of its path. With `keep_ids`, a node
-/// whose id that is not is named by its id, so that the text resolves to
-/// every node the id it has.
+/// unnamed, so the text gives it the id of its path. With `keep_ids`, the
+/// text resolves to `graph` itself: a node whose id that is not is named by
+/// its id, and every unnamed node is when path ids would still land on other
+/// nodes. A graph no text reads back as is refused.
 fn graph_text(
     graph: &Graph,
     functions: &FunctionIndex,
@@ -334,23 +335,48 @@ fn graph_text(
         .to_string()
     };
     let written = display(&labels);
-    if !keep_ids {
+    if !keep_ids || resolves_to(&written, graph, functions) {
         return Ok(written);
     }
-    let lost: Vec<Uuid> = {
-        let ids: HashSet<Uuid> = resolved_ids(&written, functions);
+    // A node the text gives another id is named by its id.
+    let ids: HashSet<Uuid> = graph_of(&written, functions)
+        .nodes
+        .iter()
+        .map(|node| node.id)
+        .collect();
+    let lost = graph.nodes.iter().map(|node| node.id);
+    labels.extend(
+        lost.filter(|id| !ids.contains(id))
+            .map(|id| (id, id.to_string())),
+    );
+    let written = display(&labels);
+    if resolves_to(&written, graph, functions) {
+        return Ok(written);
+    }
+    // Ids the text derives from paths can land on other nodes, as when two
+    // nodes hold each other's: every node unnamed is then named by its id.
+    for node in &graph.nodes {
+        labels.entry(node.id).or_insert_with(|| node.id.to_string());
+    }
+    let written = display(&labels);
+    if resolves_to(&written, graph, functions) {
+        Ok(written)
+    } else {
+        Err(Problem::new(
+            "the graph has no text that reads back as the same graph",
+        ))
+    }
+}
+
+/// Whether `text` resolves to `graph`, a graph without the bindings a
+/// resolution seeds: the same nodes, with the same ids, bindings and children.
+fn resolves_to(text: &str, graph: &Graph, functions: &FunctionIndex) -> bool {
+    let by_id = |graph: Graph| {
+        let mut graph = graph;
+        graph.nodes.sort_by_key(|node| node.id);
         graph
-            .nodes
-            .iter()
-            .map(|node| node.id)
-            .filter(|id| !ids.contains(id))
-            .collect()
     };
-    if lost.is_empty() {
-        return Ok(written);
-    }
-    labels.extend(lost.into_iter().map(|id| (id, id.to_string())));
-    Ok(display(&labels))
+    by_id(unseeded(&graph_of(text, functions))) == by_id(graph.clone())
 }
 
 /// `graph` without the bindings a text's resolution gives a native node by
@@ -382,15 +408,9 @@ fn unseeded(graph: &Graph) -> Graph {
     graph
 }
 
-/// The ids of the nodes `text` resolves to.
-fn resolved_ids(text: &str, functions: &FunctionIndex) -> HashSet<Uuid> {
-    let parsed = text::parse(text);
-    text::resolve(&parsed.document, functions)
-        .graph
-        .nodes
-        .iter()
-        .map(|node| node.id)
-        .collect()
+/// The graph `text` resolves to.
+fn graph_of(text: &str, functions: &FunctionIndex) -> Graph {
+    text::resolve(&text::parse(text).document, functions).graph
 }
 
 /// Whether `name` is written as a node's name as it is: what a text names a
@@ -542,6 +562,40 @@ mod tests {
         let named = "root: done\nnodes:\n- id: done\n  function: succeed\n";
         let text = open_graph(named, GraphFormat::Yaml, &FunctionIndex::new()).unwrap();
         assert_eq!(text, "done: succeed\n");
+    }
+
+    #[test]
+    fn nodes_holding_each_other_s_path_ids_keep_them_in_the_text() {
+        for leaves in ["  succeed\n  running\n", "  succeed\n  succeed\n"] {
+            let loaded = resolved(&format!("sequence\n{leaves}"));
+            let mut graph = loaded.graph.clone();
+            let root = graph.root.unwrap();
+            let (a, b) = {
+                let children = graph.nodes.iter().find(|n| n.id == root).unwrap();
+                let children = children.children.as_ref().unwrap();
+                (children[0], children[1])
+            };
+            // Each leaf takes the other's id, in the same tree order.
+            let swap = |id: &mut Uuid| {
+                if *id == a {
+                    *id = b;
+                } else if *id == b {
+                    *id = a;
+                }
+            };
+            for node in &mut graph.nodes {
+                swap(&mut node.id);
+                node.children.iter_mut().flatten().for_each(swap);
+            }
+            let index = FunctionIndex::new();
+            let file = write_graph(&graph, &HashMap::new(), GraphFormat::Json, &index).unwrap();
+            let text = open_graph(&file, GraphFormat::Json, &index).unwrap();
+            assert_eq!(
+                sorted(resolved(&text).graph),
+                sorted(graph.clone()),
+                "{text}"
+            );
+        }
     }
 
     #[test]

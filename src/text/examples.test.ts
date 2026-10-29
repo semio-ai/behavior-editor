@@ -27,7 +27,12 @@ describe("a 64-bit literal", () => {
       language
         .resolve(language.parse(text).document, MATH_FUNCTIONS)
         .diagnostics.filter((d) => d.severity === "error");
-    const literals = ["9007199254740993u64", "u64[1, 9007199254740993]", "-9007199254740993i64"];
+    const literals = [
+      "9007199254740993u64",
+      "u64[1, 9007199254740993]",
+      "-9007199254740993i64",
+      "u64[1, 9007199254740993][1]",
+    ];
     for (const literal of literals) {
       const errors = resolve(`running\n\nx: identity(x: ${literal})\n`);
       expect(errors.map((d) => [d.span.line, d.message])).toEqual([

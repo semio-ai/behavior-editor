@@ -86,6 +86,8 @@ export function usePlayback(
   const started = useRef(false);
   /** The graph the runtime runs, which an edit is the diff from; `null` when none runs. */
   const running = useRef<Graph | null>(null);
+  /** Whether the runtime refused the last edit: the error shown is that refusal. */
+  const refused = useRef(false);
   /** Whether there is a behavior to tick: `loaded` is not `null`. */
   const runnable = useRef(loaded !== null);
   const stepping = useRef(false);
@@ -110,6 +112,7 @@ export function usePlayback(
     return infos;
   }, [runtime]);
 
+  // A key written since the last tick keeps showing the write.
   const readStore = useCallback(async () => {
     const infos = await readKeys();
     const values = await Promise.all(infos.map((info) => runtime.read(info.key)));
@@ -118,6 +121,11 @@ export function usePlayback(
       const value = values[i];
       if (value != null) next.set(info.key, value);
     });
+    for (const key of pendingRef.current) {
+      const shown = storeRef.current.get(key);
+      if (shown === undefined) next.delete(key);
+      else next.set(key, shown);
+    }
     setStore(next);
     return next;
   }, [runtime, readKeys, setStore]);
@@ -136,6 +144,7 @@ export function usePlayback(
           await runtime.start(behavior);
           running.current = behavior.graph;
           started.current = true;
+          refused.current = false;
           setError(null);
           setReports({ report: null, previous: null });
           setHistory(new Map());
@@ -143,15 +152,23 @@ export function usePlayback(
           return;
         }
         const change = diff(previous, behavior.graph);
-        if (isEmptyDiff(change)) return;
+        if (isEmptyDiff(change)) {
+          // Back to the behavior running: a refusal of another is moot.
+          if (refused.current) setError(null);
+          refused.current = false;
+          return;
+        }
         // A refused edit leaves the behavior running as it was, which the
         // next edit is the diff from.
+        refused.current = true;
         await runtime.edit(change);
+        refused.current = false;
         running.current = behavior.graph;
         setError(null);
-        await readKeys();
+        // An edit may write the store: a device applies a call with a step.
+        await readStore();
       }).catch((e: unknown) => setError(message(e))),
-    [runtime, enqueue, readStore, readKeys, diff],
+    [runtime, enqueue, readStore, diff],
   );
 
   useEffect(() => {

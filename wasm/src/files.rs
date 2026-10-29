@@ -208,8 +208,9 @@ fn json_depth(json: &str) -> usize {
 }
 
 /// `graph` as a Groot tree, or what in it Groot cannot hold: a node the tree
-/// does not hold, a binding reading another node, a node's name. `names`
-/// names each node, as the text does or by its path.
+/// does not hold, a binding reading another node, a node's name, an id other
+/// than its path's. `names` names each node, as the text does or by its path.
+/// A tree is written only when it opens again as `graph`.
 pub fn write_groot(
     graph: &Graph,
     names: &HashMap<Uuid, String>,
@@ -291,9 +292,34 @@ pub fn write_groot(
     let tree = tree_node(root, &nodes, &mut variables);
     let groot = schema_groot::Node::try_from_tree_node(&tree, functions, &mut variables)
         .map_err(|e| vec![Problem::new(format!("Groot cannot hold it: {e}"))])?;
-    String::from_utf8(schema_groot::BehaviorTree { root: groot }.to_groot_xml())
+    let xml = String::from_utf8(schema_groot::BehaviorTree { root: groot }.to_groot_xml())
         .map(|xml| xml + "\n")
-        .map_err(|e| vec![Problem::new(e.to_string())])
+        .map_err(|e| vec![Problem::new(e.to_string())])?;
+    // Groot gives each node the id of its path: a node with another id, one
+    // a text gives by naming it with an id, would come back as another node.
+    let text = open_groot(&xml, functions)?;
+    let graph = unseeded(graph);
+    if resolves_to(&text, &graph, functions) {
+        return Ok(xml);
+    }
+    let ids: HashSet<Uuid> = graph_of(&text, functions)
+        .nodes
+        .iter()
+        .map(|node| node.id)
+        .collect();
+    let moved: Vec<String> = attached
+        .iter()
+        .filter(|id| !ids.contains(id))
+        .map(&label)
+        .collect();
+    Err(vec![Problem::new(if moved.is_empty() {
+        "Groot does not read this behavior back as it is".to_string()
+    } else {
+        format!(
+            "Groot gives each node the id of its path, which {} has not",
+            moved.join(", ")
+        )
+    })])
 }
 
 /// The node `id` and the tree under it, each binding an argument: a value
@@ -575,6 +601,23 @@ mod tests {
                 "Groot has no form for a port reading another node, as `root.0`'s `a` does",
             ]
         );
+    }
+
+    #[test]
+    fn groot_refuses_a_node_whose_id_is_not_its_path_s() {
+        let index = FunctionIndex::new();
+        let id = "8f3a1c52-0d4e-4b7a-9c61-2b5e7d9a0f13";
+        let loaded = resolved(&format!("sequence\n  {id}: succeed\n"));
+        let problems = write_groot(&loaded.graph, &names(&loaded), &index).unwrap_err();
+        assert_eq!(
+            problems[0].message,
+            format!("Groot gives each node the id of its path, which `{id}` has not")
+        );
+        // The root named `root` has its path's id: it reads back as it is.
+        let loaded = resolved("root: succeed\n");
+        let xml = write_groot(&loaded.graph, &names(&loaded), &index).unwrap();
+        let text = open_groot(&xml, &index).unwrap();
+        assert_eq!(sorted(resolved(&text).graph), sorted(loaded.graph));
     }
 
     #[test]

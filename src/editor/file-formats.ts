@@ -41,6 +41,10 @@ export function withExtension(name: string, format: FileFormat): string {
   return `${base || "behavior"}${info(format).extensions[0]}`;
 }
 
+export function labelOf(format: FileFormat): string {
+  return info(format).label;
+}
+
 export function mimeOf(format: FileFormat): string {
   return info(format).mime;
 }

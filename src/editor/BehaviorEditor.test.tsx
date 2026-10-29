@@ -409,6 +409,34 @@ describe("BehaviorEditor", () => {
     expect(written).toHaveLength(2);
   });
 
+  it("writes no file whose name says another format than the one saved", async () => {
+    const written: string[] = [];
+    const offered: unknown[] = [];
+    vi.stubGlobal("showSaveFilePicker", (options: unknown) => {
+      offered.push(options);
+      return Promise.resolve({
+        name: "tree.bt",
+        createWritable: () =>
+          Promise.resolve({
+            write: (data: string) => {
+              written.push(data);
+              return Promise.resolve();
+            },
+            close: () => Promise.resolve(),
+          }),
+      });
+    });
+    const { user } = setup(ORDER);
+    await screen.findByRole("tree", { name: "Behavior diagram" });
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Graph, JSON" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "tree.bt is not named as Graph, JSON: name it .json",
+    );
+    expect(offered).toEqual([expect.objectContaining({ excludeAcceptAllOption: true })]);
+    expect(written).toEqual([]);
+  });
+
   it("says why the runtime refused the behavior", async () => {
     const refusing: BehaviorRuntime = {
       ...new MockArora(),

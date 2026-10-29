@@ -4,7 +4,14 @@
  * writes the file in place; otherwise a file input to open and a download to
  * save. Opening and saving take the same paths whatever the format.
  */
-import { FILE_FORMATS, type FileFormat, extensionsOf, formatOf, mimeOf } from "./file-formats";
+import {
+  FILE_FORMATS,
+  type FileFormat,
+  extensionsOf,
+  formatOf,
+  labelOf,
+  mimeOf,
+} from "./file-formats";
 
 /**
  * A file the editor opened or saved: its name, its format, and its handle
@@ -33,7 +40,7 @@ const typesOf = (format?: FileFormat): PickerOptions["types"] =>
   format
     ? [
         {
-          description: FILE_FORMATS.find((f) => f.format === format)!.label,
+          description: labelOf(format),
           accept: { [mimeOf(format)]: [...extensionsOf(format)] },
         },
       ]
@@ -87,7 +94,8 @@ export async function openBehaviorFile(): Promise<(BehaviorFile & { text: string
 
 /**
  * Write `text`, in `file`'s format, to `file`'s handle; with no handle, or
- * `saveAs`, ask where first, offering that format. Without the API, the text
+ * `saveAs`, ask where first, offering that format only, and refuse a name
+ * with another format's extension. Without the API, the text
  * downloads under `file`'s name. `null` when the person dismissed the picker.
  */
 export async function saveBehaviorFile(
@@ -106,10 +114,17 @@ export async function saveBehaviorFile(
       handle = await showSaveFilePicker.call(window, {
         suggestedName: file.name,
         types: typesOf(file.format),
+        excludeAcceptAllOption: true,
       });
     } catch (error) {
       if (dismissed(error)) return null;
       throw error;
+    }
+    // A file opens in the format its name says: one named for another is not
+    // written, as it would not open as what it holds.
+    if (formatOf(handle.name) !== file.format) {
+      const extensions = extensionsOf(file.format).join(" or ");
+      throw new Error(`${handle.name} is not named as ${labelOf(file.format)}: name it ${extensions}`);
     }
   }
   const writable = await handle.createWritable();

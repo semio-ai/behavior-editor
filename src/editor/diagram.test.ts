@@ -113,6 +113,23 @@ describe("the diagram's outputs", () => {
     ]);
   });
 
+  it("reads an output a reference names by its parameter's id", () => {
+    const damp = MATH_FUNCTIONS.find((f) => f.name === "damp")!.function;
+    const state = Object.entries(damp.parameters).find(([, p]) => p.name === "state")![0];
+    const text = `${SMILE.text}watch: identity(x: @mouth.${state})\n`;
+    const { document } = language.parse(text);
+    const loaded = language.resolve(document, MATH_FUNCTIONS);
+    const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+    const rows = diagramRows(document, index, loaded.nodes);
+    const mouth = rows.find((r) => r.node.name?.text === "mouth")!;
+    const watch = rows.find((r) => r.node.name?.text === "watch")!;
+    expect(watch.ports[0]!.sources).toEqual([{ key: mouth.key, output: "state" }]);
+    const layout = layoutDiagram(rows, new Set());
+    const box = layout.boxes.get(mouth.key)!;
+    const wire = layout.wires.find((w) => w.from === mouth.key && w.to === watch.key)!;
+    expect(wire.d.startsWith(`M${box.x + box.w},${box.y + outputY(box, 1)} `)).toBe(true);
+  });
+
   it("starts a wire at the output it reads", () => {
     const layout = layoutDiagram(rowsOf(RETURN_VALUES), new Set());
     const level = layout.boxes.get("3")!;

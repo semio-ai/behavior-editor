@@ -74,8 +74,15 @@ export function diagramRows(
   loaded: readonly LoadedNode[],
 ): DiagramRow[] {
   const nodes = walk(document);
-  const producers = new Map<string, string>();
-  for (const { node, path } of nodes) if (node.name) producers.set(node.name.text, rowKey(path));
+  const producers = new Map<string, Producer>();
+  for (const { node, path } of nodes) {
+    if (node.name) {
+      producers.set(node.name.text, {
+        key: rowKey(path),
+        entry: functions.lookup(node.call.function),
+      });
+    }
+  }
   const rows = new Map<string, DiagramRow>();
   for (const { node, path } of nodes) {
     const key = rowKey(path);
@@ -121,7 +128,7 @@ export function diagramRows(
 function ports(
   node: SourceNode,
   entry: FunctionEntry | undefined,
-  producers: ReadonlyMap<string, string>,
+  producers: ReadonlyMap<string, Producer>,
 ): DiagramPort[] {
   const params = entry
     ? orderedParameters(entry.signature.function).map((p) => p.parameter.name)
@@ -137,8 +144,10 @@ function ports(
       name,
       text: expressionText(value),
       sources: portsRead(value).flatMap(({ node: n, port }) => {
-        const key = producers.get(n);
-        return key === undefined ? [] : [{ key, output: port }];
+        const producer = producers.get(n);
+        return producer === undefined
+          ? []
+          : [{ key: producer.key, output: outputName(port, producer.entry) }];
       }),
     };
   });
@@ -146,6 +155,21 @@ function ports(
 
 /** The name the language gives a node's return value. */
 export const RET = "_ret";
+
+/** A node others read by name: its row, and its function. */
+interface Producer {
+  key: string;
+  entry: FunctionEntry | undefined;
+}
+
+/**
+ * The name of the output `port` of a node calling `entry`: a reference may
+ * name a parameter by its id, and the return value by `_ret`'s.
+ */
+function outputName(port: string, entry: FunctionEntry | undefined): string {
+  if (port === N.RET) return RET;
+  return entry?.signature.function.parameters[port]?.name ?? port;
+}
 
 /**
  * A node's outputs: `_ret` when the node binds it, can be read by name, or

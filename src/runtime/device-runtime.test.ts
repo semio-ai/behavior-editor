@@ -124,7 +124,7 @@ describe("DeviceRuntime", () => {
     const { device, runtime, loaded } = setup();
     await runtime.start(ORDER.loaded);
     await runtime.stop();
-    expect(loaded.at(-1)).toEqual({ nodes: {}, links: [], variables: {} });
+    expect(loaded.at(-1)).toEqual({});
     expect(device.calls.at(-1)).toBe(JSON.stringify({ load: 2 }));
     expect((await runtime.step(33)).tick).toBe(0);
   });

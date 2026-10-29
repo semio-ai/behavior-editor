@@ -1,4 +1,4 @@
-import type { Graph } from "../model/graph";
+import { EMPTY_GRAPH, type Graph } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import { type Value, valueEquals } from "../model/value";
 import type { Loaded } from "../text/language";
@@ -42,9 +42,6 @@ export interface DeviceRuntimeOptions {
   /** The `Call` JSON that loads a graph as the device's behavior: the language's `loadCall`. */
   loadCall: (graph: Graph) => string;
 }
-
-/** The graph of no behavior: loading it stops the device's. */
-const EMPTY: Graph = { nodes: {}, links: [], variables: {} };
 
 /**
  * A behavior running on a device, through the device's own call path:
@@ -121,7 +118,7 @@ export class DeviceRuntime implements BehaviorRuntime {
 
   stop(): Promise<void> {
     return this.#attempt(() => {
-      if (this.#running) this.#options.device.call(this.#options.loadCall(EMPTY));
+      if (this.#running) this.#options.device.call(this.#options.loadCall(EMPTY_GRAPH));
       this.#running = false;
     });
   }

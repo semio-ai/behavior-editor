@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn a_load_call_targets_the_interpreter() {
-        let graph = r#"{"nodes":{},"links":[],"variables":{}}"#;
+        let graph = "{}";
         let call: Value = serde_json::from_str(&load_call(graph).unwrap()).unwrap();
         assert_eq!(call["module_id"], "61726f72-6100-0000-0000-000000000001");
         assert_eq!(call["id"], "61726f72-6100-0000-0000-000000000004");

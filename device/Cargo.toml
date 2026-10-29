@@ -15,10 +15,10 @@ crate-type = ["cdylib", "rlib"]
 # it builds for the browser. On a native target it runs without a guest
 # module, which this device loads none of: its native tests run the same
 # device.
-arora = { version = "16", default-features = false }
+arora = { version = "17", default-features = false }
 # `@arora/dataflow`, the functions a behavior's nodes call. Without `urdf_ik`:
 # the URDF nodes are `@arora/kinematics`', which the device does not carry.
-arora-dataflow-nodes = { version = "1.0", default-features = false }
+arora-dataflow-nodes = { version = "2", default-features = false }
 # The host store the device's keys sit in, under its namespace.
 arora-simple-data-store = "3.2"
 # Call, CallBridge, Value, Key and KeyMeta.
@@ -28,9 +28,9 @@ uuid = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # The browser device the runtime is wrapped in: its step, and its caller.
-arora-web = "13"
+arora-web = "14"
 # The interpreter module's EDIT call (`interpreter_module::encode_edit`).
-arora-behavior = "9.6"
+arora-behavior = "10"
 futures = "0.3"
 serde = "1"
 wasm-bindgen = "0.2"

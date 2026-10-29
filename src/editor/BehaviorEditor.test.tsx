@@ -364,6 +364,31 @@ describe("BehaviorEditor", () => {
     expect(calls).toEqual(["edit"]);
   });
 
+  it("shows what an edit wrote to the store without a tick", async () => {
+    const runtime = new MockArora({ store: SMILE.store });
+    const edit = runtime.edit.bind(runtime);
+    // As a device applying the call with a step at zero dt.
+    runtime.edit = async (diff) => {
+      await edit(diff);
+      await runtime.write("rig/cheek_raise", { f64: 0.42 });
+    };
+    const { user } = setup(SMILE, { runtime });
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    await user.click(screen.getByRole("treeitem", { name: /^cheeks: / }));
+    const b = screen.getByRole("textbox", { name: "b" });
+    await user.clear(b);
+    await user.type(b, "0.9{Enter}");
+    await user.click(screen.getByRole("tab", { name: "Store" }));
+    const store = screen.getByRole("region", { name: "Store" });
+    await waitFor(() =>
+      expect(within(store).getByRole("status", { name: "rig/cheek_raise" })).toHaveTextContent(
+        "0.42",
+      ),
+    );
+    expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1");
+  });
+
   it("edits the behavior running when the text changes, and starts it afresh on Reset", async () => {
     const runtime = new MockArora({ store: SMILE.store });
     const calls: string[] = [];

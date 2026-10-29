@@ -112,6 +112,7 @@ export function usePlayback(
     return infos;
   }, [runtime]);
 
+  // A key written since the last tick keeps showing the write.
   const readStore = useCallback(async () => {
     const infos = await readKeys();
     const values = await Promise.all(infos.map((info) => runtime.read(info.key)));
@@ -120,6 +121,11 @@ export function usePlayback(
       const value = values[i];
       if (value != null) next.set(info.key, value);
     });
+    for (const key of pendingRef.current) {
+      const shown = storeRef.current.get(key);
+      if (shown === undefined) next.delete(key);
+      else next.set(key, shown);
+    }
     setStore(next);
     return next;
   }, [runtime, readKeys, setStore]);
@@ -159,9 +165,10 @@ export function usePlayback(
         refused.current = false;
         running.current = behavior.graph;
         setError(null);
-        await readKeys();
+        // An edit may write the store: a device applies a call with a step.
+        await readStore();
       }).catch((e: unknown) => setError(message(e))),
-    [runtime, enqueue, readStore, readKeys, diff],
+    [runtime, enqueue, readStore, diff],
   );
 
   useEffect(() => {

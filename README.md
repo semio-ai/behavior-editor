@@ -81,7 +81,12 @@ that follows the system unless the page sets `data-theme` on its root element.
 
 ## Runtimes
 
-`BehaviorRuntime` is what the editor runs a behavior on:
+`BehaviorRuntime` is what the editor runs a behavior on: the graph resolving
+the text gives, `arora_behavior::graph::Graph` in graph format behavior-tree
+2.0 (`arora-behavior-tree` 10). Its nodes are a list, each with its function,
+its children, and its bindings: for each port, the value, store key or other
+node's port feeding it, or the key its output is written to.
+
 
 - `MockArora` runs a resolved graph in process with `arora-behavior-tree`'s
   semantics: native control and data nodes, module leaves, detached nodes

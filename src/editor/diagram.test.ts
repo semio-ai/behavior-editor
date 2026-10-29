@@ -1,9 +1,17 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { EXAMPLES, type Example, GREET, READERS_PARALLEL, idOf } from "../../fixtures/examples";
+import {
+  EXAMPLES,
+  type Example,
+  GREET,
+  READERS_PARALLEL,
+  RETURN_VALUES,
+  SMILE,
+  idOf,
+} from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
 import type { BehaviorText } from "../text/language";
 import { dropAt } from "./Diagram";
-import { PAD, layoutDiagram } from "./diagram-layout";
+import { PAD, layoutDiagram, outputY } from "./diagram-layout";
 import { diagramRows } from "./diagram-rows";
 import { functionIndex } from "./functions";
 
@@ -76,13 +84,40 @@ describe("the diagram's rows", () => {
       sources: [],
     });
     expect(rows.find((r) => r.key === "0.0.1")?.ports).toEqual([
-      { name: "x", text: "@fresh._ret", sources: ["1"] },
+      { name: "x", text: "@fresh._ret", sources: [{ key: "1", output: "_ret" }] },
     ]);
     expect(rows.find((r) => r.key === "0.0.2")?.descendantKeys).toEqual([
       "0.0.2.0",
       "0.0.2.1",
       "0.0.2.2",
     ]);
+  });
+});
+
+describe("the diagram's outputs", () => {
+  it("names each output: _ret where it is written, then the parameters a function writes back", () => {
+    const rows = rowsOf(RETURN_VALUES);
+    const outputs = (key: string) => rows.find((r) => r.key === key)!.outputs;
+    // A named node's return value, read by others, written nowhere.
+    expect(outputs("1")).toEqual([{ name: "_ret", text: "" }]);
+    // A node binding its return value to a store key.
+    expect(outputs("3")).toEqual([{ name: "_ret", text: "{face/level}" }]);
+    // A tree leaf binding its return value; a condition's status is its pill, not an output.
+    expect(outputs("0.0.1")).toEqual([{ name: "_ret", text: "{face/look}" }]);
+    expect(outputs("0.0.0")).toEqual([]);
+    // A function writing a parameter back lists it after _ret.
+    const mouth = rowsOf(SMILE).find((r) => r.node.name?.text === "mouth")!;
+    expect(mouth.outputs).toEqual([
+      { name: "_ret", text: "{rig/mouth_corner}" },
+      { name: "state", text: "" },
+    ]);
+  });
+
+  it("starts a wire at the output it reads", () => {
+    const layout = layoutDiagram(rowsOf(RETURN_VALUES), new Set());
+    const level = layout.boxes.get("3")!;
+    const wire = layout.wires.find((w) => w.from === "3" && w.to === "0.0.1")!;
+    expect(wire.d.startsWith(`M${level.x + level.w},${level.y + outputY(level, 0)} `)).toBe(true);
   });
 });
 

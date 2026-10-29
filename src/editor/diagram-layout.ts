@@ -12,7 +12,7 @@ export interface DiagramLayout {
   boxes: Map<string, Box>;
   /** The parent-to-child edges of the tree. */
   edges: { from: string; to: string; d: string }[];
-  /** The data wires: from the right edge of a producing node to the port reading it. */
+  /** The data wires: from the output a node produces, on its right edge, to the port reading it. */
   wires: Wire[];
   width: number;
   height: number;
@@ -30,6 +30,8 @@ export interface Box {
   lines: string[];
   /** The line each port starts on. */
   portLine: number[];
+  /** The output lines, under the ports: each output's name and where it is written. */
+  outputLines: string[];
   /** The rows a folded node hides, one square each, up to `MINI`. */
   minis: DiagramRow[] | null;
   folded: boolean;
@@ -61,6 +63,13 @@ const STACK_WIDTH = 640;
 
 /** The y of port `i`'s line, from the top of its box. */
 export const portY = (box: Box, i: number) => 32 + LINE * box.portLine[i]!;
+
+/** The y of output `i`'s line, from the top of its box. */
+export const outputY = (box: Box, i: number) => 32 + LINE * (box.lines.length + i);
+
+/** An output's line: `{face/level} ← _ret`, or its name alone when it is written nowhere. */
+export const outputText = (o: { name: string; text: string }) =>
+  o.text ? `${o.text} ← ${o.name}` : o.name;
 
 function wrapText(s: string, max: number): string[] {
   if (s.length <= max) return [s];
@@ -113,18 +122,20 @@ export function layoutDiagram(
       lines.push(...wrapText(`${p.name}  ${p.text}`, WRAP));
       return at;
     });
+    const outputLines = row.outputs.map(outputText);
     const minis = folded ? row.descendantKeys.slice(0, MINI).map((k) => byKey.get(k)!) : null;
     const chev = row.childKeys.length ? 2 : 0;
     const head =
       (row.title.length + (row.glyph ? row.glyph.length + 1 : 0) + chev) * CH_T + (pill ? 30 : 0);
     const textW = Math.max(
       head,
-      ...lines.map((l) => l.length * CH_S + 4),
+      ...[...lines, ...outputLines].map((l) => l.length * CH_S + 4),
       minis ? minis.length * 11 + (row.descendantKeys.length > MINI ? 34 : 0) : 0,
     );
     const condition = row.shape === "condition";
     const w = Math.ceil(Math.max(condition ? 132 : 112, textW + (condition ? 36 : 24)));
-    const h = (lines.length ? 28 + LINE * lines.length : 30) + (minis ? 16 : 0);
+    const textLines = lines.length + outputLines.length;
+    const h = (textLines ? 28 + LINE * textLines : 30) + (minis ? 16 : 0);
     boxes.set(row.key, {
       row,
       x: 0,
@@ -133,6 +144,7 @@ export function layoutDiagram(
       h,
       lines,
       portLine,
+      outputLines,
       minis,
       folded,
       pill,
@@ -197,7 +209,7 @@ export function layoutDiagram(
     let k = 0;
     for (const p of f.row.ports) {
       for (const s of p.sources) {
-        const producer = boxes.get(s);
+        const producer = boxes.get(s.key);
         if (producer && column.has(producer)) k = Math.max(k, column.get(producer)! + 1);
       }
     }
@@ -236,7 +248,7 @@ export function layoutDiagram(
     const xs: number[] = [];
     for (const row of rows) {
       row.ports.forEach((p, i) => {
-        if (!p.sources.includes(f.row.key)) return;
+        if (!p.sources.some((source) => source.key === f.row.key)) return;
         const to = boxes.get(visibleKey(byKey, row.key, folds));
         if (!to || to === f || !placed.includes(to)) return;
         ys.push(to.y + (to.row === row ? portY(to, i) : 15) - 15);
@@ -269,15 +281,20 @@ export function layoutDiagram(
   for (const row of rows) {
     row.ports.forEach((p, i) => {
       for (const source of p.sources) {
-        const from = boxes.get(visibleKey(byKey, source, folds));
+        const from = boxes.get(visibleKey(byKey, source.key, folds));
         const to = boxes.get(visibleKey(byKey, row.key, folds));
         if (!from || !to || from === to) continue;
         const direct = to.row === row;
         const x1 = from.x + from.w;
-        const y1 = from.y + 15;
+        // A wire leaves the output it reads, or the top of a folded node standing for its producer.
+        const output =
+          from.row.key === source.key
+            ? from.row.outputs.findIndex((o) => o.name === source.output)
+            : -1;
+        const y1 = from.y + (output >= 0 ? outputY(from, output) : 15);
         const x2 = to.x;
         const y2 = to.y + (direct ? portY(to, i) : 15);
-        const id = `${from.row.key}>${to.row.key}@${y2}`;
+        const id = `${from.row.key}@${y1}>${to.row.key}@${y2}`;
         if (seen.has(id)) continue;
         seen.add(id);
         // A wire that runs back and down goes around the right of both nodes

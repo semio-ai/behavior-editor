@@ -499,6 +499,10 @@
 .be-port.be-wired {
   fill: var(--be-wire);
 }
+/* An output: drawn on the node's right edge, its line in the accent color. */
+.be-node .be-output {
+  fill: var(--be-accent);
+}
 .be-pill rect {
   fill: var(--be-panel);
   stroke: var(--be-line);

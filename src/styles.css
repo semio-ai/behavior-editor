@@ -272,6 +272,10 @@
   gap: 12px;
   min-width: 0;
 }
+/* A panel whose tab is not selected stays mounted, and out of sight. */
+.be-tabs [role="tabpanel"][hidden] {
+  display: none;
+}
 .be-pane,
 .be-inspector,
 .be-store {

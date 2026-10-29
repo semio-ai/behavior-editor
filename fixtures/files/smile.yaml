@@ -1,0 +1,61 @@
+root: root
+nodes:
+- id: root
+  function: running
+- id: amount
+  function: clamp
+  bind:
+    max:
+      value:
+        f64: 1.0
+    min:
+      value:
+        f64: 0.0
+    x:
+      key: face/smile
+- id: corner
+  function: remap
+  bind:
+    in_max:
+      value:
+        f64: 1.0
+    in_min:
+      value:
+        f64: 0.0
+    out_max:
+      value:
+        f64: 1.0
+    out_min:
+      value:
+        f64: -0.2
+    x:
+      port:
+        node: amount
+        port: _ret
+- id: mouth
+  function: damp
+  bind:
+    _ret:
+      key: rig/mouth_corner
+    half_life:
+      value:
+        f64: 0.12
+    state:
+      value:
+        option: null
+    target:
+      port:
+        node: corner
+        port: _ret
+- id: cheeks
+  function: mul
+  bind:
+    _ret:
+      key: rig/cheek_raise
+    a:
+      port:
+        node: amount
+        port: _ret
+    b:
+      value:
+        f64: 0.6

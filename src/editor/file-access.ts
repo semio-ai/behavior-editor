@@ -1,12 +1,18 @@
 /**
- * Local `.bt` files: through the File System Access API where the browser has
- * it, which keeps a handle so Save writes the file in place; otherwise a file
- * input to open and a download to save.
+ * Local behavior files, in every format of `FILE_FORMATS`: through the File
+ * System Access API where the browser has it, which keeps a handle so Save
+ * writes the file in place; otherwise a file input to open and a download to
+ * save. Opening and saving take the same paths whatever the format.
  */
+import { FILE_FORMATS, type FileFormat, extensionsOf, formatOf, mimeOf } from "./file-formats";
 
-/** A file the editor opened or saved: its name, and its handle when the browser gives one. */
+/**
+ * A file the editor opened or saved: its name, its format, and its handle
+ * when the browser gives one.
+ */
 export interface BehaviorFile {
   name: string;
+  format: FileFormat;
   handle: FileSystemFileHandle | null;
 }
 
@@ -22,37 +28,67 @@ interface FilePickers {
   showSaveFilePicker?(options: PickerOptions): Promise<FileSystemFileHandle>;
 }
 
-const TYPES: PickerOptions["types"] = [
-  { description: "Behavior", accept: { "text/plain": [".bt"] } },
-];
+/** The picker's entry for one format, or for every format the editor opens. */
+const typesOf = (format?: FileFormat): PickerOptions["types"] =>
+  format
+    ? [
+        {
+          description: FILE_FORMATS.find((f) => f.format === format)!.label,
+          accept: { [mimeOf(format)]: [...extensionsOf(format)] },
+        },
+      ]
+    : [
+        {
+          description: "Behavior",
+          accept: Object.fromEntries(FILE_FORMATS.map((f) => [f.mime, [...f.extensions]])),
+        },
+      ];
+
+const ACCEPT = FILE_FORMATS.flatMap((f) => f.extensions).join(",");
+
+/** The format of a file `name` names, which a file of no known extension is refused for. */
+function formatNamed(name: string): FileFormat {
+  const format = formatOf(name);
+  if (!format) {
+    throw new Error(
+      `${name} is in no format the editor opens: ${FILE_FORMATS.flatMap((f) => f.extensions).join(", ")}`,
+    );
+  }
+  return format;
+}
 
 const pickers = () => window as unknown as FilePickers;
 
 /** Whether `error` is the person dismissing a picker. */
 const dismissed = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
 
-/** Ask for a file to open: its text, or `null` when the person dismissed the picker. */
+/**
+ * Ask for a file to open: its text and the format its name says, or `null`
+ * when the person dismissed the picker.
+ */
 export async function openBehaviorFile(): Promise<(BehaviorFile & { text: string }) | null> {
   const { showOpenFilePicker } = pickers();
   if (showOpenFilePicker) {
     try {
-      const [handle] = await showOpenFilePicker.call(window, { types: TYPES });
+      const [handle] = await showOpenFilePicker.call(window, { types: typesOf() });
       if (!handle) return null;
       const file = await handle.getFile();
-      return { name: file.name, handle, text: await file.text() };
+      return { name: file.name, format: formatNamed(file.name), handle, text: await file.text() };
     } catch (error) {
       if (dismissed(error)) return null;
       throw error;
     }
   }
   const file = await chooseFile();
-  return file ? { name: file.name, handle: null, text: await file.text() } : null;
+  return file
+    ? { name: file.name, format: formatNamed(file.name), handle: null, text: await file.text() }
+    : null;
 }
 
 /**
- * Write `text` to `file`'s handle; with no handle, or `saveAs`, ask where
- * first. Without the API, the text downloads under `file`'s name. `null` when
- * the person dismissed the picker.
+ * Write `text`, in `file`'s format, to `file`'s handle; with no handle, or
+ * `saveAs`, ask where first, offering that format. Without the API, the text
+ * downloads under `file`'s name. `null` when the person dismissed the picker.
  */
 export async function saveBehaviorFile(
   text: string,
@@ -61,13 +97,16 @@ export async function saveBehaviorFile(
 ): Promise<BehaviorFile | null> {
   const { showSaveFilePicker } = pickers();
   if (!showSaveFilePicker) {
-    download(text, file.name);
-    return { name: file.name, handle: null };
+    download(text, file.name, mimeOf(file.format));
+    return { ...file, handle: null };
   }
   let handle = saveAs ? null : file.handle;
   if (!handle) {
     try {
-      handle = await showSaveFilePicker.call(window, { suggestedName: file.name, types: TYPES });
+      handle = await showSaveFilePicker.call(window, {
+        suggestedName: file.name,
+        types: typesOf(file.format),
+      });
     } catch (error) {
       if (dismissed(error)) return null;
       throw error;
@@ -76,22 +115,22 @@ export async function saveBehaviorFile(
   const writable = await handle.createWritable();
   await writable.write(text);
   await writable.close();
-  return { name: handle.name, handle };
+  return { name: handle.name, format: file.format, handle };
 }
 
 function chooseFile(): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".bt,text/plain";
+    input.accept = ACCEPT;
     input.addEventListener("change", () => resolve(input.files?.[0] ?? null));
     input.addEventListener("cancel", () => resolve(null));
     input.click();
   });
 }
 
-function download(text: string, name: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+function download(text: string, name: string, mime: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: mime }));
   const a = document.createElement("a");
   a.href = url;
   a.download = name;

@@ -3,11 +3,19 @@ import type { Graph } from "../model/graph";
 import { type NodePath, deleteNode, moveNode, reparent, siblingPath, walk } from "../model/edit";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
+import type { BehaviorDocument } from "../text/ast";
 import type { BehaviorText, Diagnostic } from "../text/language";
 import { Diagram, type Drop } from "./Diagram";
 import { diagramRows, rowKey } from "./diagram-rows";
 import { type BehaviorFile, openBehaviorFile, saveBehaviorFile } from "./file-access";
 import { FileBar } from "./FileBar";
+import {
+  FILE_FORMATS,
+  type FileFormat,
+  formatOf,
+  problemsText,
+  withExtension,
+} from "./file-formats";
 import { functionIndex } from "./functions";
 import { type Edit, Inspector } from "./Inspector";
 import { PlaybackBar } from "./PlaybackBar";
@@ -27,7 +35,7 @@ export interface BehaviorEditorProps {
   /** The text an uncontrolled editor starts from. */
   defaultText?: string;
   onTextChange?(text: string): void;
-  /** The file's name until one is opened or saved. */
+  /** The file's name until one is opened or saved; its extension says its format. */
   fileName?: string;
   /** Names to show and write for module ids. */
   moduleNames?: Readonly<Record<string, string>>;
@@ -70,9 +78,14 @@ export function BehaviorEditor({
   const active = useMemo(() => runtime ?? new MockArora(), [runtime]);
   const [own, setOwn] = useState(defaultText);
   const text = controlled ?? own;
-  const [file, setFile] = useState<BehaviorFile>({ name: fileName, handle: null });
+  const [file, setFile] = useState<BehaviorFile>(() => ({
+    name: fileName,
+    format: formatOf(fileName) ?? "bt",
+    handle: null,
+  }));
   const [saved, setSaved] = useState(text);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>("0");
   const [folds, setFolds] = useState<ReadonlySet<string>>(new Set());
   const [plotted, setPlotted] = useState<string[]>([...plotKeys]);
@@ -174,17 +187,42 @@ export function BehaviorEditor({
 
   const fileAction = (run: () => Promise<void>) => () => {
     setFileError(null);
+    setFileNotice(null);
     run().catch((e: unknown) => setFileError(e instanceof Error ? e.message : String(e)));
   };
-  const save = (saveAs: boolean) =>
+  /**
+   * The file's contents in `format`: the text, or the graph it resolves to,
+   * written as the format writes it; and what the format does not keep.
+   */
+  const contents = (format: FileFormat): { written: string; notice: string | null } => {
+    if (format === "bt") return { written: text, notice: null };
+    const label = FILE_FORMATS.find((f) => f.format === format)!.label;
+    if (diagnostics.some((d) => d.severity === "error")) {
+      throw new Error(`The text has errors: a ${label} file is written from the graph it resolves to`);
+    }
+    const out = language.writeFile(resolved, format, functions);
+    if ("problems" in out) {
+      throw new Error(`${label} cannot hold this behavior: ${problemsText(out.problems)}`);
+    }
+    return {
+      written: out.text,
+      notice: hasComments(parsed.document)
+        ? `Saved as ${label}, which keeps no comments: the text's stay in its .bt`
+        : null,
+    };
+  };
+  const save = (format: FileFormat, saveAs: boolean) =>
     fileAction(async () => {
-      const written = await saveBehaviorFile(text, file, saveAs);
-      if (!written) return;
-      setFile(written);
+      const { written, notice } = contents(format);
+      const target = saveAs ? { name: withExtension(file.name, format), format, handle: null } : file;
+      const stored = await saveBehaviorFile(written, target, saveAs);
+      if (!stored) return;
+      setFile(stored);
       setSaved(text);
+      setFileNotice(notice);
     });
   const onNew = fileAction(async () => {
-    setFile({ name: fileName, handle: null });
+    setFile({ name: fileName, format: formatOf(fileName) ?? "bt", handle: null });
     setText("");
     setSaved("");
     setSelected("0");
@@ -193,9 +231,17 @@ export function BehaviorEditor({
   const onOpen = fileAction(async () => {
     const opened = await openBehaviorFile();
     if (!opened) return;
-    setFile({ name: opened.name, handle: opened.handle });
-    setText(opened.text);
-    setSaved(opened.text);
+    let next = opened.text;
+    if (opened.format !== "bt") {
+      const out = language.openFile(opened.text, opened.format, functions);
+      if ("problems" in out) {
+        throw new Error(`${opened.name} does not open: ${problemsText(out.problems)}`);
+      }
+      next = out.text;
+    }
+    setFile({ name: opened.name, format: opened.format, handle: opened.handle });
+    setText(next);
+    setSaved(next);
     setSelected("0");
     setFolds(new Set());
   });
@@ -312,9 +358,10 @@ export function BehaviorEditor({
           dirty={text !== saved}
           onNew={onNew}
           onOpen={onOpen}
-          onSave={save(false)}
-          onSaveAs={save(true)}
+          onSave={save(file.format, false)}
+          onSaveAs={(format) => save(format, true)()}
           error={fileError}
+          notice={fileNotice}
         />
         <PlaybackBar
           playing={playback.playing}
@@ -441,6 +488,16 @@ function Legend() {
       </span>
     </div>
   );
+}
+
+/** Whether `document` holds a comment anywhere. */
+function hasComments(document: BehaviorDocument): boolean {
+  const inNode = (node: BehaviorDocument["nodes"][number]): boolean =>
+    node.comments.length > 0 ||
+    node.comment !== null ||
+    node.call.arguments.some((a) => a.comments.length > 0) ||
+    node.children.some(inNode);
+  return document.comments.length > 0 || document.nodes.some(inNode);
 }
 
 function uniqueDiagnostics(...lists: readonly (readonly Diagnostic[])[]): Diagnostic[] {

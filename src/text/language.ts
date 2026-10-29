@@ -46,6 +46,38 @@ export interface BehaviorText {
    * or binds and keeps the state of every other.
    */
   editCall(diff: GraphDiff): string;
+  /**
+   * A behavior file in another form than the text, as the text the editor
+   * edits: a readable graph in JSON or YAML (`arora-behavior-tree`'s
+   * `readable`: references by name, by id, or both), its names resolved
+   * against `functions` and the natives; or a Groot tree. A node the file
+   * names keeps its name, and a readable graph's nodes keep their ids. A file
+   * that does not load answers its problems, each with its place.
+   */
+  openFile(file: string, format: GraphFileFormat, functions: MethodSignature[]): FileOutcome;
+  /**
+   * A resolved behavior as a file in another form than the text: a readable
+   * graph in JSON or YAML, each node, function and port by its name; or a
+   * Groot tree, which holds no node outside the tree, no binding reading
+   * another node and no node name, and answers those as problems.
+   */
+  writeFile(loaded: Loaded, format: GraphFileFormat, functions: MethodSignature[]): FileOutcome;
+}
+
+/** The forms a behavior file takes besides the text. */
+export type GraphFileFormat = "json" | "yaml" | "groot";
+
+/** A file's text, or why it has none. */
+export type FileOutcome = { text: string } | { problems: FileProblem[] };
+
+/** Why a file does not load, or a behavior has no form in a format, and where. */
+export interface FileProblem {
+  message: string;
+  /** The path in the file a readable graph's reference is written at, as `nodes[2].bind.lo`. */
+  at?: string;
+  /** The 1-based line and column. */
+  line?: number;
+  column?: number;
 }
 
 export interface ParseResult {

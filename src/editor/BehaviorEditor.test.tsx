@@ -320,6 +320,54 @@ describe("BehaviorEditor", () => {
     await waitFor(() => expect(calls.at(-1)).toBe("start"));
   });
 
+  it("opens a graph file as text, saves it as another format, and refuses one that cannot hold it", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const written: { name: string; text: string }[] = [];
+    const handle = (name: string, text = "") => ({
+      name,
+      // jsdom's File reads no text: the file as the editor reads it.
+      getFile: () => Promise.resolve({ name, text: () => Promise.resolve(text) }),
+      createWritable: () =>
+        Promise.resolve({
+          write: (data: string) => {
+            written.push({ name, text: data });
+            return Promise.resolve();
+          },
+          close: () => Promise.resolve(),
+        }),
+    });
+    vi.stubGlobal("showOpenFilePicker", () => Promise.resolve([handle("greet.json", json.text)]));
+    vi.stubGlobal("showSaveFilePicker", (options: { suggestedName: string }) =>
+      Promise.resolve(handle(options.suggestedName)),
+    );
+    const { user, texts } = setup(SMILE);
+    await screen.findByRole("tree", { name: "Behavior diagram" });
+    // The example's comments stay in its text: a graph file has none.
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Graph, JSON" }));
+    await waitFor(() => expect(written.at(-1)?.name).toBe("smile.json"));
+    expect(screen.getByText(/keeps no comments/)).toHaveAttribute("role", "status");
+
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+    expect(screen.getByText("greet.json")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Graph, YAML" }));
+    await waitFor(() => expect(written.at(-1)?.name).toBe("greet.yaml"));
+    expect(written.at(-1)?.text).toContain("- id: fresh\n  function: not\n");
+    expect(screen.queryByText(/keeps no comments/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Groot XML" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Groot XML cannot hold this behavior: Groot holds no node outside the tree",
+    );
+    expect(written).toHaveLength(2);
+  });
+
   it("says why the runtime refused the behavior", async () => {
     const refusing: BehaviorRuntime = {
       ...new MockArora(),

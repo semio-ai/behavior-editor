@@ -1,0 +1,218 @@
+{
+  "root": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "function": "fallback",
+      "children": [
+        "root.0",
+        "root.1"
+      ]
+    },
+    {
+      "id": "root.0",
+      "function": "sequence",
+      "children": [
+        "root.0.0",
+        "root.0.1",
+        "root.0.2",
+        "root.0.3"
+      ]
+    },
+    {
+      "id": "root.0.0",
+      "function": "truthy",
+      "bind": {
+        "x": {
+          "key": "person/visible"
+        }
+      }
+    },
+    {
+      "id": "root.0.1",
+      "function": "truthy",
+      "bind": {
+        "x": {
+          "port": {
+            "node": "fresh",
+            "port": "_ret"
+          }
+        }
+      }
+    },
+    {
+      "id": "root.0.2",
+      "function": "parallel",
+      "children": [
+        "root.0.2.0",
+        "root.0.2.1",
+        "root.0.2.2"
+      ]
+    },
+    {
+      "id": "root.0.2.0",
+      "function": "damp",
+      "bind": {
+        "_ret": {
+          "key": "rig/arm_raise"
+        },
+        "half_life": {
+          "value": {
+            "f64": 0.12
+          }
+        },
+        "initial": {
+          "key": "rig/arm_raise"
+        },
+        "state": {
+          "value": {
+            "option": null
+          }
+        },
+        "target": {
+          "value": {
+            "f64": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": "root.0.2.1",
+      "function": "mul",
+      "bind": {
+        "_ret": {
+          "key": "rig/arm_wave"
+        },
+        "a": {
+          "port": {
+            "node": "root.0.2.1.a",
+            "port": "_ret"
+          }
+        },
+        "b": {
+          "value": {
+            "f64": 0.6
+          }
+        }
+      }
+    },
+    {
+      "id": "root.0.2.1.a",
+      "function": "oscillator",
+      "bind": {
+        "frequency": {
+          "value": {
+            "f64": 1.6
+          }
+        },
+        "t": {
+          "key": "arora/time"
+        }
+      }
+    },
+    {
+      "id": "root.0.2.2",
+      "function": "wait",
+      "bind": {
+        "now": {
+          "key": "arora/time"
+        },
+        "seconds": {
+          "value": {
+            "f64": 2.0
+          }
+        },
+        "since": {
+          "value": {
+            "option": null
+          }
+        }
+      }
+    },
+    {
+      "id": "root.0.3",
+      "function": "identity",
+      "bind": {
+        "_ret": {
+          "key": "social/greeted"
+        },
+        "x": {
+          "value": {
+            "bool": true
+          }
+        }
+      }
+    },
+    {
+      "id": "root.1",
+      "function": "parallel",
+      "children": [
+        "root.1.0",
+        "root.1.1"
+      ]
+    },
+    {
+      "id": "root.1.0",
+      "function": "damp",
+      "bind": {
+        "_ret": {
+          "key": "rig/arm_raise"
+        },
+        "half_life": {
+          "value": {
+            "f64": 0.2
+          }
+        },
+        "initial": {
+          "key": "rig/arm_raise"
+        },
+        "state": {
+          "value": {
+            "option": null
+          }
+        },
+        "target": {
+          "value": {
+            "f64": 0.0
+          }
+        }
+      }
+    },
+    {
+      "id": "root.1.1",
+      "function": "damp",
+      "bind": {
+        "_ret": {
+          "key": "rig/arm_wave"
+        },
+        "half_life": {
+          "value": {
+            "f64": 0.2
+          }
+        },
+        "initial": {
+          "key": "rig/arm_wave"
+        },
+        "state": {
+          "value": {
+            "option": null
+          }
+        },
+        "target": {
+          "value": {
+            "f64": 0.0
+          }
+        }
+      }
+    },
+    {
+      "id": "fresh",
+      "function": "not",
+      "bind": {
+        "x": {
+          "key": "social/greeted"
+        }
+      }
+    }
+  ]
+}

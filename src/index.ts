@@ -1,6 +1,16 @@
 export { BehaviorEditor, type BehaviorEditorProps } from "./editor/BehaviorEditor";
 
-export type { BehaviorText, Diagnostic, Loaded, LoadedNode, ParseResult } from "./text/language";
+export type {
+  BehaviorText,
+  Diagnostic,
+  FileOutcome,
+  FileProblem,
+  GraphFileFormat,
+  Loaded,
+  LoadedNode,
+  ParseResult,
+} from "./text/language";
+export { FILE_FORMATS, type FileFormat, formatOf } from "./editor/file-formats";
 export { createBehaviorText, type BehaviorTextExports } from "./text/wasm-language";
 export type {
   Argument,

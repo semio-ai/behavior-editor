@@ -19,10 +19,10 @@ export interface BehaviorKeys {
 
 /**
  * The keys `loaded` reads and writes: each store variable linked to a node's
- * argument, written when the argument is the node's return value or a
- * parameter its function writes, read otherwise. A key a node computes at run
- * time, such as `scatter`'s, is no variable of the graph: its runtime's meta
- * says what it is.
+ * argument, directly or through a selection, written when the argument is the
+ * node's return value or a parameter its function writes, read otherwise. A
+ * key a node computes at run time, such as `scatter`'s, is no variable of the
+ * graph: its runtime's meta says what it is.
  */
 export function behaviorKeys(loaded: Loaded, index: FunctionIndex): BehaviorKeys {
   const { graph } = loaded;
@@ -31,8 +31,11 @@ export function behaviorKeys(loaded: Loaded, index: FunctionIndex): BehaviorKeys
   const reads = new Set<string>();
   const writes = new Map<string, BehaviorWrite>();
   for (const link of graph.links) {
-    if (!("variable" in link.source)) continue;
-    const key = graph.variables[link.source.variable];
+    // A selection, `{pose}[x]`, reads the variable it selects from.
+    let source = link.source;
+    while ("select" in source) source = source.select.source;
+    if (!("variable" in source)) continue;
+    const key = graph.variables[source.variable];
     const node = graph.nodes[link.target.node];
     // A tree-local variable (`{.name}`, or an id that names none) is no store key.
     if (key === undefined || key.startsWith(".") || !node) continue;

@@ -1,55 +1,37 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef } from "react";
 import type { Span } from "../text/ast";
 import type { Diagnostic } from "../text/language";
 
 export interface TextViewProps {
   text: string;
+  /** Whether `diagnostics` and `highlight` are of `text`, rather than of an older one. */
+  parsed: boolean;
   diagnostics: readonly Diagnostic[];
   /** The span of the selected node, marked in the text. */
   highlight: Span | null;
-  /** Called with the text once typing pauses. */
+  /** Called with the text at every change. */
   onChange(text: string): void;
   /** Called with the caret's offset when it moves. */
   onCaret(offset: number): void;
 }
-
-/** How long typing pauses before the text is parsed again. */
-export const REPARSE_DELAY_MS = 250;
 
 /**
  * The file as text: line numbers, a marker in the gutter of each line a
  * diagnostic is on, the diagnostic's range underlined, and the list of
  * diagnostics, each of which moves the caret to its range.
  */
-export function TextView({ text, diagnostics, highlight, onChange, onCaret }: TextViewProps) {
-  const [draft, setDraft] = useState(text);
-  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+export function TextView({
+  text,
+  parsed,
+  diagnostics,
+  highlight,
+  onChange,
+  onCaret,
+}: TextViewProps) {
   const area = useRef<HTMLTextAreaElement>(null);
   const backdrop = useRef<HTMLPreElement>(null);
   const gutter = useRef<HTMLDivElement>(null);
   const listId = useId();
-
-  // A text from elsewhere (a diagram edit, a file opened) replaces the draft,
-  // unless typing is about to send the draft itself.
-  useEffect(() => {
-    if (pending.current === null) setDraft(text);
-  }, [text]);
-
-  useEffect(
-    () => () => {
-      if (pending.current !== null) clearTimeout(pending.current);
-    },
-    [],
-  );
-
-  const edit = (next: string) => {
-    setDraft(next);
-    if (pending.current !== null) clearTimeout(pending.current);
-    pending.current = setTimeout(() => {
-      pending.current = null;
-      onChange(next);
-    }, REPARSE_DELAY_MS);
-  };
 
   const syncScroll = () => {
     const el = area.current;
@@ -68,13 +50,13 @@ export function TextView({ text, diagnostics, highlight, onChange, onCaret }: Te
     el.setSelectionRange(span.start, Math.max(span.end, span.start));
   };
 
-  const lines = draft.split("\n");
+  const lines = text.split("\n");
   const linesWith = new Map<number, Diagnostic["severity"]>();
   for (const d of diagnostics) {
     if (linesWith.get(d.span.line) !== "error") linesWith.set(d.span.line, d.severity);
   }
   // Marks are drawn only while the text is what was parsed.
-  const marks = draft === text ? marked(draft, diagnostics, highlight) : [{ text: draft }];
+  const marks = parsed ? marked(text, diagnostics, highlight) : [{ text }];
 
   return (
     <div className="be-text">
@@ -102,7 +84,7 @@ export function TextView({ text, diagnostics, highlight, onChange, onCaret }: Te
           <textarea
             ref={area}
             className="be-textarea"
-            value={draft}
+            value={text}
             spellCheck={false}
             autoCapitalize="off"
             autoComplete="off"
@@ -110,7 +92,7 @@ export function TextView({ text, diagnostics, highlight, onChange, onCaret }: Te
             aria-label="Behavior text"
             aria-describedby={diagnostics.length ? listId : undefined}
             aria-invalid={diagnostics.some((d) => d.severity === "error")}
-            onChange={(event) => edit(event.target.value)}
+            onChange={(event) => onChange(event.target.value)}
             onScroll={syncScroll}
             onSelect={(event) => onCaret(event.currentTarget.selectionStart)}
           />

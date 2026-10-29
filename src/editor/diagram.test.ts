@@ -138,6 +138,26 @@ describe("the diagram's layout", () => {
     expect(layout.edges.map((e) => `${e.from}>${e.to}`)).toEqual(["0>0.0", "0>0.1", "0>0.2"]);
   });
 
+  it("puts a detached node's producer in an earlier column, whatever the file's order", () => {
+    // `cm` comes before the `raw` it reads.
+    const text = READERS_PARALLEL.text.replace(
+      /^(raw: .*\n)(cm: .*\n)/m,
+      (_, raw: string, cm: string) => cm + raw,
+    );
+    expect(text.indexOf("cm:")).toBeLessThan(text.indexOf("raw:"));
+    const layout = layoutDiagram(rowsOf({ ...READERS_PARALLEL, text }), new Set());
+    const box = (key: string) => layout.boxes.get(key)!;
+    expect(box("1").row.title).toContain("cm");
+    expect(box("2").x + box("2").w).toBeLessThan(box("1").x);
+    expect(box("1").x + box("1").w).toBeLessThan(box("3").x);
+  });
+
+  it("lays out detached nodes that read each other in a cycle", () => {
+    const text = "running\n\na: add(a: @b, b: 1)\nb: add(a: @a, b: 1)\n";
+    const layout = layoutDiagram(rowsOf({ ...READERS_PARALLEL, text }), new Set());
+    expect(layout.boxes.has("1") && layout.boxes.has("2")).toBe(true);
+  });
+
   it("hides a folded node's subtree and has it stand for its nodes at a wire's end", () => {
     const rows = rowsOf(GREET);
     const layout = layoutDiagram(rows, new Set(["0.0"]));

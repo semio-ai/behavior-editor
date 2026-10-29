@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useMemo, useState } from "react";
+import type { Graph } from "../model/graph";
 import { type NodePath, deleteNode, moveNode, reparent, siblingPath, walk } from "../model/edit";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
@@ -95,7 +96,11 @@ export function BehaviorEditor({
   );
   const runnable =
     resolved.graph.root !== undefined && !resolved.diagnostics.some((d) => d.severity === "error");
-  const playback = usePlayback(active, runnable ? resolved : null, autoPlay);
+  const diff = useCallback(
+    (previous: Graph, next: Graph) => language.diff(previous, next),
+    [language],
+  );
+  const playback = usePlayback(active, runnable ? resolved : null, autoPlay, diff);
   const runtimeError = functionsError ?? playback.error;
 
   const index = useMemo(

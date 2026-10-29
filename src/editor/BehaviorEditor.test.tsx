@@ -292,11 +292,40 @@ describe("BehaviorEditor", () => {
     expect(screen.getByText("(unsaved changes)")).toBeTruthy();
   });
 
+  it("edits the behavior running when the text changes, and starts it afresh on Reset", async () => {
+    const runtime = new MockArora({ store: SMILE.store });
+    const calls: string[] = [];
+    const start = runtime.start.bind(runtime);
+    const edit = runtime.edit.bind(runtime);
+    runtime.start = (loaded) => {
+      calls.push("start");
+      return start(loaded);
+    };
+    runtime.edit = (diff) => {
+      calls.push(`edit ${JSON.stringify(Object.keys(diff))}`);
+      return edit(diff);
+    };
+    const { user } = setup(SMILE, { runtime });
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    await user.click(screen.getByRole("treeitem", { name: /^cheeks: / }));
+    const b = screen.getByRole("textbox", { name: "b" });
+    await user.clear(b);
+    await user.type(b, "0.9{Enter}");
+    await waitFor(() => expect(calls).toEqual(["start", 'edit ["bind"]']));
+    // The edit goes on from the tick it reached.
+    await user.click(screen.getByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 2"));
+    await user.click(screen.getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(calls.at(-1)).toBe("start"));
+  });
+
   it("says why the runtime refused the behavior", async () => {
     const refusing: BehaviorRuntime = {
       ...new MockArora(),
       functions: () => Promise.resolve(MATH_FUNCTIONS),
       start: () => Promise.reject(new Error("the device has no interpreter")),
+      edit: () => Promise.reject(new Error("not started")),
       step: () => Promise.reject(new Error("not started")),
       write: () => Promise.resolve(),
       read: () => Promise.resolve(null),

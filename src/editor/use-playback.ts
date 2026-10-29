@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { type Graph, type GraphDiff, isEmptyDiff } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import { type Value, valueBoolean, valueNumber } from "../model/value";
 import type { BehaviorRuntime, KeyInfo, TickReport } from "../runtime/runtime";
@@ -46,15 +47,20 @@ function plotted(value: Value | undefined): number | null {
 }
 
 /**
- * Run `loaded` on `runtime` whenever it changes and resolves: start it, tick
- * it at the chosen rate while playing, and keep the store as the ticks leave
- * it. Every call to the runtime waits for the one before, so a tick never
- * overtakes the start it follows.
+ * Run `loaded` on `runtime` whenever it changes and resolves, tick it at the
+ * chosen rate while playing, and keep the store as the ticks leave it.
+ *
+ * The first behavior, and the first after a stop or a reset, starts: every
+ * node afresh. Every later one is an edit of the behavior running, the diff
+ * `diff` gives from the graph it runs to the next, so the nodes the change
+ * leaves in place keep their state. Every call to the runtime waits for the
+ * one before, so a tick never overtakes the start or the edit it follows.
  */
 export function usePlayback(
   runtime: BehaviorRuntime,
   loaded: Loaded | null,
   autoPlay: boolean,
+  diff: (previous: Graph, next: Graph) => GraphDiff,
 ): Playback {
   const [reports, setReports] = useState<{
     report: TickReport | null;
@@ -74,6 +80,8 @@ export function usePlayback(
   );
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const started = useRef(false);
+  /** The graph the runtime runs, which an edit is the diff from; `null` when none runs. */
+  const running = useRef<Graph | null>(null);
   const stepping = useRef(false);
 
   const enqueue = useCallback(<T>(task: () => Promise<T>) => {
@@ -112,34 +120,50 @@ export function usePlayback(
     enqueue(readStore).catch((e: unknown) => setError(message(e)));
   }, [enqueue, readStore]);
 
-  const start = useCallback(
+  /** Start `behavior` when none runs, or edit the one running into it. */
+  const run = useCallback(
     (behavior: Loaded) =>
       enqueue(async () => {
-        await runtime.start(behavior);
-        started.current = true;
+        const previous = running.current;
+        if (previous === null) {
+          started.current = false;
+          await runtime.start(behavior);
+          running.current = behavior.graph;
+          started.current = true;
+          setError(null);
+          setReports({ report: null, previous: null });
+          setHistory(new Map());
+          await readStore();
+          return;
+        }
+        const change = diff(previous, behavior.graph);
+        if (isEmptyDiff(change)) return;
+        // A refused edit leaves the behavior running as it was, which the
+        // next edit is the diff from.
+        await runtime.edit(change);
+        running.current = behavior.graph;
         setError(null);
-        setReports({ report: null, previous: null });
-        setHistory(new Map());
-        await readStore();
-      }).catch((e: unknown) => {
-        started.current = false;
-        setError(message(e));
-      }),
-    [runtime, enqueue, readStore],
+        await readKeys();
+      }).catch((e: unknown) => setError(message(e))),
+    [runtime, enqueue, readStore, readKeys, diff],
   );
 
   useEffect(() => {
-    if (loaded) start(loaded);
-  }, [loaded, start]);
+    if (loaded) run(loaded);
+  }, [loaded, run]);
 
-  // Stopping waits its turn, so a start still queued cannot run after it.
-  useEffect(
-    () => () => {
-      started.current = false;
-      enqueue(() => runtime.stop()).catch(() => undefined);
-    },
+  const stop = useCallback(
+    () =>
+      enqueue(async () => {
+        started.current = false;
+        running.current = null;
+        await runtime.stop();
+      }),
     [runtime, enqueue],
   );
+
+  // Stopping waits its turn, so a start still queued cannot run after it.
+  useEffect(() => () => void stop().catch(() => undefined), [stop]);
 
   const step = useCallback(() => {
     if (!started.current || stepping.current) return;
@@ -187,9 +211,9 @@ export function usePlayback(
 
   const reset = useCallback(() => {
     if (!loaded) return;
-    enqueue(() => runtime.stop()).catch(() => undefined);
-    start(loaded);
-  }, [loaded, runtime, enqueue, start]);
+    stop().catch(() => undefined);
+    run(loaded);
+  }, [loaded, stop, run]);
 
   // A write shows as written until the next tick says what the runtime made of it.
   const write = useCallback(

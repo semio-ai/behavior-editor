@@ -1,4 +1,4 @@
-import type { Graph } from "../model/graph";
+import type { Graph, GraphDiff } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import type { BehaviorDocument } from "./ast";
 import type { BehaviorText, Diagnostic, Loaded, ParseResult } from "./language";
@@ -13,6 +13,8 @@ export interface BehaviorTextExports {
   resolve(documentJson: string, functionsJson: string): string;
   natives(): string;
   loadCall(graphJson: string): string;
+  diff(previousJson: string, nextJson: string): string;
+  editCall(diffJson: string): string;
 }
 
 /**
@@ -41,6 +43,9 @@ export function createBehaviorText(exports: BehaviorTextExports): BehaviorText {
       JSON.parse(exports.resolve(JSON.stringify(document), JSON.stringify(functions))) as Loaded,
     natives: () => (natives ??= JSON.parse(exports.natives()) as MethodSignature[]),
     loadCall: (graph: Graph) => exports.loadCall(JSON.stringify(graph)),
+    diff: (previous: Graph, next: Graph) =>
+      JSON.parse(exports.diff(JSON.stringify(previous), JSON.stringify(next))) as GraphDiff,
+    editCall: (diff: GraphDiff) => exports.editCall(JSON.stringify(diff)),
   };
 }
 

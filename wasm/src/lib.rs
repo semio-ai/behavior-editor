@@ -10,8 +10,8 @@
 
 use std::collections::HashMap;
 
-use arora_behavior::graph::Graph;
-use arora_behavior::interpreter_module::encode_load;
+use arora_behavior::graph::{Graph, GraphDiff};
+use arora_behavior::interpreter_module::{encode_edit, encode_load};
 use arora_behavior::{FunctionIndex, ModuleFunction};
 use arora_behavior_tree::text;
 use arora_types::record::module::frozen::Function;
@@ -104,6 +104,27 @@ pub fn natives() -> Result<String, JsError> {
 pub fn load_call(graph_json: &str) -> Result<String, JsError> {
     let graph: Graph = from_json(graph_json).map_err(error)?;
     serde_json::to_string(&encode_load(&graph)).map_err(error)
+}
+
+/// The diff that takes `previous_json`, a graph, to `next_json`: the nodes
+/// only `next` has, or whose function or children change, set whole; one
+/// binding per port whose binding changes; the root when it changes
+/// (`Graph::diff`). An interpreter applying it restarts the nodes it sets or
+/// binds, and keeps the state of every other.
+#[wasm_bindgen]
+pub fn diff(previous_json: &str, next_json: &str) -> Result<String, JsError> {
+    let previous: Graph = from_json(previous_json).map_err(error)?;
+    let next: Graph = from_json(next_json).map_err(error)?;
+    serde_json::to_string(&previous.diff(&next)).map_err(error)
+}
+
+/// The `Call` JSON that applies `diff_json`, a graph diff, to a device's
+/// behavior: `arora_behavior::interpreter_module`'s `edit`, which keeps the
+/// state of the nodes the diff leaves in place.
+#[wasm_bindgen(js_name = editCall)]
+pub fn edit_call(diff_json: &str) -> Result<String, JsError> {
+    let diff: GraphDiff = from_json(diff_json).map_err(error)?;
+    serde_json::to_string(&encode_edit(&diff)).map_err(error)
 }
 
 /// `json` read as a `T`, however deep the language lets it nest. serde_json
@@ -283,6 +304,32 @@ mod tests {
             "{names:?}"
         );
         assert!(natives.iter().all(|n| n.module_id.is_nil()));
+    }
+
+    #[test]
+    fn a_diff_binds_what_changed_and_an_edit_call_carries_it() {
+        let text = |limit: u32| format!("sequence\n  equal(a: {{x}}, b: {limit}u32)\n  succeed\n");
+        let graph = |limit| {
+            let parsed: Value = serde_json::from_str(&parse(&text(limit)).unwrap()).unwrap();
+            let loaded: Value =
+                serde_json::from_str(&resolve(&parsed["document"].to_string(), "[]").unwrap())
+                    .unwrap();
+            loaded["graph"].to_string()
+        };
+        let diff: Value = serde_json::from_str(&diff(&graph(1), &graph(2)).unwrap()).unwrap();
+        assert_eq!(
+            diff.as_object().unwrap().keys().collect::<Vec<_>>(),
+            ["bind"],
+            "{diff}"
+        );
+        assert_eq!(diff["bind"][0]["source"], json!({ "value": { "u32": 2 } }));
+        assert_eq!(super::diff(&graph(1), &graph(1)).unwrap(), "{}");
+        let call: Value = serde_json::from_str(&edit_call(&diff.to_string()).unwrap()).unwrap();
+        assert_eq!(call["id"], "61726f72-6100-0000-0000-000000000002");
+        assert_eq!(
+            call["args"][0]["id"],
+            "61726f72-6100-0000-0000-000000000003"
+        );
     }
 
     #[test]

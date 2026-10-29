@@ -55,6 +55,10 @@ function plotted(value: Value | undefined): number | null {
  * `diff` gives from the graph it runs to the next, so the nodes the change
  * leaves in place keep their state. Every call to the runtime waits for the
  * one before, so a tick never overtakes the start or the edit it follows.
+ *
+ * While `loaded` is `null`, the text being one that does not run, nothing
+ * ticks: the behavior running stays as it last ticked, and the next behavior
+ * that runs is an edit of it.
  */
 export function usePlayback(
   runtime: BehaviorRuntime,
@@ -82,6 +86,8 @@ export function usePlayback(
   const started = useRef(false);
   /** The graph the runtime runs, which an edit is the diff from; `null` when none runs. */
   const running = useRef<Graph | null>(null);
+  /** Whether there is a behavior to tick: `loaded` is not `null`. */
+  const runnable = useRef(loaded !== null);
   const stepping = useRef(false);
 
   const enqueue = useCallback(<T>(task: () => Promise<T>) => {
@@ -149,6 +155,7 @@ export function usePlayback(
   );
 
   useEffect(() => {
+    runnable.current = loaded !== null;
     if (loaded) run(loaded);
   }, [loaded, run]);
 
@@ -166,9 +173,11 @@ export function usePlayback(
   useEffect(() => () => void stop().catch(() => undefined), [stop]);
 
   const step = useCallback(() => {
-    if (!started.current || stepping.current) return;
+    if (!started.current || !runnable.current || stepping.current) return;
     stepping.current = true;
     enqueue(async () => {
+      // A stop, or a text that does not run, may have come while this waited.
+      if (!started.current || !runnable.current) return;
       const tick = await runtime.step(1000 / rate);
       setReports((last) => ({ report: tick, previous: last.report }));
       const next = new Map(storeRef.current);
@@ -203,11 +212,12 @@ export function usePlayback(
       });
   }, [runtime, rate, enqueue, setStore, setPending, readKeys]);
 
+  const ticking = playing && loaded !== null;
   useEffect(() => {
-    if (!playing) return undefined;
+    if (!ticking) return undefined;
     const timer = setInterval(step, 1000 / rate);
     return () => clearInterval(timer);
-  }, [playing, rate, step]);
+  }, [ticking, rate, step]);
 
   const reset = useCallback(() => {
     if (!loaded) return;

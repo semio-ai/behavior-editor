@@ -19,9 +19,10 @@ export interface BehaviorKeys {
 
 /**
  * The keys `loaded` reads and writes: each store key bound to a node's port,
- * written when the port is the node's return value or a parameter its
- * function writes, read otherwise. A key a node computes at run time, such as
- * `scatter`'s, is bound to no port: its runtime's meta says what it is.
+ * directly or through a selection, written when the port is the node's return
+ * value or a parameter its function writes, read otherwise. A key a node
+ * computes at run time, such as `scatter`'s, is bound to no port: its
+ * runtime's meta says what it is.
  */
 export function behaviorKeys(loaded: Loaded, index: FunctionIndex): BehaviorKeys {
   const signatures = new Map(index.entries.map((e) => [e.signature.id, e.signature.function]));
@@ -29,7 +30,10 @@ export function behaviorKeys(loaded: Loaded, index: FunctionIndex): BehaviorKeys
   const reads = new Set<string>();
   const writes = new Map<string, BehaviorWrite>();
   for (const node of loaded.graph.nodes ?? []) {
-    for (const [port, source] of Object.entries(node.bind ?? {})) {
+    for (const [port, bound] of Object.entries(node.bind ?? {})) {
+      // A selection, `{pose}[x]`, reads the key it selects from.
+      let source = bound;
+      while ("select" in source) source = source.select.source;
       // A tree-local key (`{.name}`, or `{<uuid>}`, which names none) is no store key.
       if (!("key" in source) || source.key.startsWith(".")) continue;
       const { key } = source;

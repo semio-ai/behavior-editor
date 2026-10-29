@@ -873,6 +873,12 @@
   color: var(--be-muted);
   font-variant-numeric: tabular-nums;
 }
+.be-control .be-number {
+  width: 11ch;
+  font: 500 12px var(--be-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
 .be-control input[type="range"],
 .be-control input[type="text"],
 .be-control code {

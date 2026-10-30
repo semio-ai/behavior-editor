@@ -171,6 +171,17 @@ describe("BehaviorEditor on a device", () => {
     expect(textValue()).toBe(GREET.text);
   });
 
+  it("disables the header's button while it reads the device's behavior", async () => {
+    const { device, user } = await setup(GREET, graphOf(ORDER.text));
+    await screen.findByRole("region", { name: "Device's behavior" });
+    device.readDelayMs = 300;
+    const header = screen.getByRole("button", { name: "Device's behavior" });
+    await user.click(header);
+    expect(header).toBeDisabled();
+    expect(header).toHaveAccessibleDescription("Reading the device's behavior…");
+    await waitFor(() => expect(screen.getByText("device.bt")).toBeTruthy());
+  });
+
   it("asks before the header's button discards unsaved changes", async () => {
     const { user, type } = await setup(GREET, graphOf(ORDER.text));
     await screen.findByRole("region", { name: "Device's behavior" });
@@ -374,6 +385,16 @@ describe("BehaviorEditor on a device, opening an example", () => {
     // The file opened is the one the device runs: its changes go to it.
     expect(await screen.findByRole("switch", { name: "Live edits" })).toBeChecked();
     expect(banner()).toBeNull();
+  });
+
+  it("opens nothing a device let go of answers, and shows none of its failures", async () => {
+    const { device, user, detach } = await startOn(graphOf(GREET.text));
+    device.readDelayMs = 300;
+    await user.click(screen.getByRole("button", { name: "Open the device's behavior" }));
+    detach();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(screen.getByRole("region", { name: "Open a behavior" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("says so when the device does not say what it runs, staying on the start screen", async () => {

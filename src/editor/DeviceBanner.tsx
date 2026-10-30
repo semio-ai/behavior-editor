@@ -175,7 +175,7 @@ export function DeviceBanner({
           <p role="status">The device runs another behavior than this file.</p>
           {reason}
           <div className="be-banner-actions">
-            <button type="button" onClick={guarded(onOpenDevice)}>
+            <button type="button" disabled={lost} onClick={guarded(onOpenDevice)}>
               View the device&apos;s behavior
             </button>
             {run}

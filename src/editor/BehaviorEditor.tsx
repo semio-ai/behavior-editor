@@ -240,23 +240,28 @@ export function BehaviorEditor({
       const from = attached;
       if (!from) return;
       const asked = ++requests.current;
-      await moot(asked, async () => {
+      // Moot once another file replaced this one, or the device was let go
+      // of or replaced: its answer opens nothing, and its failure is not shown.
+      const current = () => requests.current === asked && shownHost.current === from;
+      try {
         const read = await from.deviceBehavior();
+        if (!current()) return;
         if (!read) throw new Error("The device does not say what it runs");
-        if (requests.current !== asked) return;
         const held = ran.current.find((f) => isEmptyDiff(language.diff(f.graph, read.graph)));
         if (held) {
           begin(newFile(held.name), held.text);
           return;
         }
         const functions = await askFunctions(from);
+        if (!current()) return;
         const out = language.openFile(JSON.stringify(read.graph), "json", functions);
         if ("problems" in out) {
           throw new Error(`The device's behavior does not open: ${problemsText(out.problems)}`);
         }
-        if (requests.current !== asked) return;
         begin(newFile(DEVICE_FILE), out.text);
-      });
+      } catch (error) {
+        if (current()) throw error;
+      }
     },
     ask: () => {
       const asked = ++requests.current;
@@ -403,6 +408,8 @@ interface FileActions {
   /**
    * Open the behavior the attached device runs: as the file run there whose
    * graph it is, with its names, or as its graph, each node named by its id.
+   * Its answer opens nothing once another file or device replaced the one
+   * open.
    */
   openDevice(): Promise<void>;
   /**
@@ -527,11 +534,6 @@ function Workspace({
     [language],
   );
   const device = useDeviceMode(session, runnable ? resolved : null, diff);
-  /** The session attached now, which a read finishing late checks it still is. */
-  const attachedRef = useRef(session);
-  useEffect(() => {
-    attachedRef.current = session;
-  }, [session]);
   const local = usePlayback(active, runnable && !session ? resolved : null, autoPlay, diff);
   // On a device, the device's steps are what shows.
   const playback = session ? device : local;
@@ -666,11 +668,10 @@ function Workspace({
       setFileNotice(notice);
     });
   /** Open what the device runs now, read again, in place of the file. */
-  const openDeviceBehavior = () => {
+  const openDeviceBehavior = () =>
     files.openDevice().catch((e: unknown) => {
       setEditError(e instanceof Error ? e.message : String(e));
     });
-  };
   // The file as it runs on the device, to open with its names when the
   // device's behavior is viewed.
   const runsAsIs = device.relation === "running" && device.pendingChanges === 0 && runnable;
@@ -837,7 +838,7 @@ function Workspace({
           blocked={blocked}
           index={index}
           dirty={text !== saved}
-          onOpenDevice={openDeviceBehavior}
+          onOpenDevice={() => void openDeviceBehavior()}
           onSelect={(id) => {
             const row = rows.find((r) => r.graphId === id);
             if (row) setSelected(row.key);
@@ -953,8 +954,9 @@ function ViewTabs({
  */
 /**
  * Open the behavior the device runs in place of the file, asking first while
- * the file has unsaved changes; disabled, saying why, while the device does
- * not say what it runs or the connection is lost.
+ * the file has unsaved changes; disabled, saying why, while it reads the
+ * device's behavior, while the device does not say what it runs, and while
+ * the connection is lost.
  */
 function DeviceBehaviorButton({
   device,
@@ -963,13 +965,18 @@ function DeviceBehaviorButton({
 }: {
   device: DeviceMode;
   dirty: boolean;
-  onOpen(): void;
+  onOpen(): Promise<void>;
 }) {
   const [asking, setAsking] = useState(false);
+  const [reading, setReading] = useState(false);
+  const open = () => {
+    setReading(true);
+    void onOpen().finally(() => setReading(false));
+  };
   const unavailable =
     device.state?.status !== "connected"
       ? "The device is not connected."
-      : device.relation === "reading"
+      : reading || device.relation === "reading"
         ? "Reading the device's behavior…"
         : device.behavior === null
           ? "This device doesn't report its behavior."
@@ -980,7 +987,7 @@ function DeviceBehaviorButton({
         type="button"
         disabled={unavailable !== null}
         title={unavailable ?? "Open the behavior the device runs, in place of this file."}
-        onClick={() => (dirty ? setAsking(true) : onOpen())}
+        onClick={() => (dirty ? setAsking(true) : open())}
       >
         Device&apos;s behavior
       </button>
@@ -988,7 +995,7 @@ function DeviceBehaviorButton({
         <DiscardConfirm
           onDiscard={() => {
             setAsking(false);
-            onOpen();
+            open();
           }}
           onKeep={() => setAsking(false)}
         />

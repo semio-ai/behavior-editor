@@ -36,6 +36,49 @@ export interface Playback {
   write(key: string, value: Value | null): void;
 }
 
+/** The behavior on one runtime, as the hook ran it. */
+interface OnRuntime {
+  /** Whether a behavior was started, and not stopped since. */
+  started: boolean;
+  /** The graph the runtime runs, which an edit is the diff from; `null` when none runs. */
+  running: Graph | null;
+  /** Whether the runtime refused the last edit: the error shown is that refusal. */
+  refused: boolean;
+  /** Whether a step is under way. */
+  stepping: boolean;
+}
+
+/**
+ * Each runtime's calls, in the order they were made: whichever editor made
+ * them, a call waits for every call before it. An editor closing a file and
+ * one opening the next on the same runtime stop the first before starting
+ * the second.
+ */
+const queues = new WeakMap<BehaviorRuntime, Promise<unknown>>();
+
+/**
+ * Settles once every call queued on `runtime` so far has: what lets go of a
+ * runtime waits for, the stop of the editor that let go of it among them.
+ */
+/** The functions `runtime` offers, asked in the queue of its calls. */
+export function askFunctions(runtime: BehaviorRuntime): Promise<MethodSignature[]> {
+  return queued(runtime, () => runtime.functions());
+}
+
+/** Run `task` on `runtime` once every call queued on it before has run. */
+function queued<T>(runtime: BehaviorRuntime, task: () => Promise<T>): Promise<T> {
+  const next = (queues.get(runtime) ?? Promise.resolve()).then(task);
+  queues.set(
+    runtime,
+    next.catch(() => undefined),
+  );
+  return next;
+}
+
+export function whenIdle(runtime: BehaviorRuntime): Promise<void> {
+  return (queues.get(runtime) ?? Promise.resolve()).then(() => undefined);
+}
+
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** A key's value as a number to plot: a number, or a boolean as 0 or 1. */
@@ -54,7 +97,9 @@ function plotted(value: Value | undefined): number | null {
  * node afresh. Every later one is an edit of the behavior running, the diff
  * `diff` gives from the graph it runs to the next, so the nodes the change
  * leaves in place keep their state. Every call to the runtime waits for the
- * one before, so a tick never overtakes the start or the edit it follows.
+ * one before, whichever editor made it, so a tick never overtakes the start
+ * or the edit it follows, and a file opened starts after the one it replaces
+ * stopped.
  *
  * While `loaded` is `null`, the text being one that does not run, nothing
  * ticks: the behavior running stays as it last ticked, and the next behavior
@@ -82,26 +127,43 @@ export function usePlayback(
   const [history, setHistory] = useState<ReadonlyMap<string, readonly (number | null)[]>>(
     new Map(),
   );
-  const queue = useRef<Promise<unknown>>(Promise.resolve());
-  const started = useRef(false);
-  /** The graph the runtime runs, which an edit is the diff from; `null` when none runs. */
-  const running = useRef<Graph | null>(null);
-  /** Whether the runtime refused the last edit: the error shown is that refusal. */
-  const refused = useRef(false);
+  // What the hook knows of the behavior on each runtime: a runtime let go of
+  // keeps its own, which the stop queued on it clears, so it cannot clear
+  // the next runtime's.
+  const states = useRef(new WeakMap<BehaviorRuntime, OnRuntime>());
+  let on = states.current.get(runtime);
+  if (!on) {
+    on = { started: false, running: null, refused: false, stepping: false };
+    states.current.set(runtime, on);
+  }
+  const at = on;
+  // The runtime the hook shows. A runtime let go of finishes the calls queued
+  // on it, its stop among them, but what they answer is no longer shown.
+  // Each time the hook takes a runtime is an activation of its own: what a
+  // runtime answers for an activation the host has switched away from stays
+  // unshown, even once it switches back to that runtime.
+  const activations = useRef<{ runtime: BehaviorRuntime; count: number }>({ runtime, count: 0 });
+  if (activations.current.runtime !== runtime) {
+    activations.current = { runtime, count: activations.current.count + 1 };
+  }
+  const activation = activations.current.count;
+  const active = useRef(activation);
+  useEffect(() => {
+    active.current = activation;
+  }, [activation]);
+  const live = useCallback(() => active.current === activation, [activation]);
   /** Show why an operation other than an edit failed: the error is no edit's refusal. */
-  const fail = useCallback((e: unknown) => {
-    refused.current = false;
-    setError(message(e));
-  }, []);
+  const fail = useCallback(
+    (e: unknown) => {
+      at.refused = false;
+      if (live()) setError(message(e));
+    },
+    [at, live],
+  );
   /** Whether there is a behavior to tick: `loaded` is not `null`. */
   const runnable = useRef(loaded !== null);
-  const stepping = useRef(false);
 
-  const enqueue = useCallback(<T>(task: () => Promise<T>) => {
-    const next = queue.current.then(task);
-    queue.current = next.catch(() => undefined);
-    return next;
-  }, []);
+  const enqueue = useCallback(<T>(task: () => Promise<T>) => queued(runtime, task), [runtime]);
 
   const [keys, setKeys] = useState<ReadonlyMap<string, KeyInfo>>(new Map());
   const [pendingState, setPendingState] = useState<ReadonlySet<string>>(new Set());
@@ -113,9 +175,9 @@ export function usePlayback(
 
   const readKeys = useCallback(async () => {
     const infos = await runtime.keys();
-    setKeys(new Map(infos.map((info) => [info.key, info])));
+    if (live()) setKeys(new Map(infos.map((info) => [info.key, info])));
     return infos;
-  }, [runtime]);
+  }, [runtime, live]);
 
   // A key written since the last tick keeps showing the write.
   const readStore = useCallback(async () => {
@@ -131,53 +193,57 @@ export function usePlayback(
       if (shown === undefined) next.delete(key);
       else next.set(key, shown);
     }
-    setStore(next);
+    if (live()) setStore(next);
     return next;
-  }, [runtime, readKeys, setStore]);
+  }, [runtime, live, readKeys, setStore]);
 
   // A runtime's store starts with no write of a person's pending: those were another's.
   useEffect(() => {
     enqueue(async () => {
-      setPending(new Set());
+      if (live()) setPending(new Set());
       await readStore();
     }).catch(fail);
-  }, [enqueue, readStore, setPending, fail]);
+  }, [enqueue, live, readStore, setPending, fail]);
 
   /** Start `behavior` when none runs, or edit the one running into it. */
   const run = useCallback(
     (behavior: Loaded) =>
       enqueue(async () => {
-        const previous = running.current;
+        const previous = at.running;
         if (previous === null) {
-          started.current = false;
+          at.started = false;
           await runtime.start(behavior);
-          running.current = behavior.graph;
-          started.current = true;
-          refused.current = false;
-          setError(null);
-          setReports({ report: null, previous: null });
-          setHistory(new Map());
+          at.running = behavior.graph;
+          at.started = true;
+          at.refused = false;
+          if (live()) {
+            setError(null);
+            setReports({ report: null, previous: null });
+            setHistory(new Map());
+          }
           await readStore();
           return;
         }
         const change = diff(previous, behavior.graph);
         if (isEmptyDiff(change)) {
           // Back to the behavior running: a refusal of another is moot.
-          if (refused.current) setError(null);
-          refused.current = false;
+          if (at.refused && live()) setError(null);
+          at.refused = false;
           return;
         }
         // A refused edit leaves the behavior running as it was, which the
         // next edit is the diff from.
-        refused.current = true;
+        at.refused = true;
         await runtime.edit(change);
-        refused.current = false;
-        running.current = behavior.graph;
-        setError(null);
+        at.refused = false;
+        at.running = behavior.graph;
+        if (live()) setError(null);
         // An edit may write the store: a device applies a call with a step.
         await readStore();
-      }).catch((e: unknown) => setError(message(e))),
-    [runtime, enqueue, readStore, diff],
+      }).catch((e: unknown) => {
+        if (live()) setError(message(e));
+      }),
+    [runtime, at, live, enqueue, readStore, diff],
   );
 
   useEffect(() => {
@@ -188,23 +254,24 @@ export function usePlayback(
   const stop = useCallback(
     () =>
       enqueue(async () => {
-        started.current = false;
-        running.current = null;
+        at.started = false;
+        at.running = null;
         await runtime.stop();
       }),
-    [runtime, enqueue],
+    [runtime, at, enqueue],
   );
 
   // Stopping waits its turn, so a start still queued cannot run after it.
   useEffect(() => () => void stop().catch(() => undefined), [stop]);
 
   const step = useCallback(() => {
-    if (!started.current || !runnable.current || stepping.current) return;
-    stepping.current = true;
+    if (!at.started || !runnable.current || at.stepping) return;
+    at.stepping = true;
     enqueue(async () => {
       // A stop, or a text that does not run, may have come while this waited.
-      if (!started.current || !runnable.current) return;
+      if (!at.started || !runnable.current) return;
       const tick = await runtime.step(1000 / rate);
+      if (!live()) return;
       setReports((last) => ({ report: tick, previous: last.report }));
       const next = new Map(storeRef.current);
       for (const { key, value } of tick.changes) {
@@ -217,9 +284,12 @@ export function usePlayback(
         if (value === null) next.delete(key);
         else next.set(key, value);
       }
+      // Each wait may have seen the host switch runtimes.
+      if (!live()) return;
       setPending(new Set());
       setStore(next);
       await readKeys();
+      if (!live()) return;
       setHistory((h) => {
         const out = new Map<string, readonly (number | null)[]>();
         for (const key of new Set([...h.keys(), ...next.keys()])) {
@@ -230,13 +300,14 @@ export function usePlayback(
       });
     })
       .catch((e: unknown) => {
+        if (!live()) return;
         fail(e);
         setPlaying(false);
       })
       .finally(() => {
-        stepping.current = false;
+        at.stepping = false;
       });
-  }, [runtime, rate, enqueue, setStore, setPending, readKeys, fail]);
+  }, [runtime, at, live, rate, enqueue, setStore, setPending, readKeys, fail]);
 
   const ticking = playing && loaded !== null;
   useEffect(() => {
@@ -256,6 +327,7 @@ export function usePlayback(
     (key: string, value: Value | null) => {
       enqueue(async () => {
         await runtime.write(key, value);
+        if (!live()) return;
         const next = new Map(storeRef.current);
         if (value === null) next.delete(key);
         else next.set(key, value);
@@ -263,7 +335,7 @@ export function usePlayback(
         setPending(new Set([...pendingRef.current, key]));
       }).catch(fail);
     },
-    [runtime, enqueue, setStore, setPending, fail],
+    [runtime, live, enqueue, setStore, setPending, fail],
   );
 
   return {
@@ -286,36 +358,30 @@ export function usePlayback(
 
 /**
  * The module functions `runtime` offers, once it has said; and why it could
- * not. `said` records functions the runtime said when asked again, so what
- * the editor resolves against is what it last said.
+ * not. `known` is false until the runtime of this render has said: what
+ * another runtime said is not this one's.
  */
 export function useRuntimeFunctions(runtime: BehaviorRuntime): {
   functions: MethodSignature[];
   error: string | null;
-  said(functions: MethodSignature[]): void;
+  known: boolean;
 } {
-  const [state, setState] = useState<{ functions: MethodSignature[]; error: string | null }>({
-    functions: [],
-    error: null,
-  });
-  // Counts the lists asked for and recorded: an answer to an older request
-  // than the last does not replace a newer list.
-  const asked = useRef(0);
+  const [state, setState] = useState<{
+    runtime: BehaviorRuntime | null;
+    functions: MethodSignature[];
+    error: string | null;
+  }>({ runtime: null, functions: [], error: null });
   useEffect(() => {
-    const mine = ++asked.current;
-    runtime
-      .functions()
-      .then((functions) => asked.current === mine && setState({ functions, error: null }))
-      .catch(
-        (e: unknown) => asked.current === mine && setState({ functions: [], error: message(e) }),
-      );
+    let current = true;
+    // Asked in the runtime's queue: what lets go of the runtime waits for it.
+    askFunctions(runtime)
+      .then((functions) => current && setState({ runtime, functions, error: null }))
+      .catch((e: unknown) => current && setState({ runtime, functions: [], error: message(e) }));
     return () => {
-      asked.current += 1;
+      current = false;
     };
   }, [runtime]);
-  const said = useCallback((functions: MethodSignature[]) => {
-    asked.current += 1;
-    setState({ functions, error: null });
-  }, []);
-  return { ...state, said };
+  return state.runtime === runtime
+    ? { functions: state.functions, error: state.error, known: true }
+    : { functions: [], error: null, known: false };
 }

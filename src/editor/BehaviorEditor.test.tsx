@@ -13,6 +13,7 @@ import { MATH_MODULE_ID } from "../runtime/math-module";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
 import { BehaviorEditor, type BehaviorEditorProps, REPARSE_DELAY_MS } from "./BehaviorEditor";
+import { reopenPageStore } from "./recent-files";
 
 let language: BehaviorText;
 beforeAll(async () => {
@@ -22,6 +23,7 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  reopenPageStore();
 });
 
 /**
@@ -54,6 +56,12 @@ function setup(example: Example, props: Partial<BehaviorEditorProps> = {}) {
   /** The document of the text the editor's last change wrote. */
   const written = (): BehaviorDocument => language.parse(texts.at(-1)!).document;
   return { runtime, texts, user, written };
+}
+
+/** Choose `entry` from the File menu. */
+async function fileMenu(user: ReturnType<typeof userEvent.setup>, entry: string) {
+  await user.click(screen.getByRole("button", { name: "File" }));
+  await user.click(screen.getByRole("menuitem", { name: entry }));
 }
 
 const item = (name: RegExp | string) => screen.getByRole("treeitem", { name });
@@ -318,7 +326,7 @@ describe("BehaviorEditor", () => {
     const { user } = setup(ORDER);
     await user.click(screen.getByRole("tab", { name: "Text" }));
     await user.type(screen.getByRole("textbox", { name: "Behavior text" }), "x(");
-    await user.click(screen.getByRole("button", { name: "New" }));
+    await fileMenu(user, "New");
     await user.click(await screen.findByRole("button", { name: /^Discard/ }));
     expect(screen.getByRole("textbox", { name: "Behavior text" })).toHaveValue("");
     await new Promise((resolve) => setTimeout(resolve, REPARSE_DELAY_MS * 2));
@@ -344,7 +352,7 @@ describe("BehaviorEditor", () => {
     await user.click(await screen.findByRole("treeitem", { name: /^cheeks: / }));
     await user.click(screen.getByRole("button", { name: "Move up" }));
     expect(screen.getByText("(unsaved changes)")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "New" }));
+    await fileMenu(user, "New");
     expect(screen.getByRole("alert")).toHaveTextContent("Discard unsaved changes?");
     await user.click(screen.getByRole("button", { name: "Keep editing" }));
     expect(screen.getByText("(unsaved changes)")).toBeTruthy();
@@ -468,22 +476,22 @@ describe("BehaviorEditor", () => {
     const { user, texts } = setup(SMILE);
     await screen.findByRole("tree", { name: "Behavior diagram" });
     // The example's comments stay in its text: a graph file has none.
-    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await fileMenu(user, "Save as…");
     await user.click(screen.getByRole("button", { name: "Graph, JSON" }));
     await waitFor(() => expect(written.at(-1)?.name).toBe("smile.json"));
     expect(screen.getByText(/keeps no comments/)).toHaveAttribute("role", "status");
 
-    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await fileMenu(user, "Open…");
     await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
     expect(screen.getByText("greet.json")).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await fileMenu(user, "Save as…");
     await user.click(screen.getByRole("button", { name: "Graph, YAML" }));
     await waitFor(() => expect(written.at(-1)?.name).toBe("greet.yaml"));
     expect(written.at(-1)?.text).toContain("- id: fresh\n  function: not\n");
     expect(screen.queryByText(/keeps no comments/)).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await fileMenu(user, "Save as…");
     await user.click(screen.getByRole("button", { name: "Groot XML" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Groot XML cannot hold this behavior: Groot holds no node outside the tree",
@@ -509,7 +517,7 @@ describe("BehaviorEditor", () => {
     const { user } = setup(SMILE);
     await user.click(screen.getByRole("tab", { name: "Text" }));
     await user.type(screen.getByRole("textbox", { name: "Behavior text" }), "late: not(x: true)\n");
-    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await fileMenu(user, "Save as…");
     await user.click(screen.getByRole("button", { name: "Graph, JSON" }));
     await waitFor(() => expect(written).toHaveLength(1));
     expect(written[0]).toContain('"id": "late"');
@@ -528,7 +536,7 @@ describe("BehaviorEditor", () => {
     URL.revokeObjectURL = () => undefined;
     const { user } = setup(ORDER, { fileName: "draft" });
     await screen.findByRole("tree", { name: "Behavior diagram" });
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await fileMenu(user, "Save");
     await waitFor(() => expect(downloads).toEqual(["draft.bt"]));
     expect(screen.getByText("draft.bt")).toBeTruthy();
     click.mockRestore();
@@ -549,7 +557,7 @@ describe("BehaviorEditor", () => {
       () => new Promise((resolve) => (pick = resolve)),
     );
     const { user, texts } = setup(SMILE, { runtime });
-    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await fileMenu(user, "Open…");
     said(MATH_FUNCTIONS);
     pick([
       {
@@ -579,7 +587,7 @@ describe("BehaviorEditor", () => {
       ]),
     );
     const { user, texts } = setup(SMILE, { runtime });
-    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await fileMenu(user, "Open…");
     await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Step" })).toBeEnabled());
   });
@@ -604,11 +612,11 @@ describe("BehaviorEditor", () => {
       ]),
     );
     const { user, texts } = setup(SMILE, { runtime });
-    await user.click(screen.getByRole("button", { name: "Open…" }));
-    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+    await fileMenu(user, "Open…");
+    // The open asks in the runtime's queue, behind the first request.
     first([]);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.getByRole("button", { name: "Step" })).toBeEnabled();
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Step" })).toBeEnabled());
   });
 
   it("opens no graph file whose functions came from a runtime switched away from", async () => {
@@ -639,7 +647,7 @@ describe("BehaviorEditor", () => {
     };
     const user = userEvent.setup();
     const { rerender } = render(<BehaviorEditor {...props} runtime={first} />);
-    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await fileMenu(user, "Open…");
     rerender(<BehaviorEditor {...props} runtime={new MockArora({ store: GREET.store })} />);
     said(MATH_FUNCTIONS);
     expect(await screen.findByRole("alert")).toHaveTextContent("the runtime changed");
@@ -665,7 +673,7 @@ describe("BehaviorEditor", () => {
     });
     const { user } = setup(ORDER);
     await screen.findByRole("tree", { name: "Behavior diagram" });
-    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await fileMenu(user, "Save as…");
     await user.click(screen.getByRole("button", { name: "Graph, JSON" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "tree.bt is not named as Graph, JSON: name it .json",

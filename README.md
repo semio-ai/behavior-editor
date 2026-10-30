@@ -33,7 +33,7 @@ import "@semio/behavior-editor/styles.css";
 await initBehaviorText();
 const language = createBehaviorText(behaviorText);
 
-<BehaviorEditor language={language} defaultText={text} />;
+<BehaviorEditor language={language} examples={examples} />;
 ```
 
 `initBehaviorText()` fetches `behavior_text_bg.wasm` beside the module, which a
@@ -46,14 +46,28 @@ serves as is. Elsewhere, pass the module's bytes:
 | `language` | The language service: `createBehaviorText(wasm)`, or any `BehaviorText`. |
 | `runtime` | Where the behavior runs. A `MockArora` with the math module by default. |
 | `text`, `onTextChange` | The file's text, for a controlled editor. |
-| `defaultText` | The text an uncontrolled editor starts from. |
+| `defaultText` | The text an uncontrolled editor starts from. With neither it nor `text`, the editor opens on its start screen. |
 | `fileName` | The name a new file is saved under; its extension says its format. |
+| `examples` | The behaviors the start screen offers, each a `BehaviorExample`: its `title`, `fileName` and `text`, the `plotKeys` it plots, and the `runtime` it needs, if any. None by default. |
 | `moduleNames` | Names the palette shows for module ids. |
 | `plotKeys` | The store keys plotted from the start. |
 | `autoPlay` | Whether the behavior ticks as soon as it resolves (default `true`). |
 
 The editor:
 
+- opens, with no behavior, on a start screen: a new behavior, a file to open,
+  the files opened lately, and the examples the host gives. An example that
+  declares a runtime, such as a device seeded for it, runs on one made when it
+  opens and disposed when another file opens; any other file runs on the
+  editor's runtime. Once a file is open, the File menu holds New, Open, the
+  recent files, Save, Save As and Close, which goes back to the start screen;
+  each asks before discarding unsaved changes.
+- remembers the last ten files opened or saved, per browser, in IndexedDB: a
+  file by its File System Access handle where the browser keeps one, so it
+  opens again without a picker once the person lets the page read it; otherwise
+  by its name and its contents as last opened or saved. Each can be removed
+  from the list. Where storage is unavailable, as in some private windows, the
+  list lasts as long as the page.
 - draws the tree top-down, with each node's status this tick (S, R, F), and
   the detached nodes on its left, each level with the ports it feeds; a wire
   runs from each named node to every argument that reads it. A detached node
@@ -179,8 +193,8 @@ restarting when an edit binds it.
 and a tree back through Groot, as the same graph; `fixtures/files` holds one
 file per format, and a Groot tree with an unconnected port (`res=""`).
 
-The demo opens the NGBT spectrum's examples, each on a mock device, and
-`dataflow.bt` on that Arora device.
+The demo offers the NGBT spectrum's examples on its start screen, each on a
+mock device seeded for it, and `dataflow.bt` on that Arora device.
 
 `npm run lint:rust` and `npm run test:rust` check both crates. The language's
 tests run in release, as its wasm is built: its nesting limit is set for a

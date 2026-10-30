@@ -7,7 +7,12 @@ import type { BehaviorDocument } from "../text/ast";
 import type { BehaviorText, Diagnostic } from "../text/language";
 import { Diagram, type Drop } from "./Diagram";
 import { diagramRows, rowKey } from "./diagram-rows";
-import { type BehaviorFile, openBehaviorFile, saveBehaviorFile } from "./file-access";
+import {
+  type BehaviorFile,
+  openBehaviorFile,
+  reopenBehaviorFile,
+  saveBehaviorFile,
+} from "./file-access";
 import { FileBar } from "./FileBar";
 import {
   FILE_FORMATS,
@@ -19,11 +24,13 @@ import {
 import { functionIndex } from "./functions";
 import { type Edit, Inspector } from "./Inspector";
 import { PlaybackBar } from "./PlaybackBar";
+import { type RecentFile, useRecentFiles } from "./recent-files";
+import { type BehaviorExample, StartScreen } from "./StartScreen";
 import { behaviorKeys } from "./store-keys";
 import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
 import { useMediaQuery } from "./use-media-query";
-import { usePlayback, useRuntimeFunctions } from "./use-playback";
+import { askFunctions, usePlayback, useRuntimeFunctions, whenIdle } from "./use-playback";
 
 export interface BehaviorEditorProps {
   /** The language: its parser, formatter and resolver. */
@@ -32,11 +39,16 @@ export interface BehaviorEditorProps {
   runtime?: BehaviorRuntime;
   /** The file's text, for a controlled editor; `onTextChange` receives every change. */
   text?: string;
-  /** The text an uncontrolled editor starts from. */
+  /**
+   * The text an uncontrolled editor starts from. With neither it nor `text`,
+   * the editor opens on its start screen.
+   */
   defaultText?: string;
   onTextChange?(text: string): void;
-  /** The file's name until one is opened or saved; its extension says its format. */
+  /** The name a new file is saved under; its extension says its format. */
   fileName?: string;
+  /** The behaviors the start screen offers to open; none by default. */
+  examples?: readonly BehaviorExample[];
   /** Names to show and write for module ids. */
   moduleNames?: Readonly<Record<string, string>>;
   /** The store keys plotted from the start. */
@@ -62,42 +74,254 @@ const WIDE = "(min-width: 1100px)";
 /** How long typing pauses before the text is parsed again. */
 export const REPARSE_DELAY_MS = 250;
 
+/** A file open in the editor: what it opened as, and the example it is, if one. */
+interface Session {
+  /** Counts the files opened: each opens in a workspace of its own. */
+  serial: number;
+  file: BehaviorFile;
+  /** Its text as it opened. */
+  text: string;
+  example: BehaviorExample | null;
+}
+
+/** A new file named `name`, in the format its extension says. */
+const newFile = (name: string): BehaviorFile => ({
+  name,
+  format: formatOf(name) ?? "bt",
+  handle: null,
+});
+
 /**
  * An editor for a behavior: its tree and detached nodes as a diagram, and
- * its file as text, in tabs, either editing the other; run on a device or a mock, its
- * statuses and store live; read from and saved to a local `.bt` file.
+ * its file as text, in tabs, either editing the other; run on a device or a
+ * mock, its statuses and store live; read from and saved to local files.
+ * With no behavior, it shows a start screen: a new behavior, a file to open,
+ * the files opened lately, and the host's examples.
  */
 export function BehaviorEditor({
   language,
   runtime,
   text: controlled,
-  defaultText = "",
+  defaultText,
   onTextChange,
   fileName = "behavior.bt",
+  examples = [],
   moduleNames,
   plotKeys = [],
   autoPlay = true,
 }: BehaviorEditorProps) {
-  const active = useMemo(() => runtime ?? new MockArora(), [runtime]);
-  // The runtime shown, which an open finishing late checks it still is.
-  const shown = useRef(active);
+  const host = useMemo(() => runtime ?? new MockArora(), [runtime]);
+  // The editor's runtime, which an open finishing late checks it still is.
+  const shownHost = useRef(host);
   useEffect(() => {
-    shown.current = active;
-  }, [active]);
-  const [own, setOwn] = useState(defaultText);
+    shownHost.current = host;
+  }, [host]);
+  const recent = useRecentFiles();
+  const serial = useRef(0);
+  const [session, setSession] = useState<Session | null>(() => {
+    const text = controlled ?? defaultText;
+    return text === undefined ? null : { serial: 0, file: newFile(fileName), text, example: null };
+  });
+  const [startError, setStartError] = useState<string | null>(null);
+  /** Whether the start screen shows because the person closed a file. */
+  const [closed, setClosed] = useState(false);
+  /** The view shown, which stays as files open and close. */
+  const [tab, setTab] = useState<Tab>("diagram");
+
+  // A controlled editor whose text arrives after it mounted opens on it, as
+  // one mounted with it does; one the person closed stays closed.
+  useEffect(() => {
+    if (controlled === undefined || closed) return;
+    setSession((open) => {
+      if (open) return open;
+      // The host's text replaces the file as an open would: an open asked
+      // before it is moot.
+      requests.current += 1;
+      serial.current += 1;
+      return { serial: serial.current, file: newFile(fileName), text: controlled, example: null };
+    });
+  }, [controlled, closed, fileName]);
+
+  /**
+   * Counts what replaces the file open: a file opened, a new one, an example,
+   * a close. An open finishing after another of these was asked for is moot.
+   */
+  const requests = useRef(0);
+  const begin = (file: BehaviorFile, text: string, example: BehaviorExample | null = null) => {
+    requests.current += 1;
+    serial.current += 1;
+    setStartError(null);
+    setSession({ serial: serial.current, file, text, example });
+    onTextChange?.(text);
+  };
+  /**
+   * Open a file, as text: a graph file through the functions of the runtime it
+   * opens on. Nothing opens when something else replaced the file meanwhile.
+   */
+  const openAsText = async (asked: number, opened: BehaviorFile & { text: string }) => {
+    let next = opened.text;
+    if (opened.format !== "bt") {
+      const from = host;
+      const functions = await askFunctions(from);
+      // Opened with another runtime's functions, the file would name functions
+      // the runtime it opens on may not have: it opens nothing.
+      if (shownHost.current !== from) {
+        throw new Error(`${opened.name} was not opened: the runtime changed while it was`);
+      }
+      const out = language.openFile(opened.text, opened.format, functions);
+      if ("problems" in out) {
+        throw new Error(`${opened.name} does not open: ${problemsText(out.problems)}`);
+      }
+      next = out.text;
+    }
+    if (requests.current !== asked) return;
+    recent.remember(opened, opened.text);
+    begin({ name: opened.name, format: opened.format, handle: opened.handle }, next);
+  };
+  /** Run the open `asked`; its failure is not shown once something else replaced the file. */
+  const moot = async (asked: number, open: () => Promise<void>) => {
+    try {
+      await open();
+    } catch (error) {
+      if (requests.current === asked) throw error;
+    }
+  };
+  const files: FileActions = {
+    recent: recent.files,
+    remember: recent.remember,
+    create: () => begin(newFile(fileName), ""),
+    open: async () => {
+      const asked = ++requests.current;
+      await moot(asked, async () => {
+        const opened = await openBehaviorFile();
+        if (opened) await openAsText(asked, opened);
+      });
+    },
+    openRecent: async (entry) => {
+      const asked = ++requests.current;
+      await moot(asked, async () => openAsText(asked, await reopenBehaviorFile(entry)));
+    },
+    close: () => {
+      requests.current += 1;
+      setSession(null);
+      setClosed(true);
+    },
+  };
+
+  // The runtime an example needs, made when it opens and disposed when it closes.
+  const [made, setMade] = useState<{ serial: number; runtime: BehaviorRuntime } | null>(null);
+  const example = session?.example ?? null;
+  const opened = session?.serial ?? -1;
+  useEffect(() => {
+    if (!example?.runtime) return undefined;
+    const created = example.runtime();
+    setMade({ serial: opened, runtime: created.runtime });
+    // The workspace's stop is queued on the runtime as it unmounts, in this
+    // same commit: the runtime goes once that and every call before it ran.
+    return () => {
+      Promise.resolve()
+        .then(() => whenIdle(created.runtime))
+        .then(() => created.dispose?.());
+    };
+  }, [example, opened]);
+
+  if (!session) {
+    const attempt = (run: () => Promise<void>) => () => {
+      setStartError(null);
+      run().catch((e: unknown) => setStartError(e instanceof Error ? e.message : String(e)));
+    };
+    return (
+      <div className="be-root">
+        <StartScreen
+          examples={examples}
+          recent={recent.files}
+          onNew={files.create}
+          onOpen={attempt(files.open)}
+          onOpenRecent={(entry) => attempt(() => files.openRecent(entry))()}
+          onForget={(entry) => recent.forget(entry.id)}
+          onExample={(chosen) => begin(newFile(chosen.fileName), chosen.text, chosen)}
+          error={startError}
+          focus={closed}
+        />
+      </div>
+    );
+  }
+  const active = example?.runtime ? (made?.serial === session.serial ? made.runtime : null) : host;
+  if (!active) {
+    return (
+      <div className="be-root">
+        <p className="be-fine" role="status">
+          {`Opening ${example!.title}…`}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <Workspace
+      key={session.serial}
+      language={language}
+      runtime={active}
+      session={session}
+      files={files}
+      text={controlled}
+      onTextChange={onTextChange}
+      moduleNames={moduleNames}
+      plotKeys={session.example?.plotKeys ?? plotKeys}
+      autoPlay={autoPlay}
+      tab={tab}
+      onTab={setTab}
+    />
+  );
+}
+
+/** What the workspace asks of the editor holding it: the files it opens and remembers. */
+interface FileActions {
+  recent: readonly RecentFile[];
+  remember(file: BehaviorFile, text: string): void;
+  create(): void;
+  open(): Promise<void>;
+  openRecent(entry: RecentFile): Promise<void>;
+  close(): void;
+}
+
+interface WorkspaceProps {
+  language: BehaviorText;
+  runtime: BehaviorRuntime;
+  session: Session;
+  files: FileActions;
+  /** The text of a controlled editor. */
+  text: string | undefined;
+  onTextChange: ((text: string) => void) | undefined;
+  moduleNames: Readonly<Record<string, string>> | undefined;
+  plotKeys: readonly string[];
+  autoPlay: boolean;
+  tab: Tab;
+  onTab(tab: Tab): void;
+}
+
+/** One file open: the editor's views over it, its runtime running it. */
+function Workspace({
+  language,
+  runtime: active,
+  session,
+  files,
+  text: controlled,
+  onTextChange,
+  moduleNames,
+  plotKeys,
+  autoPlay,
+  tab,
+  onTab: setTab,
+}: WorkspaceProps) {
+  const [own, setOwn] = useState(session.text);
   const text = controlled ?? own;
-  const [file, setFile] = useState<BehaviorFile>(() => ({
-    name: fileName,
-    format: formatOf(fileName) ?? "bt",
-    handle: null,
-  }));
-  const [saved, setSaved] = useState(text);
+  const [file, setFile] = useState<BehaviorFile>(session.file);
+  const [saved, setSaved] = useState(session.text);
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>("0");
   const [folds, setFolds] = useState<ReadonlySet<string>>(new Set());
   const [plotted, setPlotted] = useState<string[]>([...plotKeys]);
-  const [tab, setTab] = useState<Tab>("diagram");
   const wide = useMediaQuery(WIDE);
 
   const setText = useCallback(
@@ -129,13 +353,17 @@ export function BehaviorEditor({
 
   const parsed = useMemo(() => language.parse(source), [language, source]);
   const natives = useMemo(() => language.natives(), [language]);
-  const { functions, error: functionsError, said } = useRuntimeFunctions(active);
+  const { functions, error: functionsError, known } = useRuntimeFunctions(active);
   const resolved = useMemo(
     () => language.resolve(parsed.document, functions),
     [language, parsed.document, functions],
   );
+  // A behavior runs once resolved against its runtime's own functions: one
+  // resolved against another's would name functions it may not have.
   const runnable =
-    resolved.graph.root !== undefined && !resolved.diagnostics.some((d) => d.severity === "error");
+    known &&
+    resolved.graph.root !== undefined &&
+    !resolved.diagnostics.some((d) => d.severity === "error");
   const diff = useCallback(
     (previous: Graph, next: Graph) => language.diff(previous, next),
     [language],
@@ -229,7 +457,9 @@ export function BehaviorEditor({
     const now = source === text ? parsed : language.parse(text);
     const graph = source === text ? resolved : language.resolve(now.document, functions);
     if ([...now.diagnostics, ...graph.diagnostics].some((d) => d.severity === "error")) {
-      throw new Error(`The text has errors: a ${label} file is written from the graph it resolves to`);
+      throw new Error(
+        `The text has errors: a ${label} file is written from the graph it resolves to`,
+      );
     }
     const out = language.writeFile(graph, format, functions);
     if ("problems" in out) {
@@ -245,49 +475,16 @@ export function BehaviorEditor({
   const save = (format: FileFormat, saveAs: boolean) =>
     fileAction(async () => {
       const { written, notice } = contents(format);
-      const target = saveAs ? { name: withExtension(file.name, format), format, handle: null } : file;
+      const target = saveAs
+        ? { name: withExtension(file.name, format), format, handle: null }
+        : file;
       const stored = await saveBehaviorFile(written, target, saveAs);
       if (!stored) return;
+      files.remember(stored, written);
       setFile(stored);
       setSaved(text);
       setFileNotice(notice);
     });
-  const onNew = fileAction(async () => {
-    setFile({ name: fileName, format: formatOf(fileName) ?? "bt", handle: null });
-    setText("");
-    setSaved("");
-    setSelected("0");
-    await Promise.resolve();
-  });
-  const onOpen = fileAction(async () => {
-    const opened = await openBehaviorFile();
-    if (!opened) return;
-    let next = opened.text;
-    if (opened.format !== "bt") {
-      // The runtime's functions as it says them now, which it may not have
-      // said yet when the picker opened.
-      const from = active;
-      const now = await from.functions();
-      // Opened with another runtime's functions, the file would name functions
-      // the runtime shown may not have: it opens nothing.
-      if (shown.current !== from) {
-        throw new Error(`${opened.name} was not opened: the runtime changed while it was`);
-      }
-      // The text then resolves against the same functions the file opened with.
-      said(now);
-      const out = language.openFile(opened.text, opened.format, now);
-      if ("problems" in out) {
-        throw new Error(`${opened.name} does not open: ${problemsText(out.problems)}`);
-      }
-      next = out.text;
-    }
-    setFile({ name: opened.name, format: opened.format, handle: opened.handle });
-    setText(next);
-    setSaved(next);
-    setSelected("0");
-    setFolds(new Set());
-  });
-
   const toggleFold = (key: string) =>
     setFolds((f) => {
       const next = new Set(f);
@@ -399,8 +596,11 @@ export function BehaviorEditor({
         <FileBar
           name={file.name}
           dirty={text !== saved}
-          onNew={onNew}
-          onOpen={onOpen}
+          recent={files.recent}
+          onNew={files.create}
+          onOpen={fileAction(files.open)}
+          onOpenRecent={(entry) => fileAction(() => files.openRecent(entry))()}
+          onClose={files.close}
           onSave={save(file.format, false)}
           onSaveAs={(format) => save(format, true)()}
           error={fileError}

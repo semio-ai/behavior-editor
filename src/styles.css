@@ -192,6 +192,122 @@
 .be-dirty {
   color: var(--be-run);
 }
+
+/* The file menu. */
+.be-menu-holder {
+  position: relative;
+  display: inline-flex;
+}
+.be-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: min(360px, 90vw);
+  padding: 4px;
+  background: var(--be-panel);
+  border: 1px solid var(--be-line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--be-ink) 18%, transparent);
+}
+.be-root .be-menu button {
+  border: 0;
+  border-radius: 4px;
+  text-align: left;
+  background: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.be-root .be-menu button:hover,
+.be-root .be-menu button:focus-visible {
+  background: var(--be-panel-2);
+}
+.be-menu-separator {
+  margin: 4px;
+  border-top: 1px solid var(--be-line);
+}
+.be-menu-group {
+  display: flex;
+  flex-direction: column;
+}
+.be-menu-heading {
+  padding: 6px 9px 2px;
+  font: 650 11px var(--be-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--be-muted);
+}
+
+/* The start screen: a new behavior, a file to open, the recent files, the examples. */
+.be-start {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+  padding: clamp(16px, 4vw, 40px);
+  background: var(--be-panel);
+  border: 1px solid var(--be-line);
+  border-radius: 10px;
+}
+.be-root .be-start > h2 {
+  font: 650 22px var(--be-body);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--be-ink);
+}
+.be-start-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.be-start-lists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px 24px;
+  align-items: start;
+}
+.be-start-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.be-start-list li {
+  display: flex;
+  gap: 4px;
+}
+.be-root .be-start-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+  padding: 7px 10px;
+}
+.be-start-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.be-start-meta {
+  font: 400 12px var(--be-mono);
+  color: var(--be-muted);
+}
+.be-root .be-start-forget {
+  min-width: 32px;
+  color: var(--be-muted);
+}
 .be-confirm {
   display: inline-flex;
   flex-wrap: wrap;

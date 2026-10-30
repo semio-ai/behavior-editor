@@ -402,8 +402,10 @@
 .be-banner p {
   margin: 0;
 }
+/* Why the file cannot run: the ink's contrast, marked by the warning color. */
 .be-banner .be-banner-reason {
-  color: var(--be-warning);
+  padding-left: 8px;
+  border-left: 3px solid var(--be-warning);
   font-weight: 600;
 }
 .be-banner-warn {

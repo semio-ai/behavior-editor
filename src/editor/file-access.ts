@@ -93,6 +93,43 @@ export async function openBehaviorFile(): Promise<(BehaviorFile & { text: string
     : null;
 }
 
+/** A handle's permission calls, which the DOM's types do not carry yet. */
+interface PermissionedHandle {
+  queryPermission?(options: { mode: "read" | "readwrite" }): Promise<PermissionState>;
+  requestPermission?(options: { mode: "read" | "readwrite" }): Promise<PermissionState>;
+}
+
+/**
+ * Open a file the editor opened or saved before, as `openBehaviorFile` opens
+ * one: through its handle, asking the person to let the page read it again
+ * where the browser asks; or, without one, from the contents kept with it.
+ */
+export async function reopenBehaviorFile(recent: {
+  name: string;
+  format: FileFormat;
+  handle: FileSystemFileHandle | null;
+  text: string | null;
+}): Promise<BehaviorFile & { text: string }> {
+  const { handle } = recent;
+  if (!handle) return { name: recent.name, format: recent.format, handle: null, text: recent.text ?? "" };
+  const permissioned = handle as FileSystemFileHandle & PermissionedHandle;
+  const mode = { mode: "read" } as const;
+  if (permissioned.queryPermission && (await permissioned.queryPermission(mode)) !== "granted") {
+    const answer = await permissioned.requestPermission?.(mode);
+    if (answer !== "granted") throw new Error(`${recent.name} was not opened: reading it was not allowed`);
+  }
+  let file: File;
+  try {
+    file = await handle.getFile();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "NotFoundError") {
+      throw new Error(`${recent.name} is no longer where it was saved`);
+    }
+    throw error;
+  }
+  return { name: file.name, format: formatNamed(file.name), handle, text: await file.text() };
+}
+
 /**
  * Write `text`, in `file`'s format, to `file`'s handle; with no handle, or
  * `saveAs`, ask where first, offering that format only, and refuse a name

@@ -1,4 +1,5 @@
 export { BehaviorEditor, type BehaviorEditorProps } from "./editor/BehaviorEditor";
+export type { BehaviorExample } from "./editor/StartScreen";
 
 export type {
   BehaviorText,

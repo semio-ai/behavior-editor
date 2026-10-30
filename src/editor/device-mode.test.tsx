@@ -190,6 +190,17 @@ describe("BehaviorEditor on a device", () => {
     await waitFor(() => expect(device.graph).toEqual({}));
   });
 
+  it("says why following the device failed, until it follows again", async () => {
+    const { device } = await setup(ORDER, graphOf(ORDER.text));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Live edits" })).toBeTruthy());
+    device.refusesKeys = "the store is unavailable";
+    expect(await screen.findByRole("alert")).toHaveTextContent("the store is unavailable");
+    device.refusesKeys = null;
+    await waitFor(() =>
+      expect(screen.queryByText("the store is unavailable")).toBeNull(),
+    );
+  });
+
   it("leaves the device running when the session closes, and goes back to its own runtime", async () => {
     const { device, session } = await setup(ORDER, graphOf(ORDER.text));
     await waitFor(() => expect(screen.getByRole("switch", { name: "Live edits" })).toBeTruthy());

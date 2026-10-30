@@ -130,19 +130,43 @@ export function useDeviceMode(
   const loadedRef = useRef(loaded);
   loadedRef.current = loaded;
 
-  /** Operations on the device, one after the other, as the person asked for them. */
+  /**
+   * The session whose answers the hook shows: one switched away from, or a
+   * hook unmounted, has its late answers dropped.
+   */
+  const shown = useRef(session);
+  useEffect(
+    () => () => {
+      shown.current = null;
+    },
+    [],
+  );
+  /** Why following the device failed at its last step, until the next succeeds. */
+  const [followError, setFollowError] = useState<string | null>(null);
+
+  /**
+   * Operations on the device, one after the other, as the person asked for
+   * them. A task is given whether its session is still the one shown, which
+   * it checks before showing what it did.
+   */
   const queue = useRef<Promise<unknown>>(Promise.resolve());
-  const enqueue = useCallback((task: () => Promise<void>) => {
-    queue.current = queue.current.then(task).then(
-      () => setError(null),
-      (e: unknown) => setError(message(e)),
-    );
+  const enqueue = useCallback((task: (live: () => boolean) => Promise<void>) => {
+    const owner = shown.current;
+    const live = () => owner !== null && shown.current === owner;
+    queue.current = queue.current
+      .then(() => (live() ? task(live) : undefined))
+      .then(
+        () => live() && setError(null),
+        (e: unknown) => live() && setError(message(e)),
+      );
   }, []);
 
   // What the editor knew of another session's device is not this one's.
   const [known, setKnown] = useState(session);
   if (known !== session) {
+    shown.current = session;
     setKnown(session);
+    setFollowError(null);
     setBehavior(undefined);
     setRunningGraph(null);
     markChanged(false);
@@ -157,7 +181,10 @@ export function useDeviceMode(
 
   const read = useCallback(() => {
     if (!session) return;
-    enqueue(async () => setBehavior(await session.deviceBehavior()));
+    enqueue(async (live) => {
+      const answer = await session.deviceBehavior();
+      if (live()) setBehavior(answer);
+    });
   }, [session, enqueue]);
 
   // Each connection, the first and any made again, reads what the device runs.
@@ -180,6 +207,7 @@ export function useDeviceMode(
   useEffect(
     () =>
       session?.on("tick", (tick) => {
+        setFollowError(null);
         setStatus(tick.status);
         setReports((last) => ({ report: tick.report, previous: last.report }));
         const next = new Map(tick.report.whole ? [] : storeRef.current);
@@ -201,12 +229,16 @@ export function useDeviceMode(
           })
           .catch(() => undefined)
           .finally(() => {
+            if (shown.current !== session) return;
             setStore(next);
             setHistory((h) => withTick(h, next));
           });
       }),
     [session],
   );
+
+  // A step the session failed to follow says why, until the next succeeds.
+  useEffect(() => session?.on("error", (e) => setFollowError(e.message)), [session]);
 
   // The device runs the file when their graphs are the same: the editor
   // follows the file's nodes, and sends its changes from then on.
@@ -223,25 +255,26 @@ export function useDeviceMode(
     // Another client's change, told before the edit goes, refuses it: it is
     // a diff from the behavior the file ran as, not from theirs.
     const unchangedSince = session.externalChanges;
-    enqueue(async () => {
+    enqueue(async (live) => {
       const from = runningRef.current;
       const next = loadedRef.current;
       if (changedRef.current || from === null || next === null) return;
       await session.edit(diff(from, next.graph), next, { unchangedSince });
-      setRunningGraph(next.graph);
+      if (live()) setRunningGraph(next.graph);
     });
   }, [session, diff, enqueue, setRunningGraph]);
 
-  const live = running !== null && !changed && connected && liveEdits;
+  const sending = running !== null && !changed && connected && liveEdits;
   useEffect(() => {
-    if (live && loaded) send();
-  }, [live, loaded, send]);
+    if (sending && loaded) send();
+  }, [sending, loaded, send]);
 
   const run = useCallback(() => {
     const next = loadedRef.current;
     if (!session || !next) return;
-    enqueue(async () => {
+    enqueue(async (live) => {
       await session.run(next);
+      if (!live()) return;
       setRunningGraph(next.graph);
       markChanged(false);
       setBehavior((b) => (b ? { ...b, graph: next.graph } : b));
@@ -250,8 +283,9 @@ export function useDeviceMode(
 
   const stop = useCallback(() => {
     if (!session) return;
-    enqueue(async () => {
+    enqueue(async (live) => {
       await session.stop();
+      if (!live()) return;
       setRunningGraph(null);
       markChanged(false);
       setBehavior((b) => (b ? { ...b, graph: {} } : b));
@@ -263,13 +297,14 @@ export function useDeviceMode(
       session
         ?.write(key, value)
         .then(() => {
+          if (shown.current !== session) return;
           const next = new Map(storeRef.current);
           if (value === null) next.delete(key);
           else next.set(key, value);
           setStore(next);
           setPending(new Set([...pendingRef.current, key]));
         })
-        .catch((e: unknown) => setError(message(e)));
+        .catch((e: unknown) => shown.current === session && setError(message(e)));
     },
     [session],
   );
@@ -288,7 +323,7 @@ export function useDeviceMode(
     () => (running !== null && graph ? diff(running, graph) : null),
     [running, graph, diff],
   );
-  const pendingChanges = waiting && !live ? changeCount(waiting) : 0;
+  const pendingChanges = waiting && !sending ? changeCount(waiting) : 0;
   const deviceGraph = relation === "differs" ? (behavior?.graph ?? null) : null;
   const difference = useMemo(
     () => (deviceGraph && graph ? diff(deviceGraph, graph) : null),
@@ -312,7 +347,7 @@ export function useDeviceMode(
     apply: send,
     run,
     stop,
-    error,
+    error: error ?? followError,
     report,
     previous: relation === "running" ? reports.previous : null,
     store: storeState,

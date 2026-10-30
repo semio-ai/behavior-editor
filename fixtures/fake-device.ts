@@ -68,6 +68,8 @@ export class FakeDevice {
   revises = true;
   /** Whether a connection can be opened to it now. */
   reachable = true;
+  /** Why it refuses to list its keys, while it does. */
+  refusesKeys: string | null = null;
   /** Each node's status, as the next trace report states it. */
   statuses: Record<string, TraceStatus> = {};
   /** The interpreter's tick. */
@@ -239,11 +241,14 @@ export class FakeBridgeClient implements BridgeClient {
   }
 
   listKeys(prefix?: string): Promise<BridgeKey[]> {
-    return this.#answer(() =>
+    return this.#answer(() => {
+      if (this.#device.refusesKeys !== null) throw new Error(this.#device.refusesKeys);
+      return (
       Object.keys(this.#device.values)
         .filter((path) => !prefix || path.startsWith(prefix))
-        .map((path) => ({ path, __meta: this.#device.meta[path] ?? {} })),
-    );
+        .map((path) => ({ path, __meta: this.#device.meta[path] ?? {} }))
+      );
+    });
   }
 
   onValues(listener: (values: Record<string, Value>) => void): () => void {

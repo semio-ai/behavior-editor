@@ -76,7 +76,7 @@ describe("the diagram's rows", () => {
       sources: [],
     });
     expect(rows.find((r) => r.key === "0.0.1")?.ports).toEqual([
-      { name: "x", text: "@fresh", sources: ["1"] },
+      { name: "x", text: "@fresh._ret", sources: ["1"] },
     ]);
     expect(rows.find((r) => r.key === "0.0.2")?.descendantKeys).toEqual([
       "0.0.2.0",

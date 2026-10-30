@@ -1,4 +1,4 @@
-import type { Graph, GraphNode, LinkSource } from "../model/graph";
+import type { Graph, GraphNode, Source } from "../model/graph";
 import type { FrozenTy, FunctionSignature, MethodSignature } from "../model/signature";
 import { type Value, valueEquals, valueString, valueTag } from "../model/value";
 import type { Loaded } from "../text/language";
@@ -221,12 +221,13 @@ const portKey = (node: string, port: string) => `${node}|${port}`;
 
 /** A graph lowered for ticking: its cells, who reads whom, and what each detached node holds. */
 class Program {
-  readonly #graph: Graph;
+  /** The graph's nodes, by id. */
+  readonly #nodes = new Map<string, GraphNode>();
   readonly #functions: ReadonlyMap<string, MockFunction>;
   readonly #store: Map<string, Value>;
   readonly #root: string;
-  /** The links, by the port they feed. */
-  readonly #links = new Map<string, LinkSource>();
+  /** The bindings, by the port they bind. */
+  readonly #bindings = new Map<string, Source>();
   readonly #cells = new Map<string, Cell>();
   /** The cells each literal argument owns, by port: what a rebuilt graph carries over. */
   readonly #literalCells = new Map<string, LocalCell>();
@@ -253,23 +254,26 @@ class Program {
     store: Map<string, Value>,
     previous: Program | null,
   ) {
-    this.#graph = graph;
     this.#functions = functions;
     this.#store = store;
-    if (!graph.root || !graph.nodes[graph.root]) {
+    for (const node of graph.nodes ?? []) {
+      if (this.#nodes.has(node.id)) throw new Error(`the graph lists node ${node.id} twice`);
+      this.#nodes.set(node.id, node);
+      for (const [port, source] of Object.entries(node.bind ?? {})) {
+        if ("select" in source) throw new Error("the mock device does not evaluate selections");
+        this.#bindings.set(portKey(node.id, port), source);
+      }
+    }
+    if (!graph.root || !this.#nodes.has(graph.root)) {
       throw new Error(`the graph's root ${graph.root ?? "(none)"} is not a node`);
     }
     this.#root = graph.root;
-    for (const link of graph.links) {
-      if ("select" in link.source) throw new Error("the mock device does not evaluate selections");
-      this.#links.set(portKey(link.target.node, link.target.port), link.source);
-    }
     this.#holdFrom(this.#root);
-    const order = Object.keys(graph.nodes).sort((a, b) =>
+    const order = [...this.#nodes.keys()].sort((a, b) =>
       a === this.#root ? -1 : b === this.#root ? 1 : a < b ? -1 : a > b ? 1 : 0,
     );
     for (const id of order) {
-      const node = graph.nodes[id]!;
+      const node = this.#nodes.get(id)!;
       if (
         !this.#attached.has(id) &&
         !N.NATIVE_FUNCTIONS.has(node.function) &&
@@ -287,8 +291,8 @@ class Program {
   #holdFrom(id: string) {
     if (this.#attached.has(id)) return;
     this.#attached.add(id);
-    for (const child of this.#graph.nodes[id]?.children ?? []) {
-      if (!this.#graph.nodes[child]) throw new Error(`node ${id} holds ${child}, which is no node`);
+    for (const child of this.#nodes.get(id)?.children ?? []) {
+      if (!this.#nodes.has(child)) throw new Error(`node ${id} holds ${child}, which is no node`);
       this.#holdFrom(child);
     }
   }
@@ -301,7 +305,7 @@ class Program {
   #isDetachedOutput(id: string, param: string): boolean {
     if (!this.#state.has(id)) return false;
     if (param === N.RET) return true;
-    return this.#signature(this.#graph.nodes[id]!)?.parameters[param]?.mutable ?? false;
+    return this.#signature(this.#nodes.get(id)!)?.parameters[param]?.mutable ?? false;
   }
 
   /** The cell of the port `param` of node `id`, which its link decides. */
@@ -309,32 +313,28 @@ class Program {
     const at = portKey(id, param);
     const known = this.#cells.get(at);
     if (known) return known;
-    if (visiting.has(at)) throw new Error(`the links of port ${at} form a cycle`);
+    if (visiting.has(at)) throw new Error(`the bindings of port ${at} form a cycle`);
     visiting.add(at);
-    const source = this.#links.get(at);
+    const source = this.#bindings.get(at);
     let cell: Cell;
     if (!source) {
       cell = new LocalCell();
-    } else if ("literal" in source) {
-      const own = new LocalCell(source.literal);
+    } else if ("value" in source) {
+      const own = new LocalCell(source.value);
       this.#literalCells.set(at, own);
       cell = own;
-    } else if ("variable" in source) {
-      const name = this.#graph.variables[source.variable];
-      if (name === undefined)
-        throw new Error(
-          `port ${at} reads variable ${source.variable}, which the graph does not name`,
-        );
+    } else if ("key" in source) {
+      const name = source.key;
       if (!name.startsWith(".") && this.#isDetachedOutput(id, param)) {
         // A detached node's output bound to a store key keeps a cell of its
-        // own, which `@node` reads, and publishes to the key after the tree.
+        // own, which `@node._ret` reads, and publishes to the key after the tree.
         this.#publish.set(at, name);
         cell = new LocalCell();
       } else {
         cell = this.#variable(name);
       }
     } else if ("port" in source) {
-      if (!this.#graph.nodes[source.port.node]) {
+      if (!this.#nodes.has(source.port.node)) {
         throw new Error(`port ${at} reads node ${source.port.node}, which is no node`);
       }
       cell = this.#cell(source.port.node, source.port.port, visiting);
@@ -354,20 +354,18 @@ class Program {
     return cell;
   }
 
-  /** The parameters of `node` its links or its signature name, `_ret` aside. */
+  /** The parameters of `node` its bindings or its signature name, `_ret` aside. */
   #inputs(id: string): string[] {
-    const node = this.#graph.nodes[id]!;
+    const node = this.#nodes.get(id)!;
     const signature = this.#signature(node);
-    const linked = this.#graph.links
-      .filter((l) => l.target.node === id && l.target.port !== N.RET)
-      .map((l) => l.target.port);
+    const linked = Object.keys(node.bind ?? {}).filter((port) => port !== N.RET);
     if (!signature) return linked;
     return [...signature.parameterOrdering, ...linked.filter((p) => !signature.parameters[p])];
   }
 
   /** The output ports of the detached node `id`: its return value and its mutable parameters. */
   #outputs(id: string): string[] {
-    const signature = this.#signature(this.#graph.nodes[id]!);
+    const signature = this.#signature(this.#nodes.get(id)!);
     const mutable = signature
       ? signature.parameterOrdering.filter((p) => signature.parameters[p]?.mutable)
       : [];
@@ -389,8 +387,8 @@ class Program {
       for (const port of this.#outputs(id)) claim(this.#cell(id, port), id, true);
     }
     for (const id of this.#attached) {
-      const node = this.#graph.nodes[id]!;
-      if (this.#links.has(portKey(id, N.RET))) claim(this.#cell(id, N.RET), id, false);
+      const node = this.#nodes.get(id)!;
+      if (this.#bindings.has(portKey(id, N.RET))) claim(this.#cell(id, N.RET), id, false);
       const signature = this.#signature(node);
       for (const param of signature?.parameterOrdering ?? []) {
         if (signature!.parameters[param]?.mutable) claim(this.#cell(id, param), id, false);
@@ -435,36 +433,37 @@ class Program {
    * was: its literal cells, and the tree-local variables those nodes read.
    */
   #keepState(previous: Program) {
-    const same = (id: string) => definition(this.#graph, id) === definition(previous.#graph, id);
+    const same = (id: string) =>
+      definition(this.#nodes.get(id)) === definition(previous.#nodes.get(id));
     for (const [at, cell] of this.#literalCells) {
       const held = previous.#literalCells.get(at);
       if (held && same(at.split("|")[0]!)) cell.set(held.get());
     }
-    for (const link of this.#graph.links) {
-      if (!("variable" in link.source) || !same(link.target.node)) continue;
-      const name = this.#graph.variables[link.source.variable];
-      const cell = name === undefined ? undefined : this.#variables.get(name);
-      const held = name === undefined ? undefined : previous.#variables.get(name);
-      if (cell instanceof LocalCell && held instanceof LocalCell) cell.set(held.get());
+    for (const node of this.#nodes.values()) {
+      if (!same(node.id)) continue;
+      for (const source of Object.values(node.bind ?? {})) {
+        if (!("key" in source)) continue;
+        const cell = this.#variables.get(source.key);
+        const held = previous.#variables.get(source.key);
+        if (cell instanceof LocalCell && held instanceof LocalCell) cell.set(held.get());
+      }
     }
   }
 
   /**
    * The store keys the behavior reads, each with the value tag its parameter
-   * takes when its function says: the keys linked to an argument the node
+   * takes when its function says: the keys bound to an argument the node
    * does not write.
    */
   reads(): Map<string, string | undefined> {
     const reads = new Map<string, string | undefined>();
-    for (const link of this.#graph.links) {
-      if (!("variable" in link.source)) continue;
-      const key = this.#graph.variables[link.source.variable];
-      const node = this.#graph.nodes[link.target.node];
-      if (key === undefined || key.startsWith(".") || !node) continue;
-      const port = link.target.port;
-      const parameter = this.#signature(node)?.parameters[port];
-      if (port === N.RET || parameter?.mutable || N.nativeWrites(node.function, port)) continue;
-      reads.set(key, parameter ? tagOf(parameter.type) : undefined);
+    for (const node of this.#nodes.values()) {
+      for (const [port, source] of Object.entries(node.bind ?? {})) {
+        if (!("key" in source) || source.key.startsWith(".")) continue;
+        const parameter = this.#signature(node)?.parameters[port];
+        if (port === N.RET || parameter?.mutable || N.nativeWrites(node.function, port)) continue;
+        reads.set(source.key, parameter ? tagOf(parameter.type) : undefined);
+      }
     }
     return reads;
   }
@@ -515,7 +514,7 @@ class Program {
   }
 
   #tickNode(id: string): Status {
-    const node = this.#graph.nodes[id]!;
+    const node = this.#nodes.get(id)!;
     for (const read of this.#pulls.get(id) ?? []) this.#bringUpToDate(read);
     const status = N.NATIVE_FUNCTIONS.has(node.function)
       ? this.#tickNative(node)
@@ -615,8 +614,8 @@ class Program {
   }
 
   #unpack(id: string): Status {
-    const bound = this.#graph.links
-      .map((l) => (l.target.node === id ? N.unpackOutIndex(l.target.port) : undefined))
+    const bound = Object.keys(this.#nodes.get(id)!.bind ?? {})
+      .map((port) => N.unpackOutIndex(port))
       .filter((i): i is number => i !== undefined);
     const elements = arrayElements(this.#arg(id, N.UNPACK_VALUES));
     const needed = bound.length ? Math.max(...bound) + 1 : 0;
@@ -663,7 +662,7 @@ class Program {
     for (const mutated of result.mutated) {
       writeBack(this.#cell(node.id, mutated.id), mutated.value, isOptional(signature, mutated.id));
     }
-    if (this.#links.has(portKey(node.id, N.RET))) {
+    if (this.#bindings.has(portKey(node.id, N.RET))) {
       writeBack(
         this.#cell(node.id, N.RET),
         result.ret,
@@ -675,7 +674,7 @@ class Program {
   }
 
   #outputOptional(id: string, port: string): boolean {
-    const signature = this.#signature(this.#graph.nodes[id]!);
+    const signature = this.#signature(this.#nodes.get(id)!);
     if (!signature) return false;
     return port === N.RET
       ? signature.returnType.type === "frozenOption"
@@ -702,7 +701,7 @@ class Program {
   }
 
   #evaluate(id: string, state: DetachedState) {
-    const node = this.#graph.nodes[id]!;
+    const node = this.#nodes.get(id)!;
     const outputs = this.#outputs(id);
     // A mutable parameter bound to a store key has the key's value as its state.
     for (const port of outputs) {
@@ -755,18 +754,12 @@ function tagOf(ty: FrozenTy): string | undefined {
 }
 
 /** A node's definition: what a rebuilt graph compares to know it left the node as it was. */
-function definition(graph: Graph, id: string): string | undefined {
-  const node = graph.nodes[id];
+function definition(node: GraphNode | undefined): string | undefined {
   if (!node) return undefined;
-  const links = graph.links
-    .filter((l) => l.target.node === id)
-    .map((l) => JSON.stringify([l.target.port, l.source, sourceName(graph, l.source)]))
+  const bind = Object.entries(node.bind ?? {})
+    .map(([port, source]) => JSON.stringify([port, source]))
     .sort();
-  return JSON.stringify([node.function, node.children, links]);
-}
-
-function sourceName(graph: Graph, source: LinkSource): string | undefined {
-  return "variable" in source ? graph.variables[source.variable] : undefined;
+  return JSON.stringify([node.function, node.children ?? null, bind]);
 }
 
 function isOptional(signature: FunctionSignature, param: string): boolean {

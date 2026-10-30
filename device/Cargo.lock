@@ -75,9 +75,9 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "arora"
-version = "16.0.0"
+version = "17.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f419205a180e46eb00c05bbb39a1b49873ad37f3342a6bacc36ce0f08a17172"
+checksum = "f6062785f85780126c057b4704cbd91ec76d65991f54830f6d0c914e72961796"
 dependencies = [
  "anyhow",
  "arora-behavior",
@@ -98,21 +98,22 @@ dependencies = [
 
 [[package]]
 name = "arora-behavior"
-version = "9.6.0"
+version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee756f977b7655a4decf3ecc320039a79d929b2f4ea5de8c3a582f66cb03856c"
+checksum = "8a86aef0de094693d54e21c6d4c317c78ca4e6e62198519e273566a2cd37e1af"
 dependencies = [
  "arora-types",
  "semver",
  "serde",
  "uuid",
+ "yaml_serde",
 ]
 
 [[package]]
 name = "arora-behavior-tree"
-version = "9.7.0"
+version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbe4614afdcfff859f66c374d5b2b9ddaa67746faafb9288653f13c44f639cc3"
+checksum = "970f8608f9fac0e74d43b913599127e0edab05e858b5cc0a46bbd6d2aff8e8ee"
 dependencies = [
  "arora-behavior",
  "arora-behavior-tree-types",
@@ -126,15 +127,15 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "serde_yaml",
  "uuid",
+ "yaml_serde",
 ]
 
 [[package]]
 name = "arora-behavior-tree-types"
-version = "2.2.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30af8e40ed591dfe35f680d6e64fbba4618f6703441d0237ce23cc3965beb48b"
+checksum = "a290528d3845976b935a867bd66405456fe42a18e55f06cf624433f97765b3ff"
 dependencies = [
  "arora-behavior",
  "arora-types",
@@ -145,9 +146,9 @@ dependencies = [
 
 [[package]]
 name = "arora-bridge"
-version = "6.2.0"
+version = "6.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f629da4d99bed9bdf291b206e6434df2f6dffe963777c6da1b3ffb315079b686"
+checksum = "bfaf9782fd16e8083ea2e6fc5bcdb7b422a71b8e24f3f1c1fe5c4d3ff041c4ec"
 dependencies = [
  "arora-behavior",
  "arora-types",
@@ -174,9 +175,9 @@ dependencies = [
 
 [[package]]
 name = "arora-dataflow-nodes"
-version = "1.0.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "117919e69837667d53d8c824619877a2863430f3c83c7fde563ded0cad17c8db"
+checksum = "24a78b205de239274b1d4be945511298d72300e5dba46a35cc05570f4a1ce265"
 dependencies = [
  "arora-behavior",
  "arora-geometry",
@@ -295,9 +296,9 @@ dependencies = [
 
 [[package]]
 name = "arora-web"
-version = "13.0.0"
+version = "14.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb8ac4e823d5579f720c87c25e141d93f98f74929dbcb32de4a353565edf7ed6"
+checksum = "af9a84b0dcab8bc7750f344ad9808ae2411b09eb23830392d52503f709d0e068"
 dependencies = [
  "arora",
  "arora-behavior",
@@ -671,9 +672,9 @@ dependencies = [
 
 [[package]]
 name = "gloo-timers"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
+checksum = "482ce8a491a501da4cd806bd190275363d674f2845005c6ddbd5d3e1dd54495d"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -746,6 +747,12 @@ name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
+
+[[package]]
+name = "libyaml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
 
 [[package]]
 name = "linux-raw-sys"
@@ -826,9 +833,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.40.1"
+version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2474bd2e5029e7ccb6abb2ba48cf2383a333851dedf495901544281590c7da7f"
+checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
 dependencies = [
  "memchr",
 ]
@@ -1306,6 +1313,19 @@ name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
+
+[[package]]
+name = "yaml_serde"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "libyaml-rs",
+ "ryu",
+ "serde",
+]
 
 [[package]]
 name = "zmij"

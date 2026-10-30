@@ -11,10 +11,11 @@ description = "The behavior text language of arora-behavior-tree in the browser:
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# The language: its parser, formatter, resolver and natives (`text`, 9.7).
-arora-behavior-tree = "9.7"
+# The language: its parser, formatter, resolver and natives (`text`), over
+# the graph of bindings (graph format behavior-tree 2.0).
+arora-behavior-tree = "10"
 # The shared Graph, the function index, and the interpreter's call conventions.
-arora-behavior = "9.6"
+arora-behavior = "10"
 # Call and CallResult, the JSON a device's `call` takes and answers.
 arora-types = "3.10"
 serde = { version = "1", features = ["derive"] }

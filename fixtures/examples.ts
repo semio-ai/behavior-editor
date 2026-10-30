@@ -12,7 +12,7 @@
  */
 import { MATH } from "../src/runtime/math-module";
 import * as N from "../src/runtime/natives";
-import type { Graph, GraphNode, Link, LinkSource } from "../src/model/graph";
+import type { Graph, GraphNode, Source } from "../src/model/graph";
 import type { Value } from "../src/model/value";
 import type { Span } from "../src/text/ast";
 import type { Loaded, LoadedNode } from "../src/text/language";
@@ -81,12 +81,6 @@ export interface Example {
 
 /** The id of the `i`th node of an example, nested calls after the nodes. */
 const nodeId = (i: number) => `00000000-0000-4000-8000-${(i + 1).toString(16).padStart(12, "0")}`;
-/** The id of a variable, by name. */
-const variableId = (name: string) =>
-  `00000000-0000-4000-9000-${[...name]
-    .reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 2 ** 48, 7)
-    .toString(16)
-    .padStart(12, "0")}`;
 
 const NO_SPAN: Span = { start: 0, end: 0, line: 0, column: 0 };
 
@@ -140,18 +134,15 @@ function build(
   };
   const fnOf = new Map(specs.map(({ spec, path }) => [named(spec.name ?? path), spec.fn]));
 
-  const graph: Graph = { root: nodeId(0), nodes: {}, links: [], variables: {} };
+  const nodes: GraphNode[] = [];
+  const graph: Graph = { root: nodeId(0), nodes };
   const loadedNodes: LoadedNode[] = [];
   let anonymous = specs.length;
-  const variable = (name: string): LinkSource => {
-    graph.variables[variableId(name)] = name;
-    return { variable: variableId(name) };
-  };
   const literal = (arg: number | boolean | "none"): Value =>
     arg === "none" ? { option: null } : typeof arg === "boolean" ? { bool: arg } : { f64: arg };
-  const source = (arg: Arg, holder: string, path: string, param: string): LinkSource => {
-    if (typeof arg !== "object") return { literal: literal(arg) };
-    if ("key" in arg) return variable(arg.key);
+  const source = (arg: Arg, holder: string, path: string, param: string): Source => {
+    if (typeof arg !== "object") return { value: literal(arg) };
+    if ("key" in arg) return { key: arg.key };
     if ("ref" in arg) {
       const node = named(arg.ref);
       const port = arg.param ? fnOf.get(node)!.params[arg.param]! : N.RET;
@@ -172,22 +163,22 @@ function build(
     attached: boolean,
     name: string | null,
   ) {
-    const node: GraphNode = { id, function: fn.id, inputs: [], outputs: [], children };
-    graph.nodes[id] = node;
+    const node: GraphNode = { id, function: fn.id, ...(children ? { children } : {}) };
+    nodes.push(node);
     loadedNodes.push({ id, name, span, attached, function: fn.id, parent, path });
     for (const [param, arg] of Object.entries(args)) {
       const port = fn.params[param];
       if (!port) throw new Error(`${fn.name} has no parameter ${param}`);
-      const link: Link = { target: { node: id, port }, source: source(arg, id, path, param) };
-      graph.links.push(link);
+      (node.bind ??= {})[port] = source(arg, id, path, param);
     }
+    return node;
   }
   specs.forEach(({ spec, path, parent, attached }, i) => {
     const id = nodeId(i);
     const children = spec.children
       ? spec.children.map((_, k) => idOfPath.get(`${path}.${k}`)!)
       : null;
-    addNode(
+    const node = addNode(
       id,
       spec.fn,
       children,
@@ -198,9 +189,7 @@ function build(
       attached,
       spec.name ?? null,
     );
-    if (spec.target) {
-      graph.links.push({ target: { node: id, port: N.RET }, source: variable(spec.target) });
-    }
+    if (spec.target) (node.bind ??= {})[N.RET] = { key: spec.target };
   });
 
   return {

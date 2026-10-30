@@ -3,7 +3,7 @@
 fallback  # greet or rest
   sequence  # greet
     truthy(x: {person/visible})
-    truthy(x: @fresh)  # not greeted yet
+    truthy(x: @fresh._ret)  # not greeted yet
     parallel  # wave until the timer ends
       {rig/arm_raise} = damp(target: 1, half_life: 0.12, state: none, initial: {rig/arm_raise})
       {rig/arm_wave} = mul(a: oscillator(t: {arora/time}, frequency: 1.6), b: 0.6)

@@ -11,7 +11,7 @@ import {
   idOf,
 } from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
-import type { Graph } from "../model/graph";
+import type { GraphNode, Source } from "../model/graph";
 import { type Value, valueBoolean, valueNumber } from "../model/value";
 import type { Loaded } from "../text/language";
 import { MATH, mathModule } from "./math-module";
@@ -337,37 +337,35 @@ describe.each(SOURCES)("MockArora on the spectrum's examples, the graph %s", (_,
 });
 
 describe("MockArora", () => {
-  /** A graph of one root and the given links and variables. */
-  const loaded = (graph: Partial<Graph> & Pick<Graph, "nodes">): Loaded => ({
-    graph: { root: Object.keys(graph.nodes)[0], links: [], variables: {}, ...graph },
+  /** A graph of the given nodes, the first its root. */
+  const loaded = (...nodes: GraphNode[]): Loaded => ({
+    graph: { root: nodes[0]!.id, nodes },
     nodes: [],
     diagnostics: [],
   });
-  const node = (id: string, fn: string, children: string[] | null = null) => ({
+  const node = (
+    id: string,
+    fn: string,
+    bind: Record<string, Source> = {},
+    children?: string[],
+  ): GraphNode => ({
     id,
     function: fn,
-    inputs: [],
-    outputs: [],
-    children,
+    ...(Object.keys(bind).length ? { bind } : {}),
+    ...(children ? { children } : {}),
   });
+  const value = (v: Value): Source => ({ value: v });
+  const key = (k: string): Source => ({ key: k });
+  const from = (n: string, port: string = N.RET): Source => ({ port: { node: n, port } });
 
   it("publishes sinks in id order, the later winning a shared key", async () => {
     const device = new MockArora();
     await device.start(
-      loaded({
-        nodes: {
-          r: node("r", N.SUCCEED),
-          b: node("b", MATH.identity.id),
-          a: node("a", MATH.identity.id),
-        },
-        links: [
-          { target: { node: "a", port: MATH.identity.x }, source: { literal: { f64: 1 } } },
-          { target: { node: "a", port: N.RET }, source: { variable: "k" } },
-          { target: { node: "b", port: MATH.identity.x }, source: { literal: { f64: 2 } } },
-          { target: { node: "b", port: N.RET }, source: { variable: "k" } },
-        ],
-        variables: { k: "out" },
-      }),
+      loaded(
+        node("r", N.SUCCEED),
+        node("b", MATH.identity.id, { [MATH.identity.x]: value({ f64: 2 }), [N.RET]: key("out") }),
+        node("a", MATH.identity.id, { [MATH.identity.x]: value({ f64: 1 }), [N.RET]: key("out") }),
+      ),
     );
     await device.step(DT);
     expect(await device.read("out")).toEqual({ f64: 2 });
@@ -393,22 +391,13 @@ describe("MockArora", () => {
 
   it("brings every sink up to date before any publishes", async () => {
     const device = new MockArora({ store: { x: { f64: 0 }, y: { f64: 0 } } });
-    const add = (id: string, from: string, to: string) => [
-      { target: { node: id, port: MATH.add.a }, source: { variable: from } },
-      { target: { node: id, port: MATH.add.b }, source: { literal: { f64: 1 } } },
-      { target: { node: id, port: N.RET }, source: { variable: to } },
-    ];
-    await device.start(
-      loaded({
-        nodes: {
-          r: node("r", N.SUCCEED),
-          s1: node("s1", MATH.add.id),
-          s2: node("s2", MATH.add.id),
-        },
-        links: [...add("s1", "vy", "vx"), ...add("s2", "vx", "vy")],
-        variables: { vx: "x", vy: "y" },
-      }),
-    );
+    const add = (id: string, input: string, output: string) =>
+      node(id, MATH.add.id, {
+        [MATH.add.a]: key(input),
+        [MATH.add.b]: value({ f64: 1 }),
+        [N.RET]: key(output),
+      });
+    await device.start(loaded(node("r", N.SUCCEED), add("s1", "y", "x"), add("s2", "x", "y")));
     await device.step(DT);
     expect([await device.read("x"), await device.read("y")]).toEqual([{ f64: 1 }, { f64: 1 }]);
     await device.step(DT);
@@ -418,17 +407,14 @@ describe("MockArora", () => {
   it("feeds a detached node through a tree-local variable its return is bound to", async () => {
     const device = new MockArora({ store: { in: { f64: 3 } } });
     await device.start(
-      loaded({
-        nodes: { r: node("r", MATH.identity.id), d: node("d", MATH.mul.id) },
-        links: [
-          { target: { node: "d", port: MATH.mul.a }, source: { variable: "vin" } },
-          { target: { node: "d", port: MATH.mul.b }, source: { literal: { f64: 2 } } },
-          { target: { node: "d", port: N.RET }, source: { variable: "local" } },
-          { target: { node: "r", port: MATH.identity.x }, source: { variable: "local" } },
-          { target: { node: "r", port: N.RET }, source: { variable: "vout" } },
-        ],
-        variables: { vin: "in", local: ".x", vout: "out" },
-      }),
+      loaded(
+        node("r", MATH.identity.id, { [MATH.identity.x]: key(".x"), [N.RET]: key("out") }),
+        node("d", MATH.mul.id, {
+          [MATH.mul.a]: key("in"),
+          [MATH.mul.b]: value({ f64: 2 }),
+          [N.RET]: key(".x"),
+        }),
+      ),
     );
     const report = await device.step(DT);
     expect(report.detached).toEqual({ d: "called" });
@@ -438,21 +424,16 @@ describe("MockArora", () => {
   it("ticks sequence_star past the children that succeeded", async () => {
     const device = new MockArora({ store: { now: { f64: 0 } } });
     await device.start(
-      loaded({
-        nodes: {
-          r: node("r", N.SEQUENCE_STAR, ["a", "w", "b"]),
-          a: node("a", MATH.identity.id),
-          w: node("w", MATH.wait.id),
-          b: node("b", N.SUCCEED),
-        },
-        links: [
-          { target: { node: "a", port: MATH.identity.x }, source: { literal: { f64: 1 } } },
-          { target: { node: "w", port: MATH.wait.seconds }, source: { literal: { f64: 0.03 } } },
-          { target: { node: "w", port: MATH.wait.now }, source: { variable: "t" } },
-          { target: { node: "w", port: MATH.wait.since }, source: { literal: { option: null } } },
-        ],
-        variables: { t: TIME_KEY },
-      }),
+      loaded(
+        node("r", N.SEQUENCE_STAR, {}, ["a", "w", "b"]),
+        node("a", MATH.identity.id, { [MATH.identity.x]: value({ f64: 1 }) }),
+        node("w", MATH.wait.id, {
+          [MATH.wait.seconds]: value({ f64: 0.03 }),
+          [MATH.wait.now]: key(TIME_KEY),
+          [MATH.wait.since]: value({ option: null }),
+        }),
+        node("b", N.SUCCEED),
+      ),
     );
     const first = await device.step(DT);
     expect(first.statuses).toEqual({ r: "R", a: "S", w: "R" });
@@ -464,30 +445,21 @@ describe("MockArora", () => {
 
   it("ticks the string natives over their cells", async () => {
     const device = new MockArora({ store: { said: { str: "hello there" } } });
-    const n = node;
     await device.start(
-      loaded({
-        nodes: {
-          r: n("r", N.SEQUENCE, ["m", "s", "c", "u"]),
-          m: n("m", N.REGEX_MATCH),
-          s: n("s", N.SET_STRING),
-          c: n("c", N.IS_STRING_SET),
-          u: n("u", N.UNSET_STRING),
-        },
-        links: [
-          { target: { node: "m", port: N.REGEX_MATCH_VALUE }, source: { variable: "said" } },
-          {
-            target: { node: "m", port: N.REGEX_MATCH_MATCHER },
-            source: { literal: { str: "h\\w+" } },
-          },
-          { target: { node: "m", port: N.REGEX_MATCH_FIRST_MATCH }, source: { variable: "word" } },
-          { target: { node: "s", port: N.SET_STRING_VARIABLE }, source: { variable: "copy" } },
-          { target: { node: "s", port: N.SET_STRING_VALUE }, source: { variable: "word" } },
-          { target: { node: "c", port: N.IS_STRING_SET_VALUE }, source: { variable: "copy" } },
-          { target: { node: "u", port: N.UNSET_STRING_VARIABLE }, source: { variable: "said" } },
-        ],
-        variables: { said: "said", word: ".word", copy: "copy" },
-      }),
+      loaded(
+        node("r", N.SEQUENCE, {}, ["m", "s", "c", "u"]),
+        node("m", N.REGEX_MATCH, {
+          [N.REGEX_MATCH_VALUE]: key("said"),
+          [N.REGEX_MATCH_MATCHER]: value({ str: "h\\w+" }),
+          [N.REGEX_MATCH_FIRST_MATCH]: key(".word"),
+        }),
+        node("s", N.SET_STRING, {
+          [N.SET_STRING_VARIABLE]: key("copy"),
+          [N.SET_STRING_VALUE]: key(".word"),
+        }),
+        node("c", N.IS_STRING_SET, { [N.IS_STRING_SET_VALUE]: key("copy") }),
+        node("u", N.UNSET_STRING, { [N.UNSET_STRING_VARIABLE]: key("said") }),
+      ),
     );
     const report = await device.step(DT);
     expect(report.root).toBe("S");
@@ -498,15 +470,13 @@ describe("MockArora", () => {
   it("unpacks an array onto the ports it binds", async () => {
     const device = new MockArora({ store: { pose: { f64s: [0.1, 0.2, 0.3] } } });
     await device.start(
-      loaded({
-        nodes: { r: node("r", N.UNPACK) },
-        links: [
-          { target: { node: "r", port: N.UNPACK_VALUES }, source: { variable: "pose" } },
-          { target: { node: "r", port: N.unpackOut(0) }, source: { variable: "x" } },
-          { target: { node: "r", port: N.unpackOut(2) }, source: { variable: "z" } },
-        ],
-        variables: { pose: "pose", x: "head/x", z: "head/z" },
-      }),
+      loaded(
+        node("r", N.UNPACK, {
+          [N.UNPACK_VALUES]: key("pose"),
+          [N.unpackOut(0)]: key("head/x"),
+          [N.unpackOut(2)]: key("head/z"),
+        }),
+      ),
     );
     expect((await device.step(DT)).root).toBe("S");
     expect(await device.read("head/x")).toEqual({ f64: 0.1 });
@@ -518,15 +488,13 @@ describe("MockArora", () => {
       store: { names: { strs: ["face/a", "face/b"] }, values: { f64s: [1, 2] } },
     });
     const graph = (within: string) =>
-      loaded({
-        nodes: { r: node("r", N.SCATTER) },
-        links: [
-          { target: { node: "r", port: N.SCATTER_KEYS }, source: { variable: "names" } },
-          { target: { node: "r", port: N.SCATTER_VALUES }, source: { variable: "values" } },
-          { target: { node: "r", port: N.SCATTER_WITHIN }, source: { literal: { str: within } } },
-        ],
-        variables: { names: "names", values: "values" },
-      });
+      loaded(
+        node("r", N.SCATTER, {
+          [N.SCATTER_KEYS]: key("names"),
+          [N.SCATTER_VALUES]: key("values"),
+          [N.SCATTER_WITHIN]: value({ str: within }),
+        }),
+      );
     await device.start(graph("face"));
     expect((await device.step(DT)).root).toBe("S");
     expect(await device.read("face/b")).toEqual({ f64: 2 });
@@ -536,7 +504,7 @@ describe("MockArora", () => {
 
   it("fails a tick whose module leaf calls a function no module has", async () => {
     const device = new MockArora();
-    await device.start(loaded({ nodes: { r: node("r", "00000000-0000-4000-8000-0000000000ff") } }));
+    await device.start(loaded(node("r", "00000000-0000-4000-8000-0000000000ff")));
     await expect(device.step(DT)).rejects.toThrow(/which no module has/);
   });
 
@@ -544,23 +512,11 @@ describe("MockArora", () => {
     const device = new MockArora();
     await expect(
       device.start(
-        loaded({
-          nodes: {
-            r: node("r", N.SUCCEED),
-            a: node("a", MATH.identity.id),
-            b: node("b", MATH.identity.id),
-          },
-          links: [
-            {
-              target: { node: "a", port: MATH.identity.x },
-              source: { port: { node: "b", port: N.RET } },
-            },
-            {
-              target: { node: "b", port: MATH.identity.x },
-              source: { port: { node: "a", port: N.RET } },
-            },
-          ],
-        }),
+        loaded(
+          node("r", N.SUCCEED),
+          node("a", MATH.identity.id, { [MATH.identity.x]: from("b") }),
+          node("b", MATH.identity.id, { [MATH.identity.x]: from("a") }),
+        ),
       ),
     ).rejects.toThrow(/cycle/);
   });
@@ -578,10 +534,9 @@ describe("MockArora", () => {
     // A changed node starts afresh: its easing jumps to its target.
     const changed = structuredClone(SMILE.loaded);
     const ease = idOf(SMILE.loaded, "mouth");
-    const halfLife = changed.graph.links.find(
-      (l) => l.target.node === ease && l.target.port === MATH.damp.half_life,
-    )!;
-    halfLife.source = { literal: { f64: 0.5 } };
+    changed.graph.nodes!.find((n) => n.id === ease)!.bind![MATH.damp.half_life] = value({
+      f64: 0.5,
+    });
     await device.start(changed);
     await device.step(DT);
     expect(await number("rig/mouth_corner")).toBeCloseTo(-0.2 + 0.8 * 1.2, 10);

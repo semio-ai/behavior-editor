@@ -9,14 +9,14 @@ wasm and shipped with the package, so the editor reads a file exactly as the
 device does:
 
 ```text
-fallback                                   # the first node is the root
+fallback                                       # the first node is the root
   sequence
-    equal(a: {person/visible}, b: true)    # {key}: a store key
-    equal(a: @fresh, b: true)              # @node: a node's return value
+    equal(a: {person/visible}, b: true)        # {key}: a store key
+    equal(a: @fresh._ret, b: true)             # @node._ret: a node's return value
   succeed
 
-fresh: not(x: {social/greeted})            # no node holds it: a detached node
-level: {face/level} = add(a: @cm, b: 1)    # its return value written to a key
+fresh: not(x: {social/greeted})                # no node holds it: a detached node
+level: {face/level} = add(a: @cm._ret, b: 1)   # its return value written to a key
 ```
 
 ## Use
@@ -84,7 +84,12 @@ that follows the system unless the page sets `data-theme` on its root element.
 
 ## Runtimes
 
-`BehaviorRuntime` is what the editor runs a behavior on:
+`BehaviorRuntime` is what the editor runs a behavior on: the graph resolving
+the text gives, `arora_behavior::graph::Graph` in graph format behavior-tree
+2.0 (`arora-behavior-tree` 10). Its nodes are a list, each with its function,
+its children, and its bindings: for each port, the value, store key or other
+node's port feeding it, or the key its output is written to.
+
 
 - `MockArora` runs a resolved graph in process with `arora-behavior-tree`'s
   semantics: native control and data nodes, module leaves, detached nodes

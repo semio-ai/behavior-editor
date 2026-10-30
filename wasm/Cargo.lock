@@ -63,21 +63,22 @@ dependencies = [
 
 [[package]]
 name = "arora-behavior"
-version = "9.6.0"
+version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee756f977b7655a4decf3ecc320039a79d929b2f4ea5de8c3a582f66cb03856c"
+checksum = "8a86aef0de094693d54e21c6d4c317c78ca4e6e62198519e273566a2cd37e1af"
 dependencies = [
  "arora-types",
  "semver",
  "serde",
  "uuid",
+ "yaml_serde",
 ]
 
 [[package]]
 name = "arora-behavior-tree"
-version = "9.7.0"
+version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbe4614afdcfff859f66c374d5b2b9ddaa67746faafb9288653f13c44f639cc3"
+checksum = "970f8608f9fac0e74d43b913599127e0edab05e858b5cc0a46bbd6d2aff8e8ee"
 dependencies = [
  "arora-behavior",
  "arora-behavior-tree-types",
@@ -91,15 +92,15 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "serde_yaml",
  "uuid",
+ "yaml_serde",
 ]
 
 [[package]]
 name = "arora-behavior-tree-types"
-version = "2.2.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30af8e40ed591dfe35f680d6e64fbba4618f6703441d0237ce23cc3965beb48b"
+checksum = "a290528d3845976b935a867bd66405456fe42a18e55f06cf624433f97765b3ff"
 dependencies = [
  "arora-behavior",
  "arora-types",
@@ -410,6 +411,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "libyaml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -488,9 +495,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.40.1"
+version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2474bd2e5029e7ccb6abb2ba48cf2383a333851dedf495901544281590c7da7f"
+checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
 dependencies = [
  "memchr",
 ]
@@ -854,6 +861,19 @@ name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
+
+[[package]]
+name = "yaml_serde"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "libyaml-rs",
+ "ryu",
+ "serde",
+]
 
 [[package]]
 name = "zmij"

@@ -8,9 +8,12 @@ import type { FunctionIndex } from "./functions";
 /** A node other nodes can read: its name and the parameters it writes back. */
 export interface Producer {
   name: string;
-  /** Its mutable parameters, which `@name.parameter` reads. */
+  /** Its mutable parameters, which `@name.parameter` reads beside its return value, `@name._ret`. */
   ports: string[];
 }
+
+/** The port of a node's return value. */
+const RETURN = "_ret";
 
 /** What feeds an argument. */
 type Mode = "unset" | "literal" | "key" | "local" | "node" | "call" | "other";
@@ -20,7 +23,7 @@ const MODE_LABELS: Record<Mode, string> = {
   literal: "value",
   key: "store key {key}",
   local: "local variable {.name}",
-  node: "node @name",
+  node: "node @name.port",
   call: "call",
   other: "as written",
 };
@@ -102,7 +105,11 @@ export function ArgumentEditor({
         return onChange(expression({ type: "variable", name: ".local" }));
       case "node":
         return onChange(
-          expression({ type: "port", node: name(producers[0]?.name ?? ""), parameter: null }),
+          expression({
+            type: "port",
+            node: name(producers[0]?.name ?? ""),
+            parameter: name(RETURN),
+          }),
         );
       case "call": {
         const first = index.entries.find((e) => !e.native);
@@ -374,11 +381,11 @@ function NodeRefEditor({
   onChange(value: Expression): void;
 }) {
   const node = value.node.text;
-  const parameter = value.parameter?.text ?? "";
+  const parameter = value.parameter.text;
   const producer = producers.find((p) => p.name === node);
   const names = producers.map((p) => p.name);
   if (node && !names.includes(node)) names.unshift(node);
-  const ports = producer?.ports ?? (parameter ? [parameter] : []);
+  const ports = producer?.ports ?? (parameter !== RETURN ? [parameter] : []);
   return (
     <span className="be-node-ref">
       <span aria-hidden="true">@</span>
@@ -386,7 +393,9 @@ function NodeRefEditor({
         aria-label={`${label}: node`}
         value={node}
         onChange={(event) =>
-          onChange(expression({ type: "port", node: name(event.target.value), parameter: null }))
+          onChange(
+            expression({ type: "port", node: name(event.target.value), parameter: name(RETURN) }),
+          )
         }
       >
         {names.length === 0 && <option value="">no named node</option>}
@@ -404,12 +413,12 @@ function NodeRefEditor({
             expression({
               type: "port",
               node: value.node,
-              parameter: event.target.value ? name(event.target.value) : null,
+              parameter: name(event.target.value),
             }),
           )
         }
       >
-        <option value="">its return value</option>
+        <option value={RETURN}>._ret: its return value</option>
         {ports.map((p) => (
           <option key={p} value={p}>
             {`.${p}`}

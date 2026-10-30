@@ -1,58 +1,54 @@
 import type { Value } from "./value";
 
 /**
- * The shared behavior graph, `arora_behavior::graph::Graph`, in its serde JSON
- * form: what resolving a behavior's text produces and what an interpreter
- * loads as its behavior. Its nodes are keyed by id and keep no order; the
- * tree lists them root first, then by id.
+ * The shared behavior graph, `arora_behavior::graph::Graph` (graph format
+ * behavior-tree 2.0), in its serde JSON form: what resolving a behavior's text
+ * produces and what an interpreter loads as its behavior. Its references are
+ * ids. The order of its nodes means nothing to an interpreter: it is the
+ * order they serialize in.
  */
 export interface Graph {
+  /** The tree's root; absent for a graph with no tree. */
   root?: string;
-  nodes: Record<string, GraphNode>;
-  links: Link[];
-  /** The named variables, `id -> name`: a store key, or a tree-local `.name`. */
-  variables: Record<string, string>;
+  /** The nodes, each id once. Absent when there is none. */
+  nodes?: GraphNode[];
 }
 
-/** A node bound to a function, native or a module's. */
+/** A node bound to a function, native or a module's, with its bindings. */
 export interface GraphNode {
   id: string;
   function: string;
-  inputs: Io[];
-  outputs: Io[];
-  /** The children, in order, of a node the tree holds others under; `null` for a leaf. */
-  children: string[] | null;
+  /**
+   * Each bound port, by id, and its source: what feeds a port the function
+   * reads, or where a port it writes is written. The return value is the
+   * port `_ret`'s id. Absent when no port is bound.
+   */
+  bind?: Record<string, Source>;
+  /** The children, in order, of a node the tree holds others under; absent for a leaf. */
+  children?: string[];
 }
 
-/** A typed slot of a node. */
-export interface Io {
-  id: string;
-  ty?: TypeRef;
-  predetermined_key?: string;
-}
-
-/** A header type reference, `arora_types::module::high::TypeRef`. */
-export type TypeRef =
-  | { kind: "scalar"; id: string }
-  | { kind: "array"; id: string }
-  | { kind: "map"; key_id: string; value_id: string }
-  | { kind: "option"; id: string };
-
-/** One slot of one node. */
+/** One port of one node: a parameter of its function, or its return value. */
 export interface Port {
   node: string;
   port: string;
 }
 
-/** A wire feeding one node input. At most one link targets a port. */
-export interface Link {
-  target: Port;
-  source: LinkSource;
-}
-
-/** Where a link's value comes from. */
-export type LinkSource =
-  | { literal: Value }
-  | { variable: string }
+/**
+ * What a port is bound to: a value, a store key (a key starting with `.` is
+ * the tree's own), another node's port, or a path into another source's
+ * value.
+ */
+export type Source =
+  | { value: Value }
+  | { key: string }
   | { port: Port }
-  | { select: { source: LinkSource; path: string } };
+  | { select: { source: Source; path: string } };
+
+/** The graph of no behavior. */
+export const EMPTY_GRAPH: Graph = {};
+
+/** The node `id` of `graph`. */
+export function graphNode(graph: Graph, id: string): GraphNode | undefined {
+  return graph.nodes?.find((node) => node.id === id);
+}

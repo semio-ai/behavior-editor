@@ -1,4 +1,4 @@
-import type { Graph, LinkSource } from "../model/graph";
+import type { Graph, Source } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import { holdsExactly } from "../model/value";
 import type { BehaviorDocument } from "./ast";
@@ -54,23 +54,21 @@ export function createBehaviorText(exports: BehaviorTextExports): BehaviorText {
  */
 function refuseInexact(loaded: Loaded): Loaded {
   const spans = new Map(loaded.nodes.map((n) => [n.id, n.span]));
-  const exact = (source: LinkSource): boolean =>
-    "literal" in source
-      ? holdsExactly(source.literal)
+  const exact = (source: Source): boolean =>
+    "value" in source
+      ? holdsExactly(source.value)
       : "select" in source
         ? exact(source.select.source)
         : true;
-  const inexact = loaded.graph.links.flatMap((link) =>
-    !exact(link.source)
-      ? [
-          {
-            severity: "error" as const,
-            message:
-              "This 64-bit integer is past ±9007199254740991, which the editor cannot hold exactly",
-            span: spans.get(link.target.node) ?? { start: 0, end: 0, line: 1, column: 1 },
-          },
-        ]
-      : [],
+  const inexact = (loaded.graph.nodes ?? []).flatMap((node) =>
+    Object.values(node.bind ?? {})
+      .filter((source) => !exact(source))
+      .map(() => ({
+        severity: "error" as const,
+        message:
+          "This 64-bit integer is past ±9007199254740991, which the editor cannot hold exactly",
+        span: spans.get(node.id) ?? { start: 0, end: 0, line: 1, column: 1 },
+      })),
   );
   return inexact.length ? { ...loaded, diagnostics: [...loaded.diagnostics, ...inexact] } : loaded;
 }

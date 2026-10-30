@@ -14,7 +14,7 @@
  *   succeed
  *
  * raw: mul(a: {sensor/distance}, b: 100)
- * level: {face/level} = add(a: @raw, b: 1)
+ * level: {face/level} = add(a: @raw._ret, b: 1)
  * ```
  */
 
@@ -42,7 +42,7 @@ export interface BehaviorDocument {
 export interface SourceNode {
   /** The node's line, from its first token to its last. */
   span: Span;
-  /** The name other nodes read it by, as `@name`. */
+  /** The name other nodes read it by, as `@name.<port>`. */
   name: Name | null;
   /** Where its return value goes: `{key}`, or `@node.parameter`. */
   target: Expression | null;
@@ -122,8 +122,8 @@ export type ExpressionKind =
   | { type: "variable"; name: string }
   /** `{<uuid>}`: the variable of that id, which names none. */
   | { type: "variable_id"; value: string }
-  /** `@node` its return value, `@node.parameter` one of its parameters. */
-  | { type: "port"; node: Name; parameter: Name | null }
+  /** `@node.parameter` one of its parameters, `@node._ret` its return value. */
+  | { type: "port"; node: Name; parameter: Name }
   /** `source[path]`: the path runs to the first `]`. */
   | { type: "select"; source: Expression; path: string }
   /** `function(parameter: value, …)` */

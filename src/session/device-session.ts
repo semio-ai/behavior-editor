@@ -276,10 +276,17 @@ export class DeviceSession {
    */
   follow(behavior: FollowedBehavior | Loaded | null): Promise<void> {
     const next = behavior && "graph" in behavior ? followed(behavior) : behavior;
-    this.#followed = next;
     // Without a connection, the next one follows it.
-    if (!this.#connection) return Promise.resolve();
-    return this.#enqueue((connection) => this.#followOn(connection));
+    if (!this.#connection) {
+      this.#followed = next;
+      return Promise.resolve();
+    }
+    // In its turn: an operation asked before, a run among them, does not
+    // follow what was asked after it.
+    return this.#enqueue((connection) => {
+      this.#followed = next;
+      return this.#followOn(connection);
+    });
   }
 
   /** Follow what the session follows, on `connection`. */

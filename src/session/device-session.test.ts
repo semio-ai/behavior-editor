@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { ORDER } from "../../fixtures/examples";
+import { GREET, ORDER } from "../../fixtures/examples";
+import { watchedNodes } from "../runtime/trace";
 import { FAKE_CALLS, FAKE_CALLS_WITHOUT_READ, FakeDevice } from "../../fixtures/fake-device";
 import type { Graph } from "../model/graph";
 import {
@@ -111,6 +112,16 @@ describe("DeviceSession", () => {
       () => device.step(),
     );
     expect(changes.every((c) => !c.external)).toBe(true);
+  });
+
+  it("follows what was asked last, a run asked before it notwithstanding", async () => {
+    const { device, session } = setup({ graph: {} });
+    await until(() => status(session) === "connected");
+    const running = session.run(ORDER.loaded);
+    await session.follow(GREET.loaded);
+    await running;
+    const traces = device.calls.filter((c) => c.id === "trace");
+    expect(traces.at(-1)).toMatchObject({ values: watchedNodes(GREET.loaded) });
   });
 
   it("tells a change of the device's behavior another client made", async () => {

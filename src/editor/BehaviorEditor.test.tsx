@@ -567,6 +567,29 @@ describe("BehaviorEditor", () => {
     await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
   });
 
+  it("resolves a graph file opened against the functions the runtime said for it", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const runtime = new MockArora({ store: GREET.store });
+    // Its first answer lists nothing; asked again, it lists its functions.
+    let asked = 0;
+    runtime.functions = () => Promise.resolve(asked++ === 0 ? [] : MATH_FUNCTIONS);
+    vi.stubGlobal("showOpenFilePicker", () =>
+      Promise.resolve([
+        {
+          name: "greet.json",
+          getFile: () =>
+            Promise.resolve({ name: "greet.json", text: () => Promise.resolve(json.text) }),
+        },
+      ]),
+    );
+    const { user, texts } = setup(SMILE, { runtime });
+    await fileMenu(user, "Open…");
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Step" })).toBeEnabled());
+  });
+
   it("writes no file whose name says another format than the one saved", async () => {
     const written: string[] = [];
     const offered: unknown[] = [];

@@ -1,0 +1,20 @@
+[package]
+name = "e2e-device"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+repository = "https://github.com/semio-ai/behavior-editor"
+description = "A native Arora device carrying @arora/dataflow, serving the open local bridge twice: one for the behavior editor under test, one for the test's own client."
+
+[dependencies]
+anyhow = "1"
+# The native runtime and its open local bridge. 17.1: its interpreter answers
+# READ and keeps the behavior's revision.
+arora = "17.1"
+# `@arora/dataflow` as a host module, as the in-page device carries it.
+dataflow-device = { path = "../../device" }
+arora-simple-data-store = "3.2"
+arora-types = "3.10"
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros", "time"] }

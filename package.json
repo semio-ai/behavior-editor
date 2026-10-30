@@ -53,9 +53,11 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "lint:rust": "cd wasm && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check && cd ../device && cargo clippy --locked --all-targets -- -D warnings && cargo clippy --locked --all-targets --target wasm32-unknown-unknown -- -D warnings && cargo fmt --check",
+    "lint:rust": "cd wasm && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check && cd ../device && cargo clippy --locked --all-targets -- -D warnings && cargo clippy --locked --all-targets --target wasm32-unknown-unknown -- -D warnings && cargo fmt --check && cd ../e2e/device && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check",
     "test:rust": "cd wasm && cargo test --locked --release && cd ../device && cargo test --locked",
-    "clean": "rm -rf node_modules dist wasm/pkg wasm/target device/pkg device/target"
+    "build:e2e-device": "cargo build --locked --manifest-path e2e/device/Cargo.toml",
+    "test:e2e": "npm run build:e2e-device && playwright test",
+    "clean": "rm -rf node_modules dist wasm/pkg wasm/target device/pkg device/target e2e/device/target test-results playwright-report"
   },
   "peerDependencies": {
     "react": "^19.0.0",
@@ -63,6 +65,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.64.1",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.0.1",

@@ -6,9 +6,20 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default [
-  // The dependencies, the build, and the wasm builds' generated glue and cargo outputs.
+  // The dependencies, the build, the wasm builds' generated glue, cargo's outputs, and the
+  // end-to-end suite's results.
   {
-    ignores: ["node_modules/", "dist/", "wasm/pkg/", "wasm/target/", "device/pkg/", "device/target/"],
+    ignores: [
+      "node_modules/",
+      "dist/",
+      "wasm/pkg/",
+      "wasm/target/",
+      "device/pkg/",
+      "device/target/",
+      "e2e/device/target/",
+      "test-results/",
+      "playwright-report/",
+    ],
   },
 
   js.configs.recommended,

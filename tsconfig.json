@@ -15,5 +15,5 @@
     "target": "ESNext"
   },
   "include": ["."],
-  "exclude": ["dist", "node_modules", "wasm/target", "device/target"]
+  "exclude": ["dist", "node_modules", "wasm/target", "device/target", "e2e/device/target", "test-results", "playwright-report"]
 }

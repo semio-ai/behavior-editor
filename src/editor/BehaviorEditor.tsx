@@ -152,18 +152,28 @@ export function BehaviorEditor({
     recent.remember(opened, opened.text);
     begin({ name: opened.name, format: opened.format, handle: opened.handle }, next);
   };
+  /** Run the open `asked`; its failure is not shown once something else replaced the file. */
+  const moot = async (asked: number, open: () => Promise<void>) => {
+    try {
+      await open();
+    } catch (error) {
+      if (requests.current === asked) throw error;
+    }
+  };
   const files: FileActions = {
     recent: recent.files,
     remember: recent.remember,
     create: () => begin(newFile(fileName), ""),
     open: async () => {
       const asked = ++requests.current;
-      const opened = await openBehaviorFile();
-      if (opened) await openAsText(asked, opened);
+      await moot(asked, async () => {
+        const opened = await openBehaviorFile();
+        if (opened) await openAsText(asked, opened);
+      });
     },
     openRecent: async (entry) => {
       const asked = ++requests.current;
-      await openAsText(asked, await reopenBehaviorFile(entry));
+      await moot(asked, async () => openAsText(asked, await reopenBehaviorFile(entry)));
     },
     close: () => {
       requests.current += 1;

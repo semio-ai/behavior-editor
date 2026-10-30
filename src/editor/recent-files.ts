@@ -253,12 +253,28 @@ export interface RecentFiles {
   forget(id: string): void;
 }
 
+let thisPage: Promise<RecentStore> | null = null;
+
+/**
+ * This page's store, opened once: every editor on the page shares it, and
+ * its memory, the list where storage fails, lasts as long as the page.
+ */
+function pageStore(): Promise<RecentStore> {
+  thisPage ??= openRecentStore();
+  return thisPage;
+}
+
+/** Open this page's store afresh at its next use, as a new page would: for tests. */
+export function reopenPageStore() {
+  thisPage = null;
+}
+
 /**
  * The recent files of this browser, kept in `store` (this browser's by
  * default). Each change waits for the one before, so each starts from the
  * list the one before left.
  */
-export function useRecentFiles(store: () => Promise<RecentStore> = openRecentStore): RecentFiles {
+export function useRecentFiles(store: () => Promise<RecentStore> = pageStore): RecentFiles {
   const held = useMemo(() => store(), [store]);
   const changes = useRef<Promise<unknown>>(Promise.resolve());
   const change = useCallback(

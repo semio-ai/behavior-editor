@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "../../fixtures/dom";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { GREET, ORDER } from "../../fixtures/examples";
@@ -10,6 +10,8 @@ import type { MethodSignature } from "../model/signature";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorText } from "../text/language";
 import { BehaviorEditor, type BehaviorEditorProps } from "./BehaviorEditor";
+import { reopenPageStore } from "./recent-files";
+import { usePlayback } from "./use-playback";
 import type { BehaviorExample } from "./StartScreen";
 
 let language: BehaviorText;
@@ -20,6 +22,8 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  // Each test starts as a new page: no recent file.
+  reopenPageStore();
 });
 
 /** The examples a host offers: ORDER on a runtime of its own, GREET on the editor's. */
@@ -372,6 +376,66 @@ describe("the start screen", () => {
     const calls = (started[0]!.nodes ?? []).map((n) => n.function);
     expect(calls.some((id) => ids.has(id))).toBe(true);
     expect(calls.some((id) => MATH_FUNCTIONS.some((f) => f.id === id))).toBe(false);
+  });
+
+  it("shows no failure of an open that something else replaced", async () => {
+    let fail: (error: Error) => void = () => {};
+    vi.stubGlobal("showOpenFilePicker", () => new Promise((_, reject) => (fail = reject)));
+    const { user } = setup();
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await user.click(screen.getByRole("button", { name: "New behavior" }));
+    fail(new Error("the picker failed"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close" }));
+    expect(screen.queryByText("the picker failed")).toBeNull();
+  });
+
+  it("keeps the recent files for the page, across editors", async () => {
+    vi.stubGlobal("showOpenFilePicker", () =>
+      Promise.resolve([handle("greet.bt", GREET.text).handle]),
+    );
+    const user = userEvent.setup();
+    const first = render(<BehaviorEditor language={language} autoPlay={false} />);
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await waitFor(() => expect(text()).toHaveValue(GREET.text));
+    first.unmount();
+    render(<BehaviorEditor language={language} autoPlay={false} />);
+    expect(await screen.findByRole("button", { name: /^greet\.bt/ })).toBeTruthy();
+  });
+
+  it("shows nothing a step on a runtime switched away from reads after the switch", async () => {
+    const first = new MockArora({ store: ORDER.store });
+    const second = new MockArora({ store: ORDER.store });
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { read } = first;
+    let holding = false;
+    first.read = async (key) => {
+      if (holding) await held;
+      return read.call(first, key);
+    };
+    const diff = (a: Graph, b: Graph) =>
+      JSON.stringify(a) === JSON.stringify(b) ? {} : { remove: [] };
+    const { result, rerender } = renderHook(
+      ({ runtime }) => usePlayback(runtime, ORDER.loaded, false, diff),
+      { initialProps: { runtime: first } },
+    );
+    await waitFor(() => expect(result.current.store.size).toBeGreaterThan(0));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    act(() => result.current.write("written", { f64: 9 }));
+    await waitFor(() => expect(result.current.pending.has("written")).toBe(true));
+    holding = true;
+    act(() => result.current.step());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    rerender({ runtime: second });
+    await waitFor(() => expect(result.current.pending.size).toBe(0));
+    act(() => result.current.write("mine", { f64: 1 }));
+    await waitFor(() => expect(result.current.pending.has("mine")).toBe(true));
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(result.current.pending.has("mine")).toBe(true);
+    expect(result.current.store.has("written")).toBe(false);
   });
 
   it("says why a recent file did not open", async () => {

@@ -271,9 +271,12 @@ export function usePlayback(
         if (value === null) next.delete(key);
         else next.set(key, value);
       }
+      // Each wait may have seen the host switch runtimes.
+      if (!live()) return;
       setPending(new Set());
       setStore(next);
       await readKeys();
+      if (!live()) return;
       setHistory((h) => {
         const out = new Map<string, readonly (number | null)[]>();
         for (const key of new Set([...h.keys(), ...next.keys()])) {

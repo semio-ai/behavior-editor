@@ -13,6 +13,7 @@ import { MATH_MODULE_ID } from "../runtime/math-module";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
 import { BehaviorEditor, type BehaviorEditorProps, REPARSE_DELAY_MS } from "./BehaviorEditor";
+import { reopenPageStore } from "./recent-files";
 
 let language: BehaviorText;
 beforeAll(async () => {
@@ -22,6 +23,7 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  reopenPageStore();
 });
 
 /**

@@ -28,6 +28,7 @@ import { functionIndex, missingFunctions } from "./functions";
 import { type Edit, Inspector } from "./Inspector";
 import { DeviceBanner } from "./DeviceBanner";
 import { DeviceBar } from "./DeviceBar";
+import { DiscardConfirm } from "./DiscardConfirm";
 import { PlaybackBar } from "./PlaybackBar";
 import { type RecentFile, useRecentFiles } from "./recent-files";
 import { type BehaviorExample, type ExampleFit, StartScreen } from "./StartScreen";
@@ -35,7 +36,7 @@ import { behaviorKeys } from "./store-keys";
 import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
 import { useMediaQuery } from "./use-media-query";
-import { useDeviceMode } from "./use-device-mode";
+import { type DeviceMode, useDeviceMode } from "./use-device-mode";
 import { askFunctions, usePlayback, useRuntimeFunctions, whenIdle } from "./use-playback";
 
 export interface BehaviorEditorProps {
@@ -664,24 +665,6 @@ function Workspace({
       setSaved(text);
       setFileNotice(notice);
     });
-  /**
-   * Open the device's behavior in place of the file: as the file run on the
-   * device whose graph it is, with its names, when the editor ran one;
-   * otherwise its graph as text, each node named by its id.
-   */
-  const openDevice = (graph: Graph) => {
-    const held = files.ran.find((f) => isEmptyDiff(language.diff(f.graph, graph)));
-    if (held) {
-      files.openText(held.name, held.text);
-      return;
-    }
-    const out = language.openFile(JSON.stringify(graph), "json", functions);
-    if ("problems" in out) {
-      setEditError(`The device's behavior does not open: ${problemsText(out.problems)}`);
-      return;
-    }
-    files.openText(DEVICE_FILE, out.text);
-  };
   /** Open what the device runs now, read again, in place of the file. */
   const openDeviceBehavior = () => {
     files.openDevice().catch((e: unknown) => {
@@ -824,18 +807,11 @@ function Workspace({
         <div className="be-header-run">
           <RunsOn session={session} />
           {session && (
-            <button
-              type="button"
-              onClick={openDeviceBehavior}
-              disabled={device.behavior === null}
-              title={
-                device.behavior === null
-                  ? "This device doesn't report its behavior."
-                  : "Open the behavior the device runs, in place of this file."
-              }
-            >
-              Device&apos;s behavior
-            </button>
+            <DeviceBehaviorButton
+              device={device}
+              dirty={text !== saved}
+              onOpen={openDeviceBehavior}
+            />
           )}
           {session ? (
             <DeviceBar device={device} />
@@ -861,8 +837,7 @@ function Workspace({
           blocked={blocked}
           index={index}
           dirty={text !== saved}
-          onView={openDevice}
-          onReload={openDeviceBehavior}
+          onOpenDevice={openDeviceBehavior}
           onSelect={(id) => {
             const row = rows.find((r) => r.graphId === id);
             if (row) setSelected(row.key);
@@ -976,6 +951,52 @@ function ViewTabs({
  * Where the behavior runs: on the device attached, the editor only following
  * it, or simulated in the page, on the editor's runtime or the example's.
  */
+/**
+ * Open the behavior the device runs in place of the file, asking first while
+ * the file has unsaved changes; disabled, saying why, while the device does
+ * not say what it runs or the connection is lost.
+ */
+function DeviceBehaviorButton({
+  device,
+  dirty,
+  onOpen,
+}: {
+  device: DeviceMode;
+  dirty: boolean;
+  onOpen(): void;
+}) {
+  const [asking, setAsking] = useState(false);
+  const unavailable =
+    device.state?.status !== "connected"
+      ? "The device is not connected."
+      : device.relation === "reading"
+        ? "Reading the device's behavior…"
+        : device.behavior === null
+          ? "This device doesn't report its behavior."
+          : null;
+  return (
+    <>
+      <button
+        type="button"
+        disabled={unavailable !== null}
+        title={unavailable ?? "Open the behavior the device runs, in place of this file."}
+        onClick={() => (dirty ? setAsking(true) : onOpen())}
+      >
+        Device&apos;s behavior
+      </button>
+      {asking && (
+        <DiscardConfirm
+          onDiscard={() => {
+            setAsking(false);
+            onOpen();
+          }}
+          onKeep={() => setAsking(false)}
+        />
+      )}
+    </>
+  );
+}
+
 function RunsOn({ session }: { session: DeviceSession | null }) {
   const state = useSessionState(session);
   const lost = state?.status === "lost";

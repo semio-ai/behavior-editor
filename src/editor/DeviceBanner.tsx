@@ -1,6 +1,7 @@
 import { type ReactNode, useId, useState } from "react";
 import type { Graph, GraphDiff } from "../model/graph";
 import type { Loaded } from "../text/language";
+import { DiscardConfirm } from "./DiscardConfirm";
 import type { FunctionIndex } from "./functions";
 import type { DeviceMode } from "./use-device-mode";
 
@@ -45,10 +46,8 @@ export interface DeviceBannerProps {
   index: FunctionIndex;
   /** Whether the file has changes not saved: opening another asks first. */
   dirty: boolean;
-  /** Open the device's behavior in place of the file. */
-  onView(graph: Graph): void;
-  /** Read the device's behavior again, and open it in place of the file. */
-  onReload(): void;
+  /** Read the device's behavior again, and open it in place of the file: to view it, or reload it. */
+  onOpenDevice(): void;
   /** Select the file's node of graph id `id`. */
   onSelect(id: string): void;
 }
@@ -65,8 +64,7 @@ export function DeviceBanner({
   blocked,
   index,
   dirty,
-  onView,
-  onReload,
+  onOpenDevice,
   onSelect,
 }: DeviceBannerProps) {
   const [comparing, setComparing] = useState(false);
@@ -93,22 +91,13 @@ export function DeviceBanner({
     </button>
   );
   const confirm = asking && (
-    <span className="be-confirm" role="alert">
-      Discard unsaved changes?
-      <button
-        type="button"
-        className="be-danger"
-        onClick={() => {
-          setAsking(null);
-          asking();
-        }}
-      >
-        Discard
-      </button>
-      <button type="button" onClick={() => setAsking(null)}>
-        Keep editing
-      </button>
-    </span>
+    <DiscardConfirm
+      onDiscard={() => {
+        setAsking(null);
+        asking();
+      }}
+      onKeep={() => setAsking(null)}
+    />
   );
 
   switch (device.relation) {
@@ -154,7 +143,7 @@ export function DeviceBanner({
           </p>
           {reason}
           <div className="be-banner-actions">
-            <button type="button" disabled={lost} onClick={guarded(onReload)}>
+            <button type="button" disabled={lost} onClick={guarded(onOpenDevice)}>
               Reload from the device
             </button>
             <button
@@ -186,7 +175,7 @@ export function DeviceBanner({
           <p role="status">The device runs another behavior than this file.</p>
           {reason}
           <div className="be-banner-actions">
-            <button type="button" onClick={guarded(() => onView(graph))}>
+            <button type="button" onClick={guarded(onOpenDevice)}>
               View the device&apos;s behavior
             </button>
             {run}

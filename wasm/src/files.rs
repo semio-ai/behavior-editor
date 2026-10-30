@@ -124,7 +124,7 @@ pub fn write_graph(
     names: &HashMap<Uuid, String>,
     format: GraphFormat,
     functions: &FunctionIndex,
-) -> Result<String, String> {
+) -> Outcome {
     let readable = readable::Graph::from_graph(
         graph,
         &Names {
@@ -138,10 +138,11 @@ pub fn write_graph(
             .map(|json| json + "\n")
             .map_err(|e| e.to_string()),
         GraphFormat::Yaml => serde_yaml::to_string(&readable).map_err(|e| e.to_string()),
-    }?;
+    }
+    .map_err(|e| vec![Problem::new(e)])?;
     // A file is written only when it opens again: one nested deeper than its
     // format reads is refused.
-    read_graph(&file, format).map_err(|problem| problem.message)?;
+    read_graph(&file, format).map_err(|problem| vec![problem])?;
     Ok(file)
 }
 
@@ -750,7 +751,7 @@ mod tests {
         assert!(open_graph(&json, GraphFormat::Json, &index).is_ok());
         // serde_yaml reads 128 levels at most: the YAML is refused, not written.
         let yaml = write_graph(&loaded.graph, &names(&loaded), GraphFormat::Yaml, &index);
-        assert!(yaml.unwrap_err().contains("recursion limit"));
+        assert!(yaml.unwrap_err()[0].message.contains("recursion limit"));
         // Past the bound, a file is refused before it is decoded.
         let deep = format!(
             "{}{}",

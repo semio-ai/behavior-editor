@@ -91,6 +91,14 @@ describe("a behavior file in another form than the text", () => {
     ]);
   });
 
+  it("answers a YAML file too deep to open again as a problem, not an exception", () => {
+    const depth = 126;
+    const text = `running\n\nx: equal(a: ${"some(".repeat(depth)}1f64${")".repeat(depth)}, b: 1f64)\n`;
+    const outcome = language.writeFile(resolved(text), "yaml", MATH_FUNCTIONS);
+    expect("problems" in outcome && outcome.problems[0]!.message).toMatch(/recursion limit/);
+    expect("text" in language.writeFile(resolved(text), "json", MATH_FUNCTIONS)).toBe(true);
+  });
+
   it("says why a file does not load, and where", () => {
     const json = language.openFile('{"root": "a",\n "nodes": [{"id": "a", "function": 1}]}', "json", []);
     expect(json).toEqual({

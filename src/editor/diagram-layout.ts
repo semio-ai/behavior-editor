@@ -95,6 +95,79 @@ interface TreeBox extends Box {
   stacked: boolean;
 }
 
+/** A segment of a route, along one axis: `[x1, y1, x2, y2]`. */
+type Segment = readonly [number, number, number, number];
+
+/** Whether `segment` runs through `box`, `margin` around it, rather than along or past it. */
+function crosses(segment: Segment, box: Box, margin: number): boolean {
+  const [ax, ay, bx, by] = segment;
+  const [left, right] = [Math.min(ax, bx), Math.max(ax, bx)];
+  const [top, bottom] = [Math.min(ay, by), Math.max(ay, by)];
+  return (
+    left < box.x + box.w + margin &&
+    right > box.x - margin &&
+    top < box.y + box.h + margin &&
+    bottom > box.y - margin
+  );
+}
+
+/**
+ * The path of a wire from `from`'s output at `start` back to `to`'s port at
+ * `end`, which is not on its right: out to the right, along a corridor down
+ * or up, along a lane, and into the port from its left. Lanes come in order:
+ * in the gap just above the reader when it is under the producer, the middle
+ * of that gap, over both nodes; corridors from nearest to farthest right.
+ * The route taken is the first whose every segment clears every node, the
+ * two it joins included; with none, the nearest over both.
+ */
+function routeBack(
+  from: Box,
+  to: Box,
+  [x1, y1]: readonly [number, number],
+  [x2, y2]: readonly [number, number],
+  boxes: readonly Box[],
+): string {
+  const x0 = x2 - 10;
+  const gap = to.y - (from.y + from.h);
+  const over = Math.min(from.y, to.y) - 8;
+  const lanes =
+    gap > 0 ? [to.y - Math.min(SG / 2, gap / 2), from.y + from.h + gap / 2, over] : [over];
+  const nearest = Math.max(x1, to.x + to.w) + 9;
+  const corridors = [
+    nearest,
+    ...boxes
+      .map((b) => b.x + b.w + 9)
+      .filter((x) => x > nearest)
+      .sort((a, b) => a - b),
+  ];
+  const clear = (xr: number, lane: number) => {
+    const segments: Segment[] = [
+      [x1, y1, xr, y1],
+      [xr, y1, xr, lane],
+      [xr, lane, x0, lane],
+      [x0, lane, x0, y2],
+    ];
+    return boxes.every((b) =>
+      segments.every((segment, i) => {
+        // A wire leaves its producer's edge and enters its reader's.
+        if ((b === from && i === 0) || (b === to && i === 3)) return true;
+        return !crosses(segment, b, b === from || b === to ? 0 : 2);
+      }),
+    );
+  };
+  let route: readonly [number, number] = [nearest, over];
+  search: for (const lane of lanes) {
+    for (const xr of corridors) {
+      if (clear(xr, lane)) {
+        route = [xr, lane];
+        break search;
+      }
+    }
+  }
+  const [xr, lane] = route;
+  return `M${x1},${y1} H${xr} V${lane} H${x0} V${y2} H${x2}`;
+}
+
 /** The row standing for `key` with `folds`: its outermost folded ancestor, or itself. */
 export function visibleKey(
   rows: ReadonlyMap<string, DiagramRow>,
@@ -317,32 +390,12 @@ export function layoutDiagram(
         // right of both nodes, then across the gap below its producer when
         // the reader is under it, or over the top of both, and into the port
         // from its left, so it crosses neither.
-        const x0 = x2 - 10;
-        const under = to.y > from.y + from.h;
-        // Its lane: just above the reader when it is under the producer, the
-        // first gap any node between them leaves open, or over both.
-        const lanes = under
-          ? [to.y - SG / 2, (from.y + from.h + to.y) / 2, Math.min(from.y, to.y) - 8]
-          : [Math.min(from.y, to.y) - 8];
-        const others = [...boxes.values()].filter((b) => b !== from && b !== to);
-        const crosses = (b: Box, y: number) =>
-          b.y - 3 < y && y < b.y + b.h + 3 && b.x < Math.max(x1, to.x + to.w) + 9 && b.x + b.w > x0;
-        const across = lanes.find((y) => !others.some((b) => crosses(b, y))) ?? lanes[0]!;
-        // Its way down or up, right of every node it passes.
-        const [top, bottom] = [Math.min(y1, across), Math.max(y1, across)];
-        const xr =
-          Math.max(
-            x1,
-            to.x + to.w,
-            ...others
-              .filter((b) => b.y < bottom && b.y + b.h > top && b.x + b.w > Math.min(from.x, to.x))
-              .map((b) => b.x + b.w),
-          ) + 9;
+        const back = x2 > x1 ? "" : routeBack(from, to, [x1, y1], [x2, y2], [...boxes.values()]);
         const bend = Math.min(Math.max(36, (x2 - x1) / 2), x2 - x1);
         const d =
           x2 > x1
             ? `M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`
-            : `M${x1},${y1} H${xr} V${across} H${x0} V${y2} H${x2}`;
+            : back;
         wires.push({ id, from: from.row.key, to: to.row.key, port: direct ? i : null, d });
       }
     });

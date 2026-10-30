@@ -188,6 +188,43 @@ describe("the diagram's outputs", () => {
     }
   });
 
+  it.each([
+    [
+      "a reader in a nested sequence",
+      "sequence\n  sequence\n    identity(x: @a._ret)\n  a: identity(x: 1)\n",
+    ],
+    [
+      "a reader under its producer beside a sibling",
+      "sequence\n  p: sequence\n    identity(x: @p._ret)\n  damp(target: 1, half_life: 0.1, state: none)\n",
+    ],
+    [
+      "a reader on the producer's left",
+      "sequence\n  identity(x: @m.state)\n  m: damp(target: 1, half_life: 0.1, state: none)\n",
+    ],
+  ])("routes a wire back clear of every node: %s", (_, text) => {
+    const layout = layoutOf(text);
+    const back = layout.wires.filter((w) => !w.d.includes("C"));
+    expect(back.length).toBeGreaterThan(0);
+    for (const wire of back) {
+      const points = [...wire.d.matchAll(/([MHV])(-?[\d.]+)(?:,(-?[\d.]+))?/g)];
+      let [x, y] = [Number(points[0]![2]), Number(points[0]![3])];
+      const segments: [number, number, number, number][] = [];
+      for (const [, op, v] of points.slice(1)) {
+        const [nx, ny] = op === "H" ? [Number(v), y] : [x, Number(v)];
+        segments.push([x, y, nx, ny]);
+        [x, y] = [nx, ny];
+      }
+      for (const box of layout.boxes.values()) {
+        const inside = ([ax, ay, bx, by]: [number, number, number, number]) =>
+          Math.min(ax, bx) < box.x + box.w &&
+          Math.max(ax, bx) > box.x &&
+          Math.min(ay, by) < box.y + box.h &&
+          Math.max(ay, by) > box.y;
+        expect(segments.filter(inside), `${wire.id} through ${box.row.key}`).toEqual([]);
+      }
+    }
+  });
+
   it("curves a wire to the sibling on its right within the gap between them", () => {
     const layout = layoutOf("sequence\n  a: identity(x: 1)\n  identity(x: @a._ret)\n");
     const [producer, reader] = [layout.boxes.get("0.0")!, layout.boxes.get("0.1")!];

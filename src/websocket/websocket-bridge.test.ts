@@ -397,6 +397,18 @@ describe("a device over WebSocketBridge", () => {
     expect(JSON.parse(await device.takeValues("p/new/feedback"))).toEqual([{ u64: 2 }]);
   });
 
+  it("tells how many of the device's steps old the last value given for a kept key is", async () => {
+    const { bridge, device } = await connect();
+    await device.keepValues("p/");
+    for (let i = 0; i < TAKEN_KEYS + 1; i += 1) bridge.step({ [`p/${i}`]: { u64: i } });
+    bridge.step();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    for (let i = 0; i < TAKEN_KEYS + 1; i += 1) await device.takeValues(`p/${i}`);
+    expect(device.steps - device.stepsAt(`p/${TAKEN_KEYS}`)!).toBe(1);
+    // Past TAKEN_KEYS keys, the key kept longest is let go of.
+    expect(device.stepsAt("p/0")).toBeUndefined();
+  });
+
   it(`keeps the values of ${TAKEN_KEYS} keys at most, kept by prefix or by asking`, async () => {
     const { bridge, device } = await connect();
     for (let i = 0; i < TAKEN_KEYS + 1; i += 1) await device.takeValues(`k/${i}`);

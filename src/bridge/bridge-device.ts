@@ -43,8 +43,10 @@ export class BridgeDevice implements AroraDevice {
   #closedWith: string | null = null;
   /** The pushes carrying the device's clock so far: its steps since it was taken up. */
   #steps = 0;
-  /** The steps counted when each kept key was last pushed. */
+  /** The steps counted when each kept key was last pushed, for the last `TAKEN_KEYS` keys. */
   readonly #pushedAt = new Map<string, number>();
+  /** The steps counted at the push of the last value `takeValues` gave each kept key. */
+  readonly #givenAt = new Map<string, number>();
 
   /** The device behind `client`, once its keys and their values have arrived. */
   static async over(client: BridgeClient): Promise<BridgeDevice> {
@@ -100,6 +102,8 @@ export class BridgeDevice implements AroraDevice {
     const taken = this.#taken.get(key);
     if (this.#isKept(key)) {
       this.#taken.delete(key);
+      const at = this.#pushedAt.get(key);
+      if (taken?.length && at !== undefined) bounded(this.#givenAt, key, at);
       return Promise.resolve(JSON.stringify(taken ?? []));
     }
     this.#taken.delete(key);
@@ -115,12 +119,12 @@ export class BridgeDevice implements AroraDevice {
   }
 
   /**
-   * The device's steps counted when a kept key was last pushed, its own push
-   * among them: its value is that many steps old as of `steps`. `undefined`
-   * for a key not pushed since it was kept.
+   * The device's steps counted at the push of the last value `takeValues`
+   * gave for a kept key, that push among them: the value is that many steps
+   * old as of `steps`. `undefined` for a key none was given for.
    */
   stepsAt(key: string): number | undefined {
-    return this.#pushedAt.get(key);
+    return this.#givenAt.get(key);
   }
 
   async listKeys(prefix?: string): Promise<string> {
@@ -193,7 +197,7 @@ export class BridgeDevice implements AroraDevice {
       if (!kept) this.#values.set(key, value);
       let taken = this.#taken.get(key);
       if (!taken && kept) taken = this.#keep(key);
-      if (kept) this.#pushedAt.set(key, this.#steps);
+      if (kept) bounded(this.#pushedAt, key, this.#steps);
       if (taken) {
         taken.push(value);
         if (taken.length > TAKEN_LIMIT) taken.shift();
@@ -201,4 +205,14 @@ export class BridgeDevice implements AroraDevice {
     }
     if (TIME_KEY in values) for (const stepped of [...this.#stepped]) stepped();
   }
+}
+
+/**
+ * Set `key` in `map`, last in its order, letting go of the key set longest
+ * ago past `TAKEN_KEYS`: a trace no longer followed leaves its keys behind.
+ */
+function bounded(map: Map<string, number>, key: string, value: number) {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > TAKEN_KEYS) map.delete(map.keys().next().value!);
 }

@@ -81,6 +81,8 @@ describe("the start screen", () => {
     const start = screen.getByRole("region", { name: "Open a behavior" });
     expect(within(start).getByRole("button", { name: "New behavior" })).toBeTruthy();
     expect(within(start).getByRole("button", { name: "Open…" })).toBeTruthy();
+    // With no device, there is no device's behavior to open.
+    expect(within(start).queryByRole("button", { name: "Open the device's behavior" })).toBeNull();
     const shown = within(screen.getByRole("region", { name: "Examples" })).getAllByRole("button");
     expect(shown.map((b) => b.textContent)).toEqual([`Order${ORDER.file}`, `Greet${GREET.file}`]);
     expect(within(screen.getByRole("region", { name: "Recent" })).getByText(/are listed here/));

@@ -162,6 +162,34 @@ test("tells another client's change, and reloads the device's behavior", async (
   await expect(page.getByRole("textbox", { name: "Behavior text" })).toHaveValue(/5f32/);
 });
 
+test("opens the device's behavior from the start screen, and from the header with its names", async ({
+  page,
+}) => {
+  await client.session.run(await client.resolve(dataflow.replace("operand_1: 1f32", "operand_1: 5f32")));
+  await connect(page);
+  await page.getByRole("button", { name: "Open the device's behavior" }).click();
+  await expect(page.getByText("device.bt", { exact: true })).toBeVisible();
+  await expect(banner(page)).toHaveCount(0);
+  await expect(page.getByRole("switch", { name: "Live edits" })).toBeChecked();
+  await expect(page.getByRole("treeitem", { name: /^parallel, running/ })).toBeVisible();
+  await page.getByRole("tab", { name: "Text" }).click();
+  await expect(page.getByRole("textbox", { name: "Behavior text" })).toHaveValue(/5f32/);
+
+  // The file the editor ran on the device opens as it ran, with its names.
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Close" }).click();
+  await openExample(page, /^Dataflow/);
+  await banner(page).getByRole("button", { name: "Run this file on the device" }).click();
+  await expect(page.getByRole("switch", { name: "Live edits" })).toBeChecked();
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New" }).click();
+  await expect(banner(page)).toContainText("The device runs another behavior than this file.");
+  await page.getByRole("button", { name: "Device's behavior", exact: true }).click();
+  await expect(page.getByText("dataflow.bt", { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Behavior text" })).toHaveValue(dataflow);
+  await expect(page.getByRole("switch", { name: "Live edits" })).toBeChecked();
+});
+
 test("disconnecting leaves the device running, and the editor back on its simulated runtime", async ({
   page,
 }) => {

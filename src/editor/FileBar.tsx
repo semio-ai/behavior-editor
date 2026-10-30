@@ -1,4 +1,5 @@
 import { Fragment, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { DiscardConfirm } from "./DiscardConfirm";
 import { FILE_FORMATS, type FileFormat } from "./file-formats";
 import type { RecentFile } from "./recent-files";
 
@@ -45,7 +46,7 @@ export function FileBar({
 }: FileBarProps) {
   const [asking, setAsking] = useState<Asking>(null);
   const prompt = useRef<HTMLSpanElement>(null);
-  // The question takes the focus, which the menu it came from gave up.
+  // The formats take the focus, which the menu they came from gave up.
   useEffect(() => {
     prompt.current?.querySelector("button")?.focus();
   }, [asking]);
@@ -84,22 +85,13 @@ export function FileBar({
         )}
       </span>
       {asking?.kind === "discard" && (
-        <span className="be-confirm" role="alert" ref={prompt}>
-          Discard unsaved changes?
-          <button
-            type="button"
-            className="be-danger"
-            onClick={() => {
-              setAsking(null);
-              asking.run();
-            }}
-          >
-            Discard
-          </button>
-          <button type="button" onClick={() => setAsking(null)}>
-            Keep editing
-          </button>
-        </span>
+        <DiscardConfirm
+          onDiscard={() => {
+            setAsking(null);
+            asking.run();
+          }}
+          onKeep={() => setAsking(null)}
+        />
       )}
       {asking?.kind === "format" && (
         <span className="be-confirm" role="group" aria-label="Save as" ref={prompt}>

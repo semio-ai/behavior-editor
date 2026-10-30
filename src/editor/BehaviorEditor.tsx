@@ -28,6 +28,7 @@ import { functionIndex, missingFunctions } from "./functions";
 import { type Edit, Inspector } from "./Inspector";
 import { DeviceBanner } from "./DeviceBanner";
 import { DeviceBar } from "./DeviceBar";
+import { DiscardConfirm } from "./DiscardConfirm";
 import { PlaybackBar } from "./PlaybackBar";
 import { type RecentFile, useRecentFiles } from "./recent-files";
 import { type BehaviorExample, type ExampleFit, StartScreen } from "./StartScreen";
@@ -35,7 +36,7 @@ import { behaviorKeys } from "./store-keys";
 import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
 import { useMediaQuery } from "./use-media-query";
-import { useDeviceMode } from "./use-device-mode";
+import { type DeviceMode, useDeviceMode } from "./use-device-mode";
 import { askFunctions, usePlayback, useRuntimeFunctions, whenIdle } from "./use-playback";
 
 export interface BehaviorEditorProps {
@@ -235,6 +236,42 @@ export function BehaviorEditor({
       setClosed(true);
     },
     openText: (name, text) => begin(newFile(name), text),
+    openDevice: async (unchanged = () => true) => {
+      const from = attached;
+      if (!from) return;
+      const asked = ++requests.current;
+      // Moot once another file replaced this one, or the device was let go
+      // of or replaced: its answer opens nothing, and its failure is not shown.
+      const current = () => requests.current === asked && shownHost.current === from;
+      /** Open the answer, unless the file changed while it was read: those changes are not discarded unasked. */
+      const replace = (file: BehaviorFile, text: string) => {
+        if (!unchanged()) {
+          throw new Error(
+            "The device's behavior was not opened: the file changed while it was read",
+          );
+        }
+        begin(file, text);
+      };
+      try {
+        const read = await from.deviceBehavior();
+        if (!current()) return;
+        if (!read) throw new Error("The device does not say what it runs");
+        const held = ran.current.find((f) => isEmptyDiff(language.diff(f.graph, read.graph)));
+        if (held) {
+          replace(newFile(held.name), held.text);
+          return;
+        }
+        const functions = await askFunctions(from);
+        if (!current()) return;
+        const out = language.openFile(JSON.stringify(read.graph), "json", functions);
+        if ("problems" in out) {
+          throw new Error(`The device's behavior does not open: ${problemsText(out.problems)}`);
+        }
+        replace(newFile(DEVICE_FILE), out.text);
+      } catch (error) {
+        if (current()) throw error;
+      }
+    },
     ask: () => {
       const asked = ++requests.current;
       return () => requests.current === asked;
@@ -276,6 +313,9 @@ export function BehaviorEditor({
           onOpenRecent={(entry) => attempt(() => files.openRecent(entry))()}
           onForget={(entry) => recent.forget(entry.id)}
           onExample={(chosen) => begin(newFile(chosen.fileName), chosen.text, chosen)}
+          onOpenDevice={
+            sessionState?.status === "connected" ? attempt(files.openDevice) : undefined
+          }
           fits={fits}
           error={startError}
           focus={closed}
@@ -374,6 +414,14 @@ interface FileActions {
   close(): void;
   /** Open `text` as a new file named `name`. */
   openText(name: string, text: string): void;
+  /**
+   * Open the behavior the attached device runs: as the file run there whose
+   * graph it is, with its names, or as its graph, each node named by its id.
+   * Its answer opens nothing once another file or device replaced the one
+   * open, and is refused once `unchanged` says the file open changed since
+   * it was asked for.
+   */
+  openDevice(unchanged?: () => boolean): Promise<void>;
   /**
    * Ask to replace the file, with something read later: whether the ask is
    * still the last, nothing else having replaced the file since.
@@ -496,11 +544,6 @@ function Workspace({
     [language],
   );
   const device = useDeviceMode(session, runnable ? resolved : null, diff);
-  /** The session attached now, which a read finishing late checks it still is. */
-  const attachedRef = useRef(session);
-  useEffect(() => {
-    attachedRef.current = session;
-  }, [session]);
   const local = usePlayback(active, runnable && !session ? resolved : null, autoPlay, diff);
   // On a device, the device's steps are what shows.
   const playback = session ? device : local;
@@ -634,23 +677,17 @@ function Workspace({
       setSaved(text);
       setFileNotice(notice);
     });
-  /**
-   * Open the device's behavior in place of the file: as the file run on the
-   * device whose graph it is, with its names, when the editor ran one;
-   * otherwise its graph as text, each node named by its id.
-   */
-  const openDevice = (graph: Graph) => {
-    const held = files.ran.find((f) => isEmptyDiff(language.diff(f.graph, graph)));
-    if (held) {
-      files.openText(held.name, held.text);
-      return;
-    }
-    const out = language.openFile(JSON.stringify(graph), "json", functions);
-    if ("problems" in out) {
-      setEditError(`The device's behavior does not open: ${problemsText(out.problems)}`);
-      return;
-    }
-    files.openText(DEVICE_FILE, out.text);
+  /** The text now, which a read of the device's behavior checks is still the one it replaces. */
+  const textNow = useRef(text);
+  textNow.current = text;
+  /** Open what the device runs now, read again, in place of the file as it is when asked. */
+  const openDeviceBehavior = () => {
+    // Read when the open is asked for, which may be later than this render,
+    // once the person confirmed discarding their changes.
+    const asked = textNow.current;
+    return files.openDevice(() => textNow.current === asked).catch((e: unknown) => {
+      setEditError(e instanceof Error ? e.message : String(e));
+    });
   };
   // The file as it runs on the device, to open with its names when the
   // device's behavior is viewed.
@@ -787,6 +824,13 @@ function Workspace({
         />
         <div className="be-header-run">
           <RunsOn session={session} />
+          {session && (
+            <DeviceBehaviorButton
+              device={device}
+              dirty={text !== saved}
+              onOpen={openDeviceBehavior}
+            />
+          )}
           {session ? (
             <DeviceBar device={device} />
           ) : (
@@ -811,23 +855,7 @@ function Workspace({
           blocked={blocked}
           index={index}
           dirty={text !== saved}
-          onView={openDevice}
-          onReload={() => {
-            // The read opens nothing once another file or device replaced this one.
-            const current = files.ask();
-            const from = session;
-            const still = () => current() && attachedRef.current === from;
-            session
-              .deviceBehavior()
-              .then((read) => {
-                if (!still()) return;
-                if (read) openDevice(read.graph);
-                else setEditError("The device no longer says what it runs");
-              })
-              .catch((e: unknown) => {
-                if (still()) setEditError(e instanceof Error ? e.message : String(e));
-              });
-          }}
+          onOpenDevice={() => void openDeviceBehavior()}
           onSelect={(id) => {
             const row = rows.find((r) => r.graphId === id);
             if (row) setSelected(row.key);
@@ -934,6 +962,58 @@ function ViewTabs({
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * Open the behavior the device runs in place of the file, asking first while
+ * the file has unsaved changes; disabled, saying why, while it reads the
+ * device's behavior, while the device does not say what it runs, and while
+ * the connection is lost.
+ */
+function DeviceBehaviorButton({
+  device,
+  dirty,
+  onOpen,
+}: {
+  device: DeviceMode;
+  dirty: boolean;
+  onOpen(): Promise<void>;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [reading, setReading] = useState(false);
+  const open = () => {
+    setReading(true);
+    void onOpen().finally(() => setReading(false));
+  };
+  const unavailable =
+    device.state?.status !== "connected"
+      ? "The device is not connected."
+      : reading || device.relation === "reading"
+        ? "Reading the device's behavior…"
+        : device.behavior === null
+          ? "This device doesn't report its behavior."
+          : null;
+  return (
+    <>
+      <button
+        type="button"
+        disabled={unavailable !== null}
+        title={unavailable ?? "Open the behavior the device runs, in place of this file."}
+        onClick={() => (dirty ? setAsking(true) : open())}
+      >
+        Device&apos;s behavior
+      </button>
+      {asking && (
+        <DiscardConfirm
+          onDiscard={() => {
+            setAsking(false);
+            open();
+          }}
+          onKeep={() => setAsking(false)}
+        />
+      )}
+    </>
   );
 }
 

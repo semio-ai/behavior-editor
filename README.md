@@ -180,6 +180,10 @@ the next behavior afresh.
   store alone. A device on its own clock may write several reports between
   two of the editor's steps, so it gives every value the feedback key took
   (`takeValues`), and the runtime reads them all.
+- The editor stops the behavior on a runtime it lets go of, as it closes a
+  file or as the host switches its `runtime`, through the calls it queues on
+  that runtime: a host disposing of the runtime or closing its device waits
+  for `whenIdle(runtime)`, which settles once every call queued so far ran.
 - `WebSocketDevice` is an `AroraDevice` on its own clock: an Arora device
   reached over its open local bridge, `arora-bridge-ws`, on
   `ws://127.0.0.1:9000` by default (`LOCAL_BRIDGE_URL`).
@@ -188,8 +192,9 @@ the next behavior afresh.
   calls one by ids (the interpreter's `LOAD` and `EDIT` among them),
   `write_values` writes its inputs, `list_keys` lists its keys with their
   meta, and every `values_changed` the device pushes keeps the store it reads
-  current; `takeValues` gives every value a key was pushed. A step waits for the next push carrying `arora/time`, or answers
-  after its `dtMs` when the device does not step. The bridge serves one client
+  current; `takeValues` gives every value a key was pushed. A step waits for
+  the next push carrying `arora/time`, or answers after its `dtMs` when the
+  device does not step. The bridge serves one client
   at a time: `closed` says why the connection ended, another client taking it
   among the reasons. The bridge unsets no key, so writing `null` is refused.
 

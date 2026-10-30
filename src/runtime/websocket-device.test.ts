@@ -25,6 +25,8 @@ class FakeBridge {
   received: Message[] = [];
   /** How the device answers a message: as the bridge does, unless a test says otherwise. */
   answer: (message: Message) => Message | null = (message) => this.#answer(message);
+  /** The answer the bridge itself gives. */
+  answerAsBridge = (message: Message) => this.#answer(message);
   /** What a call answers. */
   callResult: Record<string, unknown> = { success: true, ret: { str: "run" }, mutated: [] };
   /** What a write answers. */
@@ -218,6 +220,20 @@ describe("WebSocketDevice", () => {
     await expect(waiting).rejects.toThrow(/closed the connection: Another client connected/);
     expect(await device.closed).toMatch(/Another client connected/);
     expect(() => device.read("x")).toThrow(/Another client connected/);
+  });
+
+  it("closes the connection when the device's store cannot be read as it connects", async () => {
+    const bridge = new FakeBridge();
+    bridges.push(bridge);
+    bridge.answer = (m) =>
+      m.type === "read_values"
+        ? { type: "error", message: "store unavailable" }
+        : bridge.answerAsBridge(m);
+    const closed = new Promise((resolve) =>
+      bridge.server.once("connection", (socket) => socket.once("close", resolve)),
+    );
+    await expect(WebSocketDevice.connect(await bridge.url())).rejects.toThrow("store unavailable");
+    await closed;
   });
 
   it("refuses to connect where no device answers", async () => {

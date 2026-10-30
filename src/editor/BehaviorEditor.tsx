@@ -30,7 +30,7 @@ import { behaviorKeys } from "./store-keys";
 import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
 import { useMediaQuery } from "./use-media-query";
-import { usePlayback, useRuntimeFunctions } from "./use-playback";
+import { usePlayback, useRuntimeFunctions, whenIdle } from "./use-playback";
 
 export interface BehaviorEditorProps {
   /** The language: its parser, formatter and resolver. */
@@ -123,14 +123,23 @@ export function BehaviorEditor({
   /** The view shown, which stays as files open and close. */
   const [tab, setTab] = useState<Tab>("diagram");
 
+  /**
+   * Counts what replaces the file open: a file opened, a new one, an example,
+   * a close. An open finishing after another of these was asked for is moot.
+   */
+  const requests = useRef(0);
   const begin = (file: BehaviorFile, text: string, example: BehaviorExample | null = null) => {
+    requests.current += 1;
     serial.current += 1;
     setStartError(null);
     setSession({ serial: serial.current, file, text, example });
     onTextChange?.(text);
   };
-  /** Open a file, as text: a graph file through the functions of the runtime it opens on. */
-  const openAsText = async (opened: BehaviorFile & { text: string }) => {
+  /**
+   * Open a file, as text: a graph file through the functions of the runtime it
+   * opens on. Nothing opens when something else replaced the file meanwhile.
+   */
+  const openAsText = async (asked: number, opened: BehaviorFile & { text: string }) => {
     let next = opened.text;
     if (opened.format !== "bt") {
       const out = language.openFile(opened.text, opened.format, await host.functions());
@@ -139,6 +148,7 @@ export function BehaviorEditor({
       }
       next = out.text;
     }
+    if (requests.current !== asked) return;
     recent.remember(opened, opened.text);
     begin({ name: opened.name, format: opened.format, handle: opened.handle }, next);
   };
@@ -147,11 +157,16 @@ export function BehaviorEditor({
     remember: recent.remember,
     create: () => begin(newFile(fileName), ""),
     open: async () => {
+      const asked = ++requests.current;
       const opened = await openBehaviorFile();
-      if (opened) await openAsText(opened);
+      if (opened) await openAsText(asked, opened);
     },
-    openRecent: async (entry) => openAsText(await reopenBehaviorFile(entry)),
+    openRecent: async (entry) => {
+      const asked = ++requests.current;
+      await openAsText(asked, await reopenBehaviorFile(entry));
+    },
     close: () => {
+      requests.current += 1;
       setSession(null);
       setClosed(true);
     },
@@ -165,7 +180,13 @@ export function BehaviorEditor({
     if (!example?.runtime) return undefined;
     const created = example.runtime();
     setMade({ serial: opened, runtime: created.runtime });
-    return () => created.dispose?.();
+    // The workspace's stop is queued on the runtime as it unmounts, in this
+    // same commit: the runtime goes once that and every call before it ran.
+    return () => {
+      Promise.resolve()
+        .then(() => whenIdle(created.runtime))
+        .then(() => created.dispose?.());
+    };
   }, [example, opened]);
 
   if (!session) {

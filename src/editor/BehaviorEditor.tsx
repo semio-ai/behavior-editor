@@ -124,7 +124,7 @@ export function BehaviorEditor({
 
   const parsed = useMemo(() => language.parse(source), [language, source]);
   const natives = useMemo(() => language.natives(), [language]);
-  const { functions, error: functionsError } = useRuntimeFunctions(active);
+  const { functions, error: functionsError, said } = useRuntimeFunctions(active);
   const resolved = useMemo(
     () => language.resolve(parsed.document, functions),
     [language, parsed.document, functions],
@@ -261,7 +261,10 @@ export function BehaviorEditor({
     if (opened.format !== "bt") {
       // The runtime's functions as it says them now, which it may not have
       // said yet when the picker opened.
-      const out = language.openFile(opened.text, opened.format, await active.functions());
+      const now = await active.functions();
+      // The text then resolves against the same functions the file opened with.
+      said(now);
+      const out = language.openFile(opened.text, opened.format, now);
       if ("problems" in out) {
         throw new Error(`${opened.name} does not open: ${problemsText(out.problems)}`);
       }

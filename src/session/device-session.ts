@@ -49,7 +49,8 @@ export interface DeviceBehavior {
 export interface DeviceStatus {
   /**
    * The interpreter's tick: the tick of the trace's last report, counted on
-   * with each of the device's steps since. `null` while no trace reported.
+   * with each of the device's steps pushed after the one that carried it.
+   * `null` while no trace reported.
    */
   tick: number | null;
   /** The device's clock, `arora/time`, in seconds. */
@@ -191,8 +192,6 @@ export class DeviceSession {
   /** The changes this session made or is making whose revision the device has not shown yet. */
   #own = 0;
   #status: DeviceStatus = { tick: null, time: null, rate: null, revision: null };
-  /** The trace tick the device's tick was last set from. */
-  #traced: number | null = null;
   /**
    * What the session follows: a behavior its client said, or `null` for the
    * one the device runs, read anew as it changes.
@@ -462,7 +461,6 @@ export class DeviceSession {
       }
     }
     this.#own = 0;
-    this.#traced = null;
     this.#status = { tick: null, time: null, rate: null, revision: null };
     this.#functions = null;
     const read = await this.#read(connection);
@@ -507,19 +505,16 @@ export class DeviceSession {
     const { device, runtime } = connection;
     const report = await runtime.step(1000 / (this.#options.rate ?? 30));
     const keys = await runtime.keys();
-    // The device may step several times between two of the session's: each
-    // value its clock took is a step.
-    const steps = (JSON.parse(await device.takeValues(TIME_KEY)) as unknown[]).length;
     const [time, dt, revision] = await Promise.all([
       runtime.read(TIME_KEY),
       runtime.read(DT_KEY),
       this.#readRevision(runtime),
     ]);
+    // The last report's tick, and each step the device pushed after it.
     const traced = runtime.deviceTick;
-    let tick = this.#status.tick;
-    if (traced !== null && traced !== this.#traced) tick = traced;
-    else if (tick !== null) tick += steps;
-    this.#traced = traced;
+    const feedback = runtime.traceFeedback;
+    const at = feedback === null ? undefined : device.stepsAt(feedback);
+    const tick = traced === null ? null : traced + (at === undefined ? 0 : device.steps - at);
     const ns = valueNumber(dt);
     const seconds = valueNumber(time);
     this.#status = {

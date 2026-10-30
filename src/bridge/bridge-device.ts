@@ -41,6 +41,10 @@ export class BridgeDevice implements AroraDevice {
   readonly #kept = new Set<string>();
   #stepped: (() => void)[] = [];
   #closedWith: string | null = null;
+  /** The pushes carrying the device's clock so far: its steps since it was taken up. */
+  #steps = 0;
+  /** The steps counted when each kept key was last pushed. */
+  readonly #pushedAt = new Map<string, number>();
 
   /** The device behind `client`, once its keys and their values have arrived. */
   static async over(client: BridgeClient): Promise<BridgeDevice> {
@@ -103,6 +107,20 @@ export class BridgeDevice implements AroraDevice {
     if (taken) return Promise.resolve(JSON.stringify(taken));
     const now = this.#values.get(key);
     return Promise.resolve(JSON.stringify(now === undefined ? [] : [now]));
+  }
+
+  /** The device's steps since it was taken up: the pushes that carried its clock. */
+  get steps(): number {
+    return this.#steps;
+  }
+
+  /**
+   * The device's steps counted when a kept key was last pushed, its own push
+   * among them: its value is that many steps old as of `steps`. `undefined`
+   * for a key not pushed since it was kept.
+   */
+  stepsAt(key: string): number | undefined {
+    return this.#pushedAt.get(key);
   }
 
   async listKeys(prefix?: string): Promise<string> {
@@ -169,11 +187,13 @@ export class BridgeDevice implements AroraDevice {
   }
 
   #pushed(values: Record<string, Value>) {
+    if (TIME_KEY in values) this.#steps += 1;
     for (const [key, value] of Object.entries(values)) {
       const kept = this.#isKept(key);
       if (!kept) this.#values.set(key, value);
       let taken = this.#taken.get(key);
       if (!taken && kept) taken = this.#keep(key);
+      if (kept) this.#pushedAt.set(key, this.#steps);
       if (taken) {
         taken.push(value);
         if (taken.length > TAKEN_LIMIT) taken.shift();

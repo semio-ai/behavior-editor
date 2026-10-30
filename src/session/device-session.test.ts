@@ -75,8 +75,11 @@ describe("DeviceSession", () => {
     expect(last.status.revision).toBe(4);
     // The session follows the behavior the device runs, read as it attached.
     expect(last.report.root).toBe("R");
-    // The trace reported once, at tick 41: the ticks since are counted from the device's steps.
+    // The trace reported once, at tick 41: each step pushed since counts on
+    // from it, steps the session did not poll between included.
     expect(device.traces.size).toBe(1);
+    for (let i = 0; i < 5; i += 1) device.step();
+    await until(() => ticks.at(-1)!.status.tick === device.tick);
   });
 
   it("says a device whose interpreter has no read does not report its behavior", async () => {

@@ -209,6 +209,11 @@ export class DeviceRuntime implements BehaviorRuntime {
     return this.#trace ? this.#view.tick : null;
   }
 
+  /** The key the trace running reports on; `null` without one. */
+  get traceFeedback(): string | null {
+    return this.#trace ? this.#trace.handle.feedback[0]! : null;
+  }
+
   /** The `Call` JSON that halts the trace running, for a client that loses the connection it ran on. */
   get traceStop(): string | null {
     return this.#trace ? JSON.stringify(this.#trace.handle.stop) : null;

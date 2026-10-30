@@ -42,6 +42,8 @@ export interface TraceReport {
   values?: { node: string; port: string; value: Value }[];
   /** The nodes an edit restarted: their status, activity and values are stated anew. */
   restarted?: string[];
+  /** The behavior's revision, in a first report and in the report after each change. */
+  revision?: number;
 }
 
 const STATUS: Record<Exclude<TraceStatus, "not_reached">, Status> = {

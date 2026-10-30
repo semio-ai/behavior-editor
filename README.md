@@ -284,11 +284,10 @@ report, counted on with each of the device's steps since), the clock
 each accepted edit. A revision this session did not cause is another
 client's change; one that moved while the connection was lost is too.
 
-`READ` and the revision come with arora-behavior 10.1; the language reads a
-device's behavior where its build has `readCall`. This package's wasm is
-built on arora-behavior 10.0, which has no `READ`: until it moves to 10.1,
-every device is one that does not say what it runs, followed by its trace,
-clock and store, its revision still telling another client's change.
+`READ` and the revision come with arora-behavior 10.1, which the package's
+wasm is built on (`readCall`, `readResult`). A device whose interpreter
+predates them refuses `READ`: it is one that does not say what it runs,
+followed by its trace, clock and store.
 
 ### The editor on a device
 
@@ -344,7 +343,8 @@ drive a session and the editor on `fixtures/fake-device.ts`, a device reached
 through bridge clients held in memory, whose interpreter loads, edits, reads
 and traces its behavior and keeps its revision. `src/integration/device-session.test.ts`
 runs a session on the Arora device above, in the page, through
-`fixtures/page-bridge.ts`.
+`fixtures/page-bridge.ts`: it reads the device's behavior and its revision,
+runs and edits it, and tells another client's change.
 
 `src/text/files.test.ts` reads every example back through each graph format,
 and a tree back through Groot, as the same graph; `fixtures/files` holds one

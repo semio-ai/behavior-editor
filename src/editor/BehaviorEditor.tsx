@@ -35,7 +35,7 @@ import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
 import { useMediaQuery } from "./use-media-query";
 import { useDeviceMode } from "./use-device-mode";
-import { usePlayback, useRuntimeFunctions, whenIdle } from "./use-playback";
+import { askFunctions, usePlayback, useRuntimeFunctions, whenIdle } from "./use-playback";
 
 export interface BehaviorEditorProps {
   /** The language: its parser, formatter and resolver. */
@@ -129,6 +129,11 @@ export function BehaviorEditor({
     sessionState?.status === "connected" || sessionState?.status === "lost" ? session : null;
   /** The files the editor ran on a device, newest first: the device's behavior opens as one of them when it is. */
   const ran = useRef<RanFile[]>([]);
+  // The editor's runtime, which an open finishing late checks it still is.
+  const shownHost = useRef(host);
+  useEffect(() => {
+    shownHost.current = host;
+  }, [host]);
   const recent = useRecentFiles();
   const serial = useRef(0);
   const [openFile, setOpenFile] = useState<OpenFile | null>(() => {
@@ -140,6 +145,20 @@ export function BehaviorEditor({
   const [closed, setClosed] = useState(false);
   /** The view shown, which stays as files open and close. */
   const [tab, setTab] = useState<Tab>("diagram");
+
+  // A controlled editor whose text arrives after it mounted opens on it, as
+  // one mounted with it does; one the person closed stays closed.
+  useEffect(() => {
+    if (controlled === undefined || closed) return;
+    setOpenFile((open) => {
+      if (open) return open;
+      // The host's text replaces the file as an open would: an open asked
+      // before it is moot.
+      requests.current += 1;
+      serial.current += 1;
+      return { serial: serial.current, file: newFile(fileName), text: controlled, example: null };
+    });
+  }, [controlled, closed, fileName]);
 
   /**
    * Counts what replaces the file open: a file opened, a new one, an example,
@@ -160,7 +179,14 @@ export function BehaviorEditor({
   const openAsText = async (asked: number, opened: BehaviorFile & { text: string }) => {
     let next = opened.text;
     if (opened.format !== "bt") {
-      const out = language.openFile(opened.text, opened.format, await host.functions());
+      const from = host;
+      const functions = await askFunctions(from);
+      // Opened with another runtime's functions, the file would name functions
+      // the runtime it opens on may not have: it opens nothing.
+      if (shownHost.current !== from) {
+        throw new Error(`${opened.name} was not opened: the runtime changed while it was`);
+      }
+      const out = language.openFile(opened.text, opened.format, functions);
       if ("problems" in out) {
         throw new Error(`${opened.name} does not open: ${problemsText(out.problems)}`);
       }
@@ -240,11 +266,7 @@ export function BehaviorEditor({
       </div>
     );
   }
-  const active = example?.runtime
-    ? made?.serial === openFile.serial
-      ? made.runtime
-      : null
-    : host;
+  const active = example?.runtime ? (made?.serial === openFile.serial ? made.runtime : null) : host;
   if (!active) {
     return (
       <div className="be-root">
@@ -479,7 +501,9 @@ function Workspace({
     const now = source === text ? parsed : language.parse(text);
     const graph = source === text ? resolved : language.resolve(now.document, functions);
     if ([...now.diagnostics, ...graph.diagnostics].some((d) => d.severity === "error")) {
-      throw new Error(`The text has errors: a ${label} file is written from the graph it resolves to`);
+      throw new Error(
+        `The text has errors: a ${label} file is written from the graph it resolves to`,
+      );
     }
     const out = language.writeFile(graph, format, functions);
     if ("problems" in out) {
@@ -495,7 +519,9 @@ function Workspace({
   const save = (format: FileFormat, saveAs: boolean) =>
     fileAction(async () => {
       const { written, notice } = contents(format);
-      const target = saveAs ? { name: withExtension(file.name, format), format, handle: null } : file;
+      const target = saveAs
+        ? { name: withExtension(file.name, format), format, handle: null }
+        : file;
       const stored = await saveBehaviorFile(written, target, saveAs);
       if (!stored) return;
       files.remember(stored, written);

@@ -6,7 +6,7 @@ import type { Value } from "../model/value";
 import { DeviceRuntime } from "../runtime/device-runtime";
 import { MATH } from "../runtime/math-module";
 import type { TraceReport } from "../runtime/trace";
-import { WebSocketBridge } from "./websocket-bridge";
+import { WebSocketBridge, type WebSocketLike } from "./websocket-bridge";
 
 const bridges: FakeBridge[] = [];
 const devices: BridgeDevice[] = [];
@@ -197,17 +197,29 @@ describe("a device over WebSocketBridge", () => {
     client.close();
   });
 
-  it("gives up connecting to a server that never opens the connection", async () => {
-    const { createServer } = await import("node:net");
-    const accepted: import("node:net").Socket[] = [];
-    const server = createServer((socket) => accepted.push(socket));
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const url = `ws://127.0.0.1:${(server.address() as { port: number }).port}`;
-    await expect(WebSocketBridge.connect(url, { timeoutMs: 100 })).rejects.toThrow(
-      `no device answers at ${url}`,
-    );
-    for (const socket of accepted) socket.destroy();
-    await new Promise((resolve) => server.close(resolve));
+  it("takes a browser WebSocket as it is, and lets go of one that does not open in time", async () => {
+    const open = (url: string): WebSocketLike => new WebSocket(url);
+    const bridge = new FakeBridge();
+    bridges.push(bridge);
+    const device = await BridgeDevice.over(await WebSocketBridge.connect(await bridge.url(), { open }));
+    devices.push(device);
+    // A socket that never opens.
+    let closed = false;
+    const silent: WebSocketLike = {
+      readyState: 0,
+      send: () => {},
+      close: () => {
+        closed = true;
+      },
+      onopen: null,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    await expect(
+      WebSocketBridge.connect("ws://nowhere", { open: () => silent, timeoutMs: 50 }),
+    ).rejects.toThrow("no device answered at ws://nowhere within 50 ms");
+    expect(closed).toBe(true);
   });
 
   it("refuses to connect where no device answers", async () => {
@@ -383,5 +395,16 @@ describe("a device over WebSocketBridge", () => {
     const read = bridge.received.filter((m) => m.type === "read_values").at(-1)!;
     expect((read.keys as string[]).filter((k) => k.startsWith("p/"))).toEqual([]);
     expect(JSON.parse(await device.takeValues("p/new/feedback"))).toEqual([{ u64: 2 }]);
+  });
+
+  it(`keeps the values of ${TAKEN_KEYS} keys at most, kept by prefix or by asking`, async () => {
+    const { bridge, device } = await connect();
+    for (let i = 0; i < TAKEN_KEYS + 1; i += 1) await device.takeValues(`k/${i}`);
+    for (let i = 0; i < TAKEN_KEYS + 1; i += 1) bridge.push({ [`k/${i}`]: { u64: i } });
+    bridge.push({ "k/0": { u64: 100 } });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The key asked first was let go of: it gives its value now, not what it was pushed.
+    expect(JSON.parse(await device.takeValues("k/0"))).toEqual([{ u64: 100 }]);
+    expect(JSON.parse(await device.takeValues(`k/${TAKEN_KEYS}`))).toEqual([{ u64: TAKEN_KEYS }]);
   });
 });

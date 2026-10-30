@@ -109,6 +109,14 @@ export class TraceView {
   }
 
   /**
+   * Expect a new trace's first report: the view keeps what it shows until
+   * then, and takes no report that follows another.
+   */
+  awaitFirst() {
+    this.#last = null;
+  }
+
+  /**
    * The view as a tick report states it, for the behavior's `nodes`: a trace
    * also reports the interpreter's own. The root's status is `root`'s.
    */

@@ -185,6 +185,8 @@ export class DeviceRuntime implements BehaviorRuntime {
     this.#ticks = 0;
     this.#root = behavior.root;
     this.#nodes = new Set(behavior.nodes);
+    // A behavior followed afresh shows nothing of the one before.
+    this.#view = new TraceView();
     await this.#follow([...behavior.watched]);
     this.#seen = null;
   }
@@ -242,6 +244,10 @@ export class DeviceRuntime implements BehaviorRuntime {
 
   async step(dtMs: number): Promise<TickReport> {
     await this.#options.device.step(dtMs);
+    // The trace is read, and started over if need be, before the store: a
+    // device applying a call with a step ticks at HALT and TRACE, and the
+    // store then shows what that tick did, as the nodes do.
+    if (this.#running && this.#trace) await this.#readTrace(true);
     const now = await this.#snapshot();
     const changes: TickReport["changes"] = [];
     for (const [key, value] of now) {
@@ -254,7 +260,6 @@ export class DeviceRuntime implements BehaviorRuntime {
     if (!this.#running) return { tick: 0, ...store };
     this.#ticks += 1;
     if (!this.#trace) return { tick: this.#ticks, ...store };
-    await this.#readTrace(true);
     return { tick: this.#ticks, ...store, ...this.#view.report(this.#root, this.#nodes) };
   }
 
@@ -306,6 +311,9 @@ export class DeviceRuntime implements BehaviorRuntime {
     }
     this.#trace = { handle, watched };
     this.#missed = false;
+    // A new trace is read from its first report: until one comes, no report
+    // of it follows one the view read, whatever the old trace's last tick.
+    this.#view.awaitFirst();
     // A device applying a call with a step may have reported already.
     await this.#readTrace(false);
   }

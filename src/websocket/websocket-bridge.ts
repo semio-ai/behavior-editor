@@ -22,10 +22,10 @@ export interface WebSocketLike {
   readonly readyState: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
-  onopen: ((event: unknown) => void) | null;
-  onmessage: ((event: { data: unknown }) => void) | null;
-  onclose: ((event: { code: number; reason: string }) => void) | null;
-  onerror: ((event: unknown) => void) | null;
+  onopen: ((event: Event) => void) | null;
+  onmessage: ((event: MessageEvent) => void) | null;
+  onclose: ((event: CloseEvent) => void) | null;
+  onerror: ((event: Event) => void) | null;
 }
 
 export interface WebSocketBridgeOptions {
@@ -88,14 +88,15 @@ export class WebSocketBridge implements BridgeClient {
     url: string = LOCAL_BRIDGE_URL,
     options: WebSocketBridgeOptions = {},
   ): Promise<WebSocketBridge> {
-    const open = options.open ?? ((at: string) => new WebSocket(at) as unknown as WebSocketLike);
+    const open = options.open ?? ((at: string): WebSocketLike => new WebSocket(at));
     const socket = open(url);
     const timeoutMs = options.timeoutMs ?? 10_000;
     await new Promise<void>((resolve, reject) => {
-      // A device that accepts the connection and never opens it is not answering.
+      // A connection not open within the timeout is let go: it would take the
+      // bridge's one client slot whenever it did open.
       const timer = setTimeout(() => {
         socket.close();
-        reject(new Error(`no device answers at ${url}`));
+        reject(new Error(`no device answered at ${url} within ${timeoutMs} ms`));
       }, timeoutMs);
       socket.onopen = () => {
         clearTimeout(timer);

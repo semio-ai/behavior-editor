@@ -438,6 +438,99 @@ describe("the start screen", () => {
     expect(result.current.store.has("written")).toBe(false);
   });
 
+  it("disposes an example's runtime only once it answered for its functions", async () => {
+    const order: string[] = [];
+    const runtime = new MockArora({ store: ORDER.store });
+    let answer: () => void = () => {};
+    const { functions } = runtime;
+    runtime.functions = async () => {
+      await new Promise<void>((resolve) => (answer = resolve));
+      order.push("functions");
+      return functions.call(runtime);
+    };
+    const { user } = setup({
+      examples: [
+        {
+          title: "Order",
+          fileName: ORDER.file,
+          text: ORDER.text,
+          runtime: () => ({ runtime, dispose: () => order.push("dispose") }),
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: /^Order/ }));
+    await user.click(await screen.findByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close" }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(order).toEqual([]);
+    answer();
+    await waitFor(() => expect(order).toEqual(["functions", "dispose"]));
+  });
+
+  it("opens on a controlled text that arrives after it mounted, and stays closed once closed", async () => {
+    const props = { language, autoPlay: false, fileName: ORDER.file, onTextChange: () => {} };
+    const user = userEvent.setup();
+    const { rerender } = render(<BehaviorEditor {...props} />);
+    expect(screen.getByRole("region", { name: "Open a behavior" })).toBeTruthy();
+    rerender(<BehaviorEditor {...props} text={ORDER.text} />);
+    await waitFor(() => expect(text()).toHaveValue(ORDER.text));
+    expect(screen.queryByText("(unsaved changes)")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close" }));
+    rerender(<BehaviorEditor {...props} text={ORDER.text} />);
+    expect(screen.getByRole("region", { name: "Open a behavior" })).toBeTruthy();
+  });
+
+  it("opens nothing from a picker answered after the host's text arrived", async () => {
+    let pick: (handles: unknown[]) => void = () => {};
+    vi.stubGlobal("showOpenFilePicker", () => new Promise((resolve) => (pick = resolve)));
+    const texts: string[] = [];
+    const props = {
+      language,
+      autoPlay: false,
+      fileName: ORDER.file,
+      onTextChange: (t: string) => texts.push(t),
+    };
+    const user = userEvent.setup();
+    const { rerender } = render(<BehaviorEditor {...props} />);
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    rerender(<BehaviorEditor {...props} text={ORDER.text} />);
+    await waitFor(() => expect(text()).toHaveValue(ORDER.text));
+    pick([handle("greet.bt", GREET.text).handle]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(texts).toEqual([]);
+  });
+
+  it("shows no failure of a step from before the host switched away and back", async () => {
+    const first = new MockArora({ store: ORDER.store });
+    const second = new MockArora({ store: ORDER.store });
+    let fail: () => void = () => {};
+    const held = new Promise<void>((resolve) => (fail = resolve));
+    const { step } = first;
+    let steps = 0;
+    first.step = async (dt) => {
+      if (steps++ > 0) return step.call(first, dt);
+      await held;
+      throw new Error("a step from before");
+    };
+    const diff = (a: Graph, b: Graph) =>
+      JSON.stringify(a) === JSON.stringify(b) ? {} : { remove: [] };
+    const { result, rerender } = renderHook(
+      ({ runtime }) => usePlayback(runtime, ORDER.loaded, true, diff),
+      { initialProps: { runtime: first } },
+    );
+    await waitFor(() => expect(result.current.store.size).toBeGreaterThan(0));
+    act(() => result.current.step());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    rerender({ runtime: second });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    rerender({ runtime: first });
+    fail();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(result.current.error).toBeNull();
+    expect(result.current.playing).toBe(true);
+  });
+
   it("says why a recent file did not open", async () => {
     const gone = handle("gone.bt", "succeed");
     vi.stubGlobal("showOpenFilePicker", () => Promise.resolve([gone.handle]));

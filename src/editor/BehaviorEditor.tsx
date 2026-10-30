@@ -449,9 +449,11 @@ export function BehaviorEditor({
 }
 
 /**
- * Tabs over the editor's views, the arrow keys moving between them. Every
- * panel stays mounted, hidden while its tab is not selected, so a view keeps
- * its own state across tab changes: the text's undo history, for one.
+ * Tabs over the editor's views, the arrow keys moving between them. A view
+ * shows while its tab is selected. The text stays mounted, hidden while
+ * another tab is, as its field holds what the editor cannot give back: its
+ * undo history. Every other view draws from the editor's state, and is drawn
+ * afresh, at its size, when its tab is selected.
  */
 function ViewTabs({
   tabs,
@@ -498,7 +500,7 @@ function ViewTabs({
           aria-labelledby={`be-tab-${t.id}`}
           hidden={tab !== t.id}
         >
-          {panels[t.id]}
+          {(tab === t.id || t.id === "text") && panels[t.id]}
         </div>
       ))}
     </div>

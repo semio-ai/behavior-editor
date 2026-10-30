@@ -243,7 +243,7 @@ export class WebSocketDevice implements AroraDevice {
     await this.#request({ type: "read_values", keys }, "read_values_resp", (read) => {
       const values = (read.values ?? {}) as Record<string, unknown>;
       for (const key of keys) {
-        if (key in values) this.#values.set(key, values[key]);
+        if (Object.hasOwn(values, key)) this.#values.set(key, values[key]);
         else this.#values.delete(key);
       }
     });

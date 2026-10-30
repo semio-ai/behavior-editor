@@ -198,6 +198,10 @@ describe("the diagram's outputs", () => {
       "sequence\n  p: sequence\n    identity(x: @p._ret)\n  damp(target: 1, half_life: 0.1, state: none)\n",
     ],
     [
+      "a parent reading its child beside a sibling",
+      "sequence_star(index: @a._ret)\n  a: identity(x: 1u16)\n  damp(target: 1, half_life: 0.1, state: none)\n",
+    ],
+    [
       "a reader on the producer's left",
       "sequence\n  identity(x: @m.state)\n  m: damp(target: 1, half_life: 0.1, state: none)\n",
     ],

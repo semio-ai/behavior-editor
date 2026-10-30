@@ -115,10 +115,11 @@ function crosses(segment: Segment, box: Box, margin: number): boolean {
  * The path of a wire from `from`'s output at `start` back to `to`'s port at
  * `end`, which is not on its right: out to the right, along a corridor down
  * or up, along a lane, and into the port from its left. Lanes come in order:
- * in the gap just above the reader when it is under the producer, the middle
- * of that gap, over both nodes; corridors from nearest to farthest right.
- * The route taken is the first whose every segment clears every node, the
- * two it joins included; with none, the nearest over both.
+ * in the gap between the two nodes when one is above the other, nearest the
+ * reader then midway, over both, under both; corridors from nearest the
+ * producer to farthest right. The route taken is the first whose every
+ * segment clears every node, the two it joins included; with none, the one
+ * crossing the fewest.
  */
 function routeBack(
   from: Box,
@@ -128,40 +129,42 @@ function routeBack(
   boxes: readonly Box[],
 ): string {
   const x0 = x2 - 10;
-  const gap = to.y - (from.y + from.h);
-  const over = Math.min(from.y, to.y) - 8;
-  const lanes =
-    gap > 0 ? [to.y - Math.min(SG / 2, gap / 2), from.y + from.h + gap / 2, over] : [over];
-  const nearest = Math.max(x1, to.x + to.w) + 9;
-  const corridors = [
-    nearest,
-    ...boxes
-      .map((b) => b.x + b.w + 9)
-      .filter((x) => x > nearest)
-      .sort((a, b) => a - b),
+  const below = to.y - (from.y + from.h);
+  const above = from.y - (to.y + to.h);
+  const lanes = [
+    ...(below > 0 ? [to.y - Math.min(SG / 2, below / 2), from.y + from.h + below / 2] : []),
+    ...(above > 0 ? [to.y + to.h + Math.min(SG / 2, above / 2), to.y + to.h + above / 2] : []),
+    Math.min(from.y, to.y) - 8,
+    Math.max(from.y + from.h, to.y + to.h) + 8,
   ];
-  const clear = (xr: number, lane: number) => {
+  const corridors = [
+    ...new Set([x1, ...boxes.map((b) => b.x + b.w)].filter((x) => x >= x1).map((x) => x + 9)),
+  ].sort((a, b) => a - b);
+  const crossings = (xr: number, lane: number) => {
     const segments: Segment[] = [
       [x1, y1, xr, y1],
       [xr, y1, xr, lane],
       [xr, lane, x0, lane],
       [x0, lane, x0, y2],
     ];
-    return boxes.every((b) =>
-      segments.every((segment, i) => {
-        // A wire leaves its producer's edge and enters its reader's.
-        if ((b === from && i === 0) || (b === to && i === 3)) return true;
-        return !crosses(segment, b, b === from || b === to ? 0 : 2);
-      }),
+    // A wire leaves its producer's edge and enters its reader's.
+    return boxes.reduce(
+      (count, b) =>
+        count +
+        segments.filter(
+          (segment, i) =>
+            !((b === from && i === 0) || (b === to && i === 3)) &&
+            crosses(segment, b, b === from || b === to ? 0 : 2),
+        ).length,
+      0,
     );
   };
-  let route: readonly [number, number] = [nearest, over];
+  let route: readonly [number, number, number] = [corridors[0]!, lanes[0]!, Infinity];
   search: for (const lane of lanes) {
     for (const xr of corridors) {
-      if (clear(xr, lane)) {
-        route = [xr, lane];
-        break search;
-      }
+      const count = crossings(xr, lane);
+      if (count < route[2]) route = [xr, lane, count];
+      if (count === 0) break search;
     }
   }
   const [xr, lane] = route;

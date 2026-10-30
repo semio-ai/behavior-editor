@@ -18,6 +18,29 @@ interface KeyMeta {
 export type DeviceAnswer<T> = T | Promise<T>;
 
 /**
+ * A behavior running on a device as a client knows it, to follow it: its
+ * root, whose status is the behavior's, its nodes, and those whose outputs
+ * the trace carries.
+ */
+export interface FollowedBehavior {
+  root?: string;
+  nodes: readonly string[];
+  watched: readonly string[];
+}
+
+/**
+ * The behavior `loaded` as a trace follows it: the nodes the text names and
+ * the detached ones watched.
+ */
+export function followed(loaded: Loaded): FollowedBehavior {
+  return {
+    ...(loaded.graph.root === undefined ? {} : { root: loaded.graph.root }),
+    nodes: loaded.nodes.map((n) => n.id),
+    watched: watchedNodes(loaded),
+  };
+}
+
+/**
  * An Arora device as its host offers it to the page: a remote client's
  * operations on the device (describe its methods, call one, write its inputs,
  * list its keys), a read of its store, and its step. Each answers when it
@@ -149,12 +172,44 @@ export class DeviceRuntime implements BehaviorRuntime {
   async start(loaded: Loaded): Promise<void> {
     const { device, loadCall } = this.#options;
     await device.call(loadCall(loaded.graph));
+    await this.follow(followed(loaded));
+  }
+
+  /**
+   * Follow the behavior the device runs without loading one, as a client
+   * attaching to a device finds it: from its next step, as from a start, with
+   * a new trace watching `behavior.watched`.
+   */
+  async follow(behavior: FollowedBehavior): Promise<void> {
     this.#running = true;
     this.#ticks = 0;
-    this.#root = loaded.graph.root;
-    this.#nodes = new Set(loaded.nodes.map((n) => n.id));
-    await this.#follow(watchedNodes(loaded));
+    this.#root = behavior.root;
+    this.#nodes = new Set(behavior.nodes);
+    await this.#follow([...behavior.watched]);
     this.#seen = null;
+  }
+
+  /**
+   * Stop following the behavior, its trace halted, and leave it running on
+   * the device: what a client letting go of a device does.
+   */
+  async release(): Promise<void> {
+    await this.#halt();
+    this.#running = false;
+  }
+
+  /**
+   * The interpreter's tick of the last trace report read: the device's own
+   * count, which a trace reports at each tick that changes what it follows.
+   * `null` without a trace, or before its first report.
+   */
+  get deviceTick(): number | null {
+    return this.#trace ? this.#view.tick : null;
+  }
+
+  /** The `Call` JSON that halts the trace running, for a client that loses the connection it ran on. */
+  get traceStop(): string | null {
+    return this.#trace ? JSON.stringify(this.#trace.handle.stop) : null;
   }
 
   async edit(diff: GraphDiff, next?: Loaded): Promise<void> {

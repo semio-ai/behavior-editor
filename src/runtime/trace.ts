@@ -73,6 +73,11 @@ export class TraceView {
   #values = new Map<string, Value>();
   #last: number | null = null;
 
+  /** The interpreter's tick the last report read was written at; `null` before the first. */
+  get tick(): number | null {
+    return this.#last;
+  }
+
   /**
    * Fold `report` in. A first report starts the view afresh; a later report
    * already read changes nothing. `false` when the report follows one not
@@ -123,6 +128,7 @@ export class TraceView {
   }
 
   #clear() {
+    this.#last = null;
     this.#status.clear();
     this.#activity.clear();
     this.#values.clear();

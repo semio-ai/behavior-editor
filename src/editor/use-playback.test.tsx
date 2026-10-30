@@ -6,7 +6,7 @@ import type { Graph, GraphDiff } from "../model/graph";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
 import type { Loaded } from "../text/language";
-import { usePlayback } from "./use-playback";
+import { usePlayback, useRuntimeFunctions } from "./use-playback";
 
 /** The diff of two graphs as the editor sees it: none between the same graph. */
 const diff = (a: Graph, b: Graph): GraphDiff =>
@@ -92,5 +92,26 @@ describe("usePlayback", () => {
     act(() => result.current.step());
     await waitFor(() => expect(result.current.store.get("v")).toEqual({ f64: 7 }));
     expect(result.current.store.has("stale")).toBe(false);
+  });
+});
+
+describe("useRuntimeFunctions", () => {
+  it("asks again when told, keeping what was said until the answer", async () => {
+    const answers: (() => Promise<{ name: string }[]>)[] = [
+      () => Promise.reject(new Error("the connection to the device is lost")),
+      () => Promise.resolve([{ name: "damp" }]),
+    ];
+    const source = { functions: () => answers.shift()!() } as unknown as Pick<
+      BehaviorRuntime,
+      "functions"
+    >;
+    const { result, rerender } = renderHook(({ asked }) => useRuntimeFunctions(source, asked), {
+      initialProps: { asked: 0 },
+    });
+    await waitFor(() => expect(result.current.error).toMatch(/lost/));
+    rerender({ asked: 1 });
+    expect(result.current.known).toBe(true);
+    await waitFor(() => expect(result.current.functions.map((f) => f.name)).toEqual(["damp"]));
+    expect(result.current.error).toBeNull();
   });
 });

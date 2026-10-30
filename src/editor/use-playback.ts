@@ -384,9 +384,15 @@ export function usePlayback(
 /**
  * The module functions `runtime` offers, once it has said; and why it could
  * not. `known` is false until the runtime of this render has said: what
- * another runtime said is not this one's.
+ * another runtime said is not this one's. A change of `asked` asks again,
+ * what the runtime said before showing until it answers: a device reached
+ * again may offer other functions, and one asked while unreachable answers
+ * none.
  */
-export function useRuntimeFunctions(runtime: Pick<BehaviorRuntime, "functions">): {
+export function useRuntimeFunctions(
+  runtime: Pick<BehaviorRuntime, "functions">,
+  asked?: unknown,
+): {
   functions: MethodSignature[];
   error: string | null;
   known: boolean;
@@ -405,7 +411,7 @@ export function useRuntimeFunctions(runtime: Pick<BehaviorRuntime, "functions">)
     return () => {
       current = false;
     };
-  }, [runtime]);
+  }, [runtime, asked]);
   return state.runtime === runtime
     ? { functions: state.functions, error: state.error, known: true }
     : { functions: [], error: null, known: false };

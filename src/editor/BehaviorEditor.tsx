@@ -396,7 +396,13 @@ function Workspace({
 
   const parsed = useMemo(() => language.parse(source), [language, source]);
   const natives = useMemo(() => language.natives(), [language]);
-  const { functions, error: functionsError, known } = useRuntimeFunctions(session ?? active);
+  // Each connection to the device asks for its functions again.
+  const sessionState = useSessionState(session);
+  const connection = sessionState?.status === "connected" ? sessionState : null;
+  const { functions, error: functionsError, known } = useRuntimeFunctions(
+    session ?? active,
+    connection,
+  );
   const resolved = useMemo(
     () => language.resolve(parsed.document, functions),
     [language, parsed.document, functions],

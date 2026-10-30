@@ -53,6 +53,12 @@ const OPEN = 1;
 export const TAKEN_LIMIT = 256;
 
 /**
+ * How many keys values are kept for: past it, the key kept longest goes, as
+ * a trace no longer read leaves its feedback key behind.
+ */
+export const TAKEN_KEYS = 32;
+
+/**
  * An Arora device behind its open local bridge.
  *
  * The device runs on its own clock (`ownClock`): it steps whether the editor
@@ -61,7 +67,8 @@ export const TAKEN_LIMIT = 256;
  * `dtMs` when none comes. The store is read from what the device pushed,
  * which starts as what it held when the connection opened: a read is as
  * current as the device's last step. `takeValues` gives every value a key was
- * pushed, the last `TAKEN_LIMIT` of them, for a key that changes at each of the device's steps, as a trace's
+ * pushed, the last `TAKEN_LIMIT` of them, for a key that changes at each of
+ * the device's steps, as a trace's
  * reports do.
  *
  * A request is answered in the order it was sent, as the bridge answers its
@@ -81,6 +88,8 @@ export class WebSocketDevice implements AroraDevice {
   readonly #values = new Map<string, unknown>();
   /** The values each key `takeValues` follows was pushed since its last call. */
   readonly #taken = new Map<string, unknown[]>();
+  /** The prefixes whose keys' values are kept from their first push (`keepValues`). */
+  readonly #kept = new Set<string>();
   #stepped: (() => void)[] = [];
   #closedWith: string | null = null;
   #requests = 0;
@@ -177,13 +186,28 @@ export class WebSocketDevice implements AroraDevice {
     return Promise.resolve(JSON.stringify(this.#values.get(key) ?? null));
   }
 
+  keepValues(prefix: string): Promise<void> {
+    this.#check();
+    this.#kept.add(prefix);
+    return Promise.resolve();
+  }
+
   takeValues(key: string): Promise<string> {
     this.#check();
     const taken = this.#taken.get(key);
+    if (this.#isKept(key)) {
+      this.#taken.delete(key);
+      return Promise.resolve(JSON.stringify(taken ?? []));
+    }
     this.#taken.set(key, []);
     if (taken) return Promise.resolve(JSON.stringify(taken));
     const now = this.#values.get(key);
     return Promise.resolve(JSON.stringify(now === undefined ? [] : [now]));
+  }
+
+  #isKept(key: string): boolean {
+    for (const prefix of this.#kept) if (key.startsWith(prefix)) return true;
+    return false;
   }
 
   async listKeys(prefix?: string): Promise<string> {
@@ -260,7 +284,13 @@ export class WebSocketDevice implements AroraDevice {
       const values = (message.values ?? {}) as Record<string, unknown>;
       for (const [key, value] of Object.entries(values)) {
         this.#values.set(key, value);
-        const taken = this.#taken.get(key);
+        let taken = this.#taken.get(key);
+        if (!taken && this.#isKept(key)) {
+          taken = [];
+          this.#taken.set(key, taken);
+          // The key kept longest goes: Map keeps keys in the order they came.
+          if (this.#taken.size > TAKEN_KEYS) this.#taken.delete(this.#taken.keys().next().value!);
+        }
         if (taken) {
           taken.push(value);
           if (taken.length > TAKEN_LIMIT) taken.shift();

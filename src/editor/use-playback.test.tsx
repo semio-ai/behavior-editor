@@ -35,6 +35,23 @@ describe("usePlayback", () => {
     await waitFor(() => expect(edits).toEqual([[{}, renamed]]));
   });
 
+  it("shows the store anew after telling the runtime of nodes named anew", async () => {
+    const runtime = new MockArora({ store: ORDER.store });
+    const renamed: Loaded = {
+      ...ORDER.loaded,
+      nodes: ORDER.loaded.nodes.map((n) => ({ ...n, name: n.name ?? `n${n.path}` })),
+    };
+    const { result, rerender } = renderHook(
+      ({ loaded }) => usePlayback(runtime, loaded, false, diff),
+      { initialProps: { loaded: ORDER.loaded } },
+    );
+    await waitFor(() => expect(result.current.store.size).toBeGreaterThan(0));
+    // The store changes with no tick the editor sees.
+    await runtime.write("outside", { f64: 3 });
+    rerender({ loaded: renamed });
+    await waitFor(() => expect(result.current.store.get("outside")).toEqual({ f64: 3 }));
+  });
+
   it("shows the store a tick states whole as it is, a key it leaves out gone", async () => {
     const runtime = new MockArora({ store: { ...ORDER.store, stale: { f64: 1 } } });
     runtime.step = () =>

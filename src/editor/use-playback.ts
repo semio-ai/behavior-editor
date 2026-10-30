@@ -221,8 +221,12 @@ export function usePlayback(
           at.refused = false;
           // The same graph, its nodes named or placed anew: a runtime that
           // follows the nodes by what the text says of them is told.
-          if (at.loaded && !sameNodes(at.loaded, behavior)) await runtime.edit(change, behavior);
+          const renamed = at.loaded !== null && !sameNodes(at.loaded, behavior);
           at.loaded = behavior;
+          if (!renamed) return;
+          await runtime.edit(change, behavior);
+          // The runtime states its store afresh after an edit: show it now.
+          await readStore();
           return;
         }
         // A refused edit leaves the behavior running as it was, which the

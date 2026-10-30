@@ -5,7 +5,7 @@ import type { Value } from "../model/value";
 import { DeviceRuntime } from "./device-runtime";
 import { MATH, mathModule } from "./math-module";
 import type { TraceReport } from "./trace";
-import { TAKEN_LIMIT, WebSocketDevice } from "./websocket-device";
+import { TAKEN_KEYS, TAKEN_LIMIT, WebSocketDevice } from "./websocket-device";
 
 type Message = Record<string, unknown> & { type: string };
 
@@ -345,5 +345,64 @@ describe("WebSocketDevice", () => {
     bridge.step();
     expect((await report).root).toBe("S");
     expect(bridge.received.filter((m) => m.id === "trace")).toHaveLength(1);
+  });
+
+  it("keeps a trace's reports pushed before its call is answered, and lets them go with it", async () => {
+    const { bridge, device } = await connect();
+    const root = ORDER.loaded.graph.root!;
+    const feedback = "arora/tasks/interpreter/trace/t/feedback";
+    const answer = bridge.answer;
+    bridge.answer = (m) => {
+      if (m.id !== "trace") return answer(m);
+      // The device reports, twice, before its answer to the call goes out.
+      bridge.step({ [feedback]: { tick: 1, status: [[root, "running"]] } as unknown as Value });
+      bridge.step({
+        [feedback]: { tick: 2, since: 1, status: [[root, "success"]] } as unknown as Value,
+      });
+      return { type: "call_resp", success: true, ret: { u64: 1 }, mutated: [] };
+    };
+    const taken: string[] = [];
+    const take = device.takeValues.bind(device);
+    device.takeValues = (key) => {
+      taken.push(key);
+      return take(key);
+    };
+    const runtime = new DeviceRuntime({
+      device,
+      loadCall: () => JSON.stringify({ module_id: "interpreter", id: "load", args: [] }),
+      editCall: () => JSON.stringify({ module_id: "interpreter", id: "edit", args: [] }),
+      trace: {
+        traceCall: () => JSON.stringify({ module_id: "interpreter", id: "trace", args: [] }),
+        traceHandle: () => ({
+          id: "t",
+          stop: { module_id: "interpreter", id: "halt", args: [] },
+          status: "arora/tasks/interpreter/trace/t/status",
+          feedback: [feedback],
+        }),
+        traceReport: (json) => JSON.parse(json) as TraceReport,
+      },
+    });
+    await runtime.start(ORDER.loaded);
+    const report = runtime.step(5_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    bridge.step();
+    expect((await report).root).toBe("S");
+    expect(bridge.received.filter((m) => m.id === "trace")).toHaveLength(1);
+    // Stopping halts the trace and takes what it left.
+    taken.length = 0;
+    await runtime.stop();
+    expect(bridge.received.some((m) => m.id === "halt")).toBe(true);
+    expect(taken).toEqual([feedback]);
+  });
+
+  it(`keeps the values of ${TAKEN_KEYS} keys under a prefix, the one kept longest going first`, async () => {
+    const { bridge, device } = await connect();
+    await device.keepValues("p/");
+    for (let i = 0; i < TAKEN_KEYS + 1; i += 1) bridge.push({ [`p/${i}`]: { u64: i } });
+    bridge.push({ "elsewhere/k": { u64: 1 } });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(JSON.parse(await device.takeValues("p/0"))).toEqual([]);
+    expect(JSON.parse(await device.takeValues(`p/${TAKEN_KEYS}`))).toEqual([{ u64: TAKEN_KEYS }]);
+    expect(JSON.parse(await device.takeValues(`p/${TAKEN_KEYS}`))).toEqual([]);
   });
 });

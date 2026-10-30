@@ -47,6 +47,14 @@ export interface AroraDevice {
    * steps between two the editor sees.
    */
   takeValues?(key: string): DeviceAnswer<string>;
+  /**
+   * Keep, from now on, every value pushed to a device-relative key starting
+   * with `prefix`, for `takeValues` to give: a key that appears with its
+   * first values, as a trace's feedback key does, loses none of them. A key
+   * kept this way gives nothing at its first `takeValues` but what it was
+   * pushed.
+   */
+  keepValues?(prefix: string): DeviceAnswer<void>;
   /** The device's keys and what they are: a JSON array of `[key, KeyMeta]`, device-relative. */
   listKeys(prefix?: string): DeviceAnswer<string>;
   /**
@@ -122,7 +130,7 @@ export class DeviceRuntime implements BehaviorRuntime {
   #view = new TraceView();
   /** The behavior's root, whose status is the report's. */
   #root: string | undefined;
-  /** Where the interpreter keeps its traces' keys, once a trace says: `arora/tasks/<module>/<TRACE>/`. */
+  /** Where the interpreter keeps its traces' keys, once one is started: `arora/tasks/<module>/<TRACE>/`. */
   #traces: string | null = null;
   /** The behavior's nodes: a trace reports the interpreter's own besides. */
   #nodes = new Set<string>();
@@ -221,14 +229,20 @@ export class DeviceRuntime implements BehaviorRuntime {
     const { device, trace } = this.#options;
     await this.#halt();
     if (!trace) return;
+    const call = trace.traceCall({ values: watched });
+    // A trace's keys sit under `arora/tasks/<module>/<function>/<run id>/`: a
+    // device that keeps values keeps the reports from the first, which may be
+    // pushed before the call is answered.
+    const { module_id: module, id } = JSON.parse(call) as { module_id: string; id: string };
+    this.#traces = `arora/tasks/${module}/${id}/`;
+    await device.keepValues?.(this.#traces);
     let handle: TraceHandle;
     try {
-      handle = trace.traceHandle(await device.call(trace.traceCall({ values: watched })));
+      handle = trace.traceHandle(await device.call(call));
     } catch {
       return;
     }
     this.#trace = { handle, watched };
-    this.#traces = `${handle.status.split("/").slice(0, -2).join("/")}/`;
     // A device applying a call with a step may have reported already.
     await this.#readTrace(false);
   }
@@ -238,8 +252,11 @@ export class DeviceRuntime implements BehaviorRuntime {
     const running = this.#trace;
     this.#trace = null;
     if (!running) return;
+    const { device } = this.#options;
     try {
-      await this.#options.device.call(JSON.stringify(running.handle.stop));
+      await device.call(JSON.stringify(running.handle.stop));
+      // What it reported and was not read goes with it.
+      await device.takeValues?.(running.handle.feedback[0]!);
     } catch {
       // The trace ended with the behavior or the device: nothing to halt.
     }

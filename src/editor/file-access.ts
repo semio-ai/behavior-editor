@@ -108,10 +108,10 @@ export async function reopenBehaviorFile(recent: {
   name: string;
   format: FileFormat;
   handle: FileSystemFileHandle | null;
-  text: string | null;
+  text: string;
 }): Promise<BehaviorFile & { text: string }> {
   const { handle } = recent;
-  if (!handle) return { name: recent.name, format: recent.format, handle: null, text: recent.text ?? "" };
+  if (!handle) return { name: recent.name, format: recent.format, handle: null, text: recent.text };
   const permissioned = handle as FileSystemFileHandle & PermissionedHandle;
   const mode = { mode: "read" } as const;
   if (permissioned.queryPermission && (await permissioned.queryPermission(mode)) !== "granted") {

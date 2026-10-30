@@ -76,10 +76,7 @@ describe("the start screen", () => {
     expect(within(start).getByRole("button", { name: "New behavior" })).toBeTruthy();
     expect(within(start).getByRole("button", { name: "Open…" })).toBeTruthy();
     const shown = within(screen.getByRole("region", { name: "Examples" })).getAllByRole("button");
-    expect(shown.map((b) => b.textContent)).toEqual([
-      `Order${ORDER.file}`,
-      `Greet${GREET.file}`,
-    ]);
+    expect(shown.map((b) => b.textContent)).toEqual([`Order${ORDER.file}`, `Greet${GREET.file}`]);
     expect(within(screen.getByRole("region", { name: "Recent" })).getByText(/are listed here/));
     expect(screen.queryByRole("tree")).toBeNull();
     expect(screen.queryByRole("combobox")).toBeNull();
@@ -150,9 +147,11 @@ describe("the start screen", () => {
 
     await user.click(screen.getByRole("button", { name: "File" }));
     const recent = screen.getByRole("group", { name: "Open recent" });
-    expect(within(recent).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
-      "greet.bt",
-    ]);
+    expect(
+      within(recent)
+        .getAllByRole("menuitem")
+        .map((m) => m.textContent),
+    ).toEqual(["greet.bt"]);
     await user.click(screen.getByRole("menuitem", { name: "Close" }));
 
     vi.stubGlobal("showOpenFilePicker", () => Promise.reject(new Error("no picker expected")));
@@ -177,10 +176,11 @@ describe("the start screen", () => {
 
     await user.click(screen.getByRole("button", { name: "File" }));
     const recent = screen.getByRole("group", { name: "Open recent" });
-    expect(within(recent).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
-      "greet.bt",
-      "order.bt",
-    ]);
+    expect(
+      within(recent)
+        .getAllByRole("menuitem")
+        .map((m) => m.textContent),
+    ).toEqual(["greet.bt", "order.bt"]);
     await user.click(within(recent).getByRole("menuitem", { name: "order.bt" }));
     await waitFor(() => expect(text()).toHaveValue(ORDER.text));
   });
@@ -217,12 +217,43 @@ describe("the start screen", () => {
     await waitFor(() => expect(text()).toHaveValue(GREET.text));
     await user.click(screen.getByRole("button", { name: "File" }));
     await user.click(screen.getByRole("menuitem", { name: "Close" }));
-    await user.click(
-      screen.getByRole("button", { name: "Remove greet.bt from the recent files" }),
+    await user.click(screen.getByRole("button", { name: "Remove greet.bt from the recent files" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^greet\.bt/ })).toBeNull());
+  });
+
+  it("opens a file on the editor's runtime only once the one it replaces stopped", async () => {
+    const runtime = new MockArora({ store: ORDER.store });
+    const calls: string[] = [];
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { start, step, stop } = runtime;
+    runtime.start = (loaded) => {
+      calls.push("start");
+      return start.call(runtime, loaded);
+    };
+    runtime.stop = () => {
+      calls.push("stop");
+      return stop.call(runtime);
+    };
+    runtime.step = async (dt) => {
+      calls.push("step");
+      await held;
+      return step.call(runtime, dt);
+    };
+    vi.stubGlobal("showOpenFilePicker", () =>
+      Promise.resolve([handle("greet.bt", GREET.text).handle]),
     );
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /^greet\.bt/ })).toBeNull(),
-    );
+    const { user } = setup({ runtime, defaultText: ORDER.text, fileName: ORDER.file });
+    await waitFor(() => expect(calls).toEqual(["start"]));
+    await user.click(screen.getByRole("button", { name: "Step" }));
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Open…" }));
+    await waitFor(() => expect(text()).toHaveValue(GREET.text));
+    // Long enough for the new file to have started, were it not waiting for the stop.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(calls).toEqual(["start", "step"]);
+    release();
+    await waitFor(() => expect(calls).toEqual(["start", "step", "stop", "start"]));
   });
 
   it("says why a recent file did not open", async () => {

@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BehaviorFile } from "./file-access";
@@ -5,11 +7,13 @@ import {
   RECENT_LIMIT,
   type RecentStore,
   forgetFile,
+  heldInMemory,
   indexedDbStore,
   listRecent,
   memoryStore,
   openRecentStore,
   rememberFile,
+  useRecentFiles,
 } from "./recent-files";
 
 const file = (name: string): BehaviorFile => ({ name, format: "bt", handle: null });
@@ -75,8 +79,8 @@ describe("recent files", () => {
     await rememberFile(store, other, "other", 2);
     const list = await rememberFile(store, one, "first, again", 3);
     expect(list.map((e) => [(e.handle as unknown as { path: string }).path, e.text])).toEqual([
-      ["/one/x.bt", null],
-      ["/two/x.bt", null],
+      ["/one/x.bt", "first, again"],
+      ["/two/x.bt", "other"],
     ]);
   });
 
@@ -89,7 +93,50 @@ describe("recent files", () => {
       "the text",
       1,
     );
-    expect(list).toEqual([expect.objectContaining({ name: "x.bt", handle: null, text: "the text" })]);
+    expect(list).toEqual([
+      expect.objectContaining({ name: "x.bt", handle: null, text: "the text" }),
+    ]);
+  });
+
+  it("keeps a handle storage cannot keep for as long as the page, and the file once", async () => {
+    const x = { name: "x.bt", format: "bt" as const, handle: handle("/x.bt") };
+    const page = await openRecentStore();
+    const [kept] = await rememberFile(page, x, "first", 1);
+    expect(kept!.handle).toBe(x.handle);
+    // The next page reads the entry by its contents, and saving the file again replaces it.
+    const next = await openRecentStore();
+    expect((await listRecent(next)).map((e) => [e.handle, e.text])).toEqual([[null, "first"]]);
+    const list = await rememberFile(next, x, "second", 2);
+    expect(list.map((e) => [e.id, e.text])).toEqual([[kept!.id, "second"]]);
+  });
+
+  it("goes on in memory when storage fails once open", async () => {
+    let failing = false;
+    const kept = memoryStore();
+    const store = heldInMemory({
+      list: () => (failing ? Promise.reject(new Error("gone")) : kept.list()),
+      put: (e) => (failing ? Promise.reject(new Error("quota")) : kept.put(e)),
+      remove: (id) => (failing ? Promise.reject(new Error("gone")) : kept.remove(id)),
+    });
+    const [a] = await rememberFile(store, file("a.bt"), "a", 1);
+    failing = true;
+    await rememberFile(store, file("b.bt"), "b", 2);
+    expect((await listRecent(store)).map((e) => e.name)).toEqual(["b.bt", "a.bt"]);
+    expect((await forgetFile(store, a!.id)).map((e) => e.name)).toEqual(["b.bt"]);
+  });
+
+  it("makes each change from the list the one before left", async () => {
+    const store = Promise.resolve(memoryStore());
+    const open = () => store;
+    const { result } = renderHook(() => useRecentFiles(open));
+    act(() => {
+      result.current.remember(file("a.bt"), "1");
+      result.current.remember(file("a.bt"), "2");
+      for (let i = 0; i < RECENT_LIMIT + 2; i += 1) result.current.remember(file(`f${i}.bt`), "");
+    });
+    await waitFor(() => expect(result.current.files).toHaveLength(RECENT_LIMIT));
+    expect(result.current.files.filter((e) => e.name === "a.bt")).toEqual([]);
+    expect(result.current.files[0]!.name).toBe(`f${RECENT_LIMIT + 1}.bt`);
   });
 
   it("lists nothing it did not write", async () => {

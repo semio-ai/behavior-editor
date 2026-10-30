@@ -4,8 +4,8 @@ import { defineConfig, devices } from "@playwright/test";
 const DEMO_PORT = 5287;
 
 /**
- * The end-to-end suite: the demo in Chromium, on the mock, the Arora device
- * in the page, and a native Arora device the suite starts (`e2e/device`).
+ * The end-to-end suite: the demo in Chromium, on its local Arora and on a
+ * native Arora device the suite starts (`e2e/device`).
  * One worker: the device's bridge serves one editor at a time. Each step waits
  * on what the page states, with timeouts generous enough for a loaded host.
  */

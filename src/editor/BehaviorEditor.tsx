@@ -949,10 +949,6 @@ function ViewTabs({
 }
 
 /**
- * Where the behavior runs: on the device attached, the editor only following
- * it, or simulated in the page, on the editor's runtime or the example's.
- */
-/**
  * Open the behavior the device runs in place of the file, asking first while
  * the file has unsaved changes; disabled, saying why, while it reads the
  * device's behavior, while the device does not say what it runs, and while
@@ -1004,6 +1000,10 @@ function DeviceBehaviorButton({
   );
 }
 
+/**
+ * Where the behavior runs: on the device attached, the editor only following
+ * it, or simulated in the page, on the editor's runtime or the example's.
+ */
 function RunsOn({ session }: { session: DeviceSession | null }) {
   const state = useSessionState(session);
   const lost = state?.status === "lost";

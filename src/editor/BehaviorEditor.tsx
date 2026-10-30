@@ -111,6 +111,11 @@ export function BehaviorEditor({
   autoPlay = true,
 }: BehaviorEditorProps) {
   const host = useMemo(() => runtime ?? new MockArora(), [runtime]);
+  // The editor's runtime, which an open finishing late checks it still is.
+  const shownHost = useRef(host);
+  useEffect(() => {
+    shownHost.current = host;
+  }, [host]);
   const recent = useRecentFiles();
   const serial = useRef(0);
   const [session, setSession] = useState<Session | null>(() => {
@@ -142,7 +147,14 @@ export function BehaviorEditor({
   const openAsText = async (asked: number, opened: BehaviorFile & { text: string }) => {
     let next = opened.text;
     if (opened.format !== "bt") {
-      const out = language.openFile(opened.text, opened.format, await host.functions());
+      const from = host;
+      const functions = await from.functions();
+      // Opened with another runtime's functions, the file would name functions
+      // the runtime it opens on may not have: it opens nothing.
+      if (shownHost.current !== from) {
+        throw new Error(`${opened.name} was not opened: the runtime changed while it was`);
+      }
+      const out = language.openFile(opened.text, opened.format, functions);
       if ("problems" in out) {
         throw new Error(`${opened.name} does not open: ${problemsText(out.problems)}`);
       }

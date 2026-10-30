@@ -173,6 +173,21 @@ describe("the diagram's outputs", () => {
     expect(across).toBeLessThan(reader.y);
   });
 
+  it("routes a wire to a reader rows under its producer clear of the nodes between", () => {
+    const layout = layoutOf(
+      "sequence\n  a: identity(x: 1)\n  succeed\n  succeed\n  succeed\n  identity(x: @a._ret)\n",
+    );
+    const wire = layout.wires.find((w) => w.from === "0.0" && w.to === "0.4")!;
+    const between = ["0.1", "0.2", "0.3"].map((k) => layout.boxes.get(k)!);
+    expect(between[0]!.y).toBeGreaterThan(layout.boxes.get("0.0")!.y);
+    const [x, across] = [...wire.d.matchAll(/[HV](-?[\d.]+)/g)].map((m) => Number(m[1]));
+    for (const b of between) {
+      // The lane passes no node, and the way down passes right of each.
+      expect(across! < b.y || across! > b.y + b.h).toBe(true);
+      expect(x).toBeGreaterThan(b.x + b.w);
+    }
+  });
+
   it("curves a wire to the sibling on its right within the gap between them", () => {
     const layout = layoutOf("sequence\n  a: identity(x: 1)\n  identity(x: @a._ret)\n");
     const [producer, reader] = [layout.boxes.get("0.0")!, layout.boxes.get("0.1")!];

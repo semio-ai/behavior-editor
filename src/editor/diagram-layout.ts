@@ -317,14 +317,32 @@ export function layoutDiagram(
         // right of both nodes, then across the gap below its producer when
         // the reader is under it, or over the top of both, and into the port
         // from its left, so it crosses neither.
-        const xr = Math.max(x1, to.x + to.w) + 9;
+        const x0 = x2 - 10;
         const under = to.y > from.y + from.h;
-        const across = under ? (from.y + from.h + to.y) / 2 : Math.min(from.y, to.y) - 8;
+        // Its lane: just above the reader when it is under the producer, the
+        // first gap any node between them leaves open, or over both.
+        const lanes = under
+          ? [to.y - SG / 2, (from.y + from.h + to.y) / 2, Math.min(from.y, to.y) - 8]
+          : [Math.min(from.y, to.y) - 8];
+        const others = [...boxes.values()].filter((b) => b !== from && b !== to);
+        const crosses = (b: Box, y: number) =>
+          b.y - 3 < y && y < b.y + b.h + 3 && b.x < Math.max(x1, to.x + to.w) + 9 && b.x + b.w > x0;
+        const across = lanes.find((y) => !others.some((b) => crosses(b, y))) ?? lanes[0]!;
+        // Its way down or up, right of every node it passes.
+        const [top, bottom] = [Math.min(y1, across), Math.max(y1, across)];
+        const xr =
+          Math.max(
+            x1,
+            to.x + to.w,
+            ...others
+              .filter((b) => b.y < bottom && b.y + b.h > top && b.x + b.w > Math.min(from.x, to.x))
+              .map((b) => b.x + b.w),
+          ) + 9;
         const bend = Math.min(Math.max(36, (x2 - x1) / 2), x2 - x1);
         const d =
           x2 > x1
             ? `M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`
-            : `M${x1},${y1} H${xr} V${across} H${x2 - 10} V${y2} H${x2}`;
+            : `M${x1},${y1} H${xr} V${across} H${x0} V${y2} H${x2}`;
         wires.push({ id, from: from.row.key, to: to.row.key, port: direct ? i : null, d });
       }
     });

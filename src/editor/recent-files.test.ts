@@ -139,6 +139,22 @@ describe("recent files", () => {
     expect(result.current.files[0]!.name).toBe(`f${RECENT_LIMIT + 1}.bt`);
   });
 
+  it("makes the changes of two editors sharing a store one after the other", async () => {
+    const store = Promise.resolve(memoryStore());
+    const open = () => store;
+    const one = renderHook(() => useRecentFiles(open));
+    const two = renderHook(() => useRecentFiles(open));
+    act(() => {
+      for (let i = 0; i < RECENT_LIMIT; i += 1) one.result.current.remember(file(`a${i}.bt`), "");
+      for (let i = 0; i < RECENT_LIMIT; i += 1) two.result.current.remember(file(`a${i}.bt`), "");
+      two.result.current.remember(file("last.bt"), "");
+    });
+    await waitFor(() => expect(two.result.current.files[0]?.name).toBe("last.bt"));
+    const list = await listRecent(await store);
+    expect(list).toHaveLength(RECENT_LIMIT);
+    expect(new Set(list.map((e) => e.name)).size).toBe(RECENT_LIMIT);
+  });
+
   it("lists nothing it did not write", async () => {
     const store = await indexedDbStore();
     await rememberFile(store, file("a.bt"), "a", 1);

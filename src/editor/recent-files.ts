@@ -7,7 +7,7 @@
  * blocked) or fails: the list then lives as long as the page, and nothing the
  * editor does fails for it.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BehaviorFile } from "./file-access";
 import { FILE_FORMATS, type FileFormat } from "./file-formats";
 
@@ -256,6 +256,13 @@ export interface RecentFiles {
 let thisPage: Promise<RecentStore> | null = null;
 
 /**
+ * The changes made to each store, in order: every editor sharing a store
+ * makes its change from the list the one before left, whichever editor made
+ * that one.
+ */
+const changes = new WeakMap<Promise<RecentStore>, Promise<unknown>>();
+
+/**
  * This page's store, opened once: every editor on the page shares it, and
  * its memory, the list where storage fails, lasts as long as the page.
  */
@@ -271,16 +278,15 @@ export function reopenPageStore() {
 
 /**
  * The recent files of this browser, kept in `store` (this browser's by
- * default). Each change waits for the one before, so each starts from the
- * list the one before left.
+ * default). Each change waits for the one before on the same store, so each
+ * starts from the list the one before left.
  */
 export function useRecentFiles(store: () => Promise<RecentStore> = pageStore): RecentFiles {
   const held = useMemo(() => store(), [store]);
-  const changes = useRef<Promise<unknown>>(Promise.resolve());
   const change = useCallback(
     (run: (s: RecentStore) => Promise<RecentFile[]>) => {
-      const next = changes.current.then(() => held).then(run);
-      changes.current = next.catch(() => undefined);
+      const next = (changes.get(held) ?? Promise.resolve()).then(() => held).then(run);
+      changes.set(held, next.catch(() => undefined));
       return next;
     },
     [held],

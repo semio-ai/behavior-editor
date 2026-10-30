@@ -42,6 +42,8 @@ export interface TraceReport {
   values?: { node: string; port: string; value: Value }[];
   /** The nodes an edit restarted: their status, activity and values are stated anew. */
   restarted?: string[];
+  /** The behavior's revision, in a first report and in the report after each change. */
+  revision?: number;
 }
 
 const STATUS: Record<Exclude<TraceStatus, "not_reached">, Status> = {
@@ -72,6 +74,11 @@ export class TraceView {
   #activity = new Map<string, DetachedActivity>();
   #values = new Map<string, Value>();
   #last: number | null = null;
+
+  /** The interpreter's tick the last report read was written at; `null` before the first. */
+  get tick(): number | null {
+    return this.#last;
+  }
 
   /**
    * Fold `report` in. A first report starts the view afresh; a later report
@@ -131,6 +138,7 @@ export class TraceView {
   }
 
   #clear() {
+    this.#last = null;
     this.#status.clear();
     this.#activity.clear();
     this.#values.clear();

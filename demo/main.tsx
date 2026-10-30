@@ -1,25 +1,26 @@
-import { type FormEvent, StrictMode, useEffect, useRef, useState } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { EXAMPLES } from "../fixtures/examples";
 import { DATAFLOW_INPUTS } from "../fixtures/devices/dataflow";
 import dataflow from "../fixtures/devices/dataflow.bt?raw";
+import { PageBridge } from "../fixtures/page-bridge";
 import {
   BehaviorEditor,
   type BehaviorExample,
   type BehaviorText,
   DeviceRuntime,
-  LOCAL_BRIDGE_URL,
   MATH_MODULE_ID,
   MockArora,
-  WebSocketDevice,
   createBehaviorText,
-  whenIdle,
+  useDeviceSession,
 } from "../src";
+import { WebSocketConnectionBar } from "../src/websocket";
 import "../src/styles.css";
 import initDataflowDevice, { DataflowDevice } from "../device/pkg/dataflow_device.js";
 import initBehaviorText, * as behaviorText from "../wasm/pkg/behavior_text.js";
 
 const DEVICE = "D";
+const PAGE_DEVICE = "P";
 
 /**
  * The NGBT spectrum's examples, each on a mock device seeded as the spectrum
@@ -57,148 +58,36 @@ function examples(language: BehaviorText): BehaviorExample[] {
   return [...mocked, onDevice];
 }
 
-/** A device the demo is connected to, over its open local bridge. */
-interface Connected {
-  device: WebSocketDevice;
-  runtime: DeviceRuntime;
-}
-
 /**
- * The editor, on the mock until the person connects it to a device: then
- * every file but an example runs on that device.
+ * The editor, on the mock until the person connects it to a device: over a
+ * device's open local bridge, by URL, or to an Arora device in the page, a
+ * bridge the host makes itself. Every file but an example then runs there.
  */
 function Demo({ language, offered }: { language: BehaviorText; offered: BehaviorExample[] }) {
-  const [connected, setConnected] = useState<Connected | null>(null);
-  const [asking, setAsking] = useState(false);
-  const [url, setUrl] = useState(LOCAL_BRIDGE_URL);
-  const [connecting, setConnecting] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  /** Counts the connections asked for: one cancelled, or asked again, is let go as it opens. */
-  const attempts = useRef(0);
-  /** A connection the person let go of, closed once the editor stopped the behavior on it. */
-  const [releasing, setReleasing] = useState<Connected | null>(null);
-  /**
-   * Settles once the connection let go of last is closed: the bridge serves
-   * one client, so a new connection would take its place before the editor
-   * stopped the behavior on it.
-   */
-  const released = useRef<Promise<void>>(Promise.resolve());
-  /** Settles once the last attempt to connect has, its connection closed if let go of meanwhile. */
-  const settled = useRef<Promise<unknown>>(Promise.resolve());
-  // This runs after the editor queued the stop of the behavior on the device,
-  // in the same commit: the connection closes once that ran.
-  useEffect(() => {
-    if (!releasing) return;
-    released.current = whenIdle(releasing.runtime).then(() => releasing.device.close());
-  }, [releasing]);
-
-  // A connection the device closes, or that another client takes, says why.
-  useEffect(() => {
-    if (!connected) return undefined;
-    let current = true;
-    connected.device.closed.then((reason) => {
-      if (!current) return;
-      setConnected(null);
-      setProblem(reason);
-    });
-    return () => {
-      current = false;
-    };
-  }, [connected]);
-
-  const connect = (event: FormEvent) => {
-    event.preventDefault();
-    const attempt = ++attempts.current;
-    setConnecting(true);
-    setProblem(null);
-    // One attempt at a time: a cancelled one still opening would otherwise
-    // take the bridge's one client slot from this one.
-    const opening = Promise.all([released.current, settled.current]).then(() =>
-      attempts.current === attempt ? WebSocketDevice.connect(url) : null,
-    );
-    settled.current = opening
-      .then(async (device) => {
-        if (device && attempts.current !== attempt) {
-          device.close();
-          await device.closed;
-        }
-      })
-      .catch(() => undefined);
-    opening
-      .then((device) => {
-        if (!device || attempts.current !== attempt) return;
-        const runtime = new DeviceRuntime({
-          device,
-          loadCall: (graph) => language.loadCall(graph),
-          editCall: (diff) => language.editCall(diff),
-          trace: language,
-        });
-        setConnected({ device, runtime });
-        setAsking(false);
-      })
-      .catch((e: unknown) => {
-        if (attempts.current === attempt) setProblem(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => {
-        if (attempts.current === attempt) setConnecting(false);
-      });
+  const connection = useDeviceSession({ language });
+  const inPage = () => {
+    const device = new DataflowDevice(PAGE_DEVICE, JSON.stringify(DATAFLOW_INPUTS));
+    const bridge = new PageBridge(device, { namespace: PAGE_DEVICE });
+    // The device goes with its connection.
+    void bridge.closed.then(() => device.free());
+    connection.connect(bridge, "the Arora device in this page");
   };
-  const cancel = () => {
-    attempts.current += 1;
-    setConnecting(false);
-    setAsking(false);
-  };
-  const disconnect = () => {
-    setReleasing(connected);
-    setConnected(null);
-  };
-
   return (
     <div style={{ maxWidth: 1600, margin: "0 auto" }}>
       <div
         className="be-root"
         style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}
       >
-        {connected ? (
-          <>
-            <span role="status">{`Connected to the device at ${connected.device.url}`}</span>
-            <button type="button" onClick={disconnect}>
-              Disconnect
-            </button>
-          </>
-        ) : asking ? (
-          <form onSubmit={connect} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <label className="be-inline">
-              Device&apos;s bridge
-              <input
-                type="text"
-                inputMode="url"
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                size={28}
-              />
-            </label>
-            <button type="submit" className="be-primary" disabled={connecting}>
-              {connecting ? "Connecting…" : "Connect"}
-            </button>
-            <button type="button" onClick={cancel}>
-              Cancel
-            </button>
-          </form>
-        ) : (
-          <button type="button" onClick={() => setAsking(true)}>
-            Connect to a device…
+        <WebSocketConnectionBar connection={connection} />
+        {connection.state?.status !== "connected" && (
+          <button type="button" onClick={inPage}>
+            Use an Arora device in this page
           </button>
-        )}
-        {problem && (
-          <span className="be-problem" role="alert">
-            {problem}
-          </span>
         )}
       </div>
       <BehaviorEditor
         language={language}
-        runtime={connected?.runtime}
+        session={connection.session}
         examples={offered}
         moduleNames={{ [MATH_MODULE_ID]: "math" }}
       />

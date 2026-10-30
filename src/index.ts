@@ -50,13 +50,40 @@ export {
 export { MATH_MODULE_ID } from "./runtime/math-module";
 export {
   DeviceRuntime,
+  followed,
   type AroraDevice,
   type DeviceAnswer,
   type DeviceRuntimeOptions,
+  type FollowedBehavior,
 } from "./runtime/device-runtime";
+export { parseExact } from "./runtime/exact-json";
+
+export type {
+  BridgeClient,
+  BridgeClosure,
+  BridgeKey,
+  Call as AroraCall,
+  CallResult as AroraCallResult,
+  KeyMeta,
+} from "./bridge/bridge-client";
+export { BridgeDevice } from "./bridge/bridge-device";
 export {
-  LOCAL_BRIDGE_URL,
-  WebSocketDevice,
-  type WebSocketDeviceOptions,
-  type WebSocketLike,
-} from "./runtime/websocket-device";
+  DeviceSession,
+  DT_KEY,
+  REVISION_KEY,
+  type Backoff,
+  type BehaviorChange,
+  type DeviceBehavior,
+  type DeviceSessionOptions,
+  type DeviceStatus,
+  type SessionEvents,
+  type SessionLanguage,
+  type SessionState,
+  type SessionTick,
+} from "./session/device-session";
+export {
+  useDeviceSession,
+  useSessionState,
+  type DeviceConnection,
+} from "./session/use-device-session";
+export { ConnectionStatus } from "./session/ConnectionStatus";

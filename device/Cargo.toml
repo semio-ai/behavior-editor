@@ -14,8 +14,9 @@ crate-type = ["cdylib", "rlib"]
 # The device: the runtime, without its native hosts (no default features), so
 # it builds for the browser. On a native target it runs without a guest
 # module, which this device loads none of: its native tests run the same
-# device.
-arora = { version = "17", default-features = false }
+# device. 17.1: its interpreter answers READ and keeps the behavior's
+# revision.
+arora = { version = "17.1", default-features = false }
 # `@arora/dataflow`, the functions a behavior's nodes call. Without `urdf_ik`:
 # the URDF nodes are `@arora/kinematics`', which the device does not carry.
 arora-dataflow-nodes = { version = "2", default-features = false }

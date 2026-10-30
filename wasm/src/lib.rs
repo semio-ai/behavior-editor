@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use arora_behavior::graph::{Graph, GraphDiff};
 use arora_behavior::interpreter_module::{
-    decode_spawn_result, encode_edit, encode_load, encode_trace,
+    decode_read_result, decode_spawn_result, encode_edit, encode_load, encode_read, encode_trace,
 };
 use arora_behavior::trace::{decode_report, TraceOptions};
 use arora_behavior::{FunctionIndex, ModuleFunction};
@@ -140,6 +140,24 @@ pub fn edit_call(diff_json: &str) -> Result<String, JsError> {
 pub fn trace_call(options_json: &str) -> Result<String, JsError> {
     let options: TraceOptions = from_json(options_json).map_err(error)?;
     serde_json::to_string(&encode_trace(&options)).map_err(error)
+}
+
+/// The `Call` JSON that reads a device's behavior:
+/// `arora_behavior::interpreter_module`'s `READ`, which answers the graph the
+/// interpreter runs, in the form `load` takes, and its revision.
+#[wasm_bindgen(js_name = readCall)]
+pub fn read_call() -> Result<String, JsError> {
+    serde_json::to_string(&encode_read()).map_err(error)
+}
+
+/// The behavior a `READ` answered, out of its `CallResult` JSON:
+/// `{ graph, revision }`, the graph's JSON as `load_call` takes it.
+#[wasm_bindgen(js_name = readResult)]
+pub fn read_result(result_json: &str) -> Result<String, JsError> {
+    let result: arora_types::call::CallResult = from_json(result_json).map_err(error)?;
+    let behavior = decode_read_result(&result.ret).map_err(error)?;
+    serde_json::to_string(&json!({ "graph": behavior.graph, "revision": behavior.revision }))
+        .map_err(error)
 }
 
 /// The trace's `TaskHandle` JSON (`id`, the `stop` call, the `status` key,
@@ -324,7 +342,9 @@ impl Utf16Lines {
 mod tests {
     use super::*;
 
-    use arora_behavior::interpreter_module::{decode_trace, encode_spawn_result, TRACE};
+    use arora_behavior::interpreter_module::{
+        decode_trace, encode_read_result, encode_spawn_result, READ, TRACE,
+    };
     use arora_behavior::trace::{encode_report, Activity, NodeStatus, PortValue, TraceReport};
     use arora_behavior::TaskHandle;
 
@@ -372,6 +392,35 @@ mod tests {
     }
 
     #[test]
+    fn a_read_call_reads_the_behavior_and_its_answer_gives_graph_and_revision() {
+        let call: arora_types::call::Call =
+            serde_json::from_str(&read_call().map_err(|_| "refused").unwrap()).unwrap();
+        assert_eq!(call.id, READ);
+        assert!(call.args.is_empty());
+
+        let graph: Graph = serde_json::from_value(json!({
+            "root": Uuid::from_u128(3),
+            "nodes": [{ "id": Uuid::from_u128(3), "function": Uuid::from_u128(4) }],
+        }))
+        .unwrap();
+        let result = arora_types::call::CallResult {
+            ret: encode_read_result(&arora_behavior::LoadedBehavior {
+                revision: 2,
+                graph: graph.clone(),
+            }),
+            mutated: vec![],
+        };
+        let read: Value = serde_json::from_str(
+            &read_result(&serde_json::to_string(&result).unwrap())
+                .map_err(|_| "refused")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(read["revision"], json!(2));
+        assert_eq!(read["graph"], serde_json::to_value(&graph).unwrap());
+    }
+
+    #[test]
     fn a_trace_report_is_read_from_its_feedback_value() {
         let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
         let report = TraceReport {
@@ -385,6 +434,7 @@ mod tests {
                 value: arora_types::value::Value::F64(0.25),
             }],
             restarted: vec![a],
+            revision: Some(7),
         };
         let value = serde_json::to_string(&encode_report(&report)).unwrap();
         let read: Value =
@@ -398,6 +448,7 @@ mod tests {
                 "activity": [[b, "cached"]],
                 "values": [{ "node": b, "port": RET, "value": { "f64": 0.25 } }],
                 "restarted": [a],
+                "revision": 7,
             })
         );
     }

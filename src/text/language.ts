@@ -53,6 +53,15 @@ export interface BehaviorText {
    * the detached activity, and the outputs of `options.values`' nodes.
    */
   traceCall(options: TraceOptions): string;
+  /**
+   * The `arora_types::call::Call` JSON that reads a device's behavior: the
+   * interpreter's `READ`, which answers the graph it runs and its revision.
+   * Absent from a language built without it: a device's behavior is then not
+   * read.
+   */
+  readCall?(): string;
+  /** The behavior and its revision, out of the `CallResult` JSON a `READ` answered. */
+  readResult?(resultJson: string): { graph: Graph; revision: number };
   /** The trace's handle, out of the `CallResult` JSON its call answered. */
   traceHandle(resultJson: string): TraceHandle;
   /** A trace's report, out of the `Value` JSON its feedback key holds. */

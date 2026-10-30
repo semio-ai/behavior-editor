@@ -63,9 +63,9 @@ dependencies = [
 
 [[package]]
 name = "arora-behavior"
-version = "10.0.0"
+version = "10.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a86aef0de094693d54e21c6d4c317c78ca4e6e62198519e273566a2cd37e1af"
+checksum = "18438eeaf32d611067efe83683d5632cd9dd3f7d00cdc592d6aaf608e6856da6"
 dependencies = [
  "arora-types",
  "semver",
@@ -76,9 +76,9 @@ dependencies = [
 
 [[package]]
 name = "arora-behavior-tree"
-version = "10.0.0"
+version = "10.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "970f8608f9fac0e74d43b913599127e0edab05e858b5cc0a46bbd6d2aff8e8ee"
+checksum = "0c628ad262c113af84164cd9603438dae1fd7aa34ee3a58ea09baa8d8d86efce"
 dependencies = [
  "arora-behavior",
  "arora-behavior-tree-types",

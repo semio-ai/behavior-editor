@@ -348,6 +348,101 @@
   border-color: var(--be-run);
 }
 
+/* On a device: its clock in place of the editor's, and what it runs. */
+.be-device-bar .be-readout {
+  min-width: 0;
+}
+.be-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.be-switch input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--be-accent);
+}
+.be-banner {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--be-accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--be-accent) 7%, var(--be-panel));
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.be-banner p {
+  margin: 0;
+}
+.be-banner-warn {
+  border-color: var(--be-warning);
+  background: color-mix(in srgb, var(--be-warning) 9%, var(--be-panel));
+}
+.be-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.be-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--be-line);
+}
+.be-compare ul {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font: 12px var(--be-mono);
+  overflow-wrap: anywhere;
+}
+.be-compare li {
+  padding: 1px 0;
+}
+.be-root button.be-link {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: 12px var(--be-mono);
+  color: var(--be-accent);
+  text-align: left;
+  text-decoration: underline;
+}
+
+/* A device connection: where it stands, and how to make it. */
+.be-connection,
+.be-connection-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 13px;
+}
+.be-connection-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--be-cached);
+  flex: none;
+}
+.be-connection-connected {
+  background: var(--be-ok);
+}
+.be-connection-connecting,
+.be-connection-lost {
+  background: var(--be-run);
+}
+.be-connection-closed {
+  background: var(--be-fail);
+}
+
 /* Layout: diagram, text and side panel side by side when wide; tabs when narrow. */
 .be-main {
   display: grid;

@@ -25,6 +25,9 @@ export interface BehaviorTextExports {
   diff(previousJson: string, nextJson: string): string;
   editCall(diffJson: string): string;
   traceCall(optionsJson: string): string;
+  /** Present in a build whose interpreter reads its behavior. */
+  readCall?(): string;
+  readResult?(resultJson: string): string;
   traceHandle(resultJson: string): string;
   traceReport(valueJson: string): string;
   openFile(file: string, format: string, functionsJson: string): string;
@@ -63,6 +66,13 @@ export function createBehaviorText(exports: BehaviorTextExports): BehaviorText {
       JSON.parse(exports.diff(JSON.stringify(previous), JSON.stringify(next))) as GraphDiff,
     editCall: (diff: GraphDiff) => exports.editCall(JSON.stringify(diff)),
     traceCall: (options: TraceOptions) => exports.traceCall(JSON.stringify(options)),
+    ...(exports.readCall && exports.readResult
+      ? {
+          readCall: exports.readCall,
+          readResult: (resultJson: string) =>
+            JSON.parse(exports.readResult!(resultJson)) as { graph: Graph; revision: number },
+        }
+      : {}),
     traceHandle: (resultJson: string) => JSON.parse(exports.traceHandle(resultJson)) as TraceHandle,
     traceReport: (valueJson: string) => JSON.parse(exports.traceReport(valueJson)) as TraceReport,
     openFile: (file: string, format: GraphFileFormat, functions: MethodSignature[]) =>

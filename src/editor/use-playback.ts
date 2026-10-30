@@ -56,19 +56,21 @@ interface OnRuntime {
  * one opening the next on the same runtime stop the first before starting
  * the second.
  */
-const queues = new WeakMap<BehaviorRuntime, Promise<unknown>>();
+const queues = new WeakMap<object, Promise<unknown>>();
 
 /**
  * Settles once every call queued on `runtime` so far has: what lets go of a
  * runtime waits for, the stop of the editor that let go of it among them.
  */
 /** The functions `runtime` offers, asked in the queue of its calls. */
-export function askFunctions(runtime: BehaviorRuntime): Promise<MethodSignature[]> {
+export function askFunctions(
+  runtime: Pick<BehaviorRuntime, "functions">,
+): Promise<MethodSignature[]> {
   return queued(runtime, () => runtime.functions());
 }
 
 /** Run `task` on `runtime` once every call queued on it before has run. */
-function queued<T>(runtime: BehaviorRuntime, task: () => Promise<T>): Promise<T> {
+function queued<T>(runtime: object, task: () => Promise<T>): Promise<T> {
   const next = (queues.get(runtime) ?? Promise.resolve()).then(task);
   queues.set(
     runtime,
@@ -89,6 +91,19 @@ function plotted(value: Value | undefined): number | null {
   if (n !== undefined) return n;
   const b = valueBoolean(value);
   return b === undefined ? null : Number(b);
+}
+
+/** `history` with one more tick, the store as `store` holds it. */
+export function withTick(
+  history: ReadonlyMap<string, readonly (number | null)[]>,
+  store: ReadonlyMap<string, Value>,
+): ReadonlyMap<string, readonly (number | null)[]> {
+  const out = new Map<string, readonly (number | null)[]>();
+  for (const key of new Set([...history.keys(), ...store.keys()])) {
+    const series = [...(history.get(key) ?? []), plotted(store.get(key))];
+    out.set(key, series.slice(-HISTORY));
+  }
+  return out;
 }
 
 /**
@@ -307,14 +322,7 @@ export function usePlayback(
       setStore(next);
       await readKeys();
       if (!live()) return;
-      setHistory((h) => {
-        const out = new Map<string, readonly (number | null)[]>();
-        for (const key of new Set([...h.keys(), ...next.keys()])) {
-          const series = [...(h.get(key) ?? []), plotted(next.get(key))];
-          out.set(key, series.slice(-HISTORY));
-        }
-        return out;
-      });
+      setHistory((h) => withTick(h, next));
     })
       .catch((e: unknown) => {
         if (!live()) return;
@@ -376,15 +384,21 @@ export function usePlayback(
 /**
  * The module functions `runtime` offers, once it has said; and why it could
  * not. `known` is false until the runtime of this render has said: what
- * another runtime said is not this one's.
+ * another runtime said is not this one's. A change of `asked` asks again,
+ * what the runtime said before showing until it answers: a device reached
+ * again may offer other functions, and one asked while unreachable answers
+ * none.
  */
-export function useRuntimeFunctions(runtime: BehaviorRuntime): {
+export function useRuntimeFunctions(
+  runtime: Pick<BehaviorRuntime, "functions">,
+  asked?: unknown,
+): {
   functions: MethodSignature[];
   error: string | null;
   known: boolean;
 } {
   const [state, setState] = useState<{
-    runtime: BehaviorRuntime | null;
+    runtime: Pick<BehaviorRuntime, "functions"> | null;
     functions: MethodSignature[];
     error: string | null;
   }>({ runtime: null, functions: [], error: null });
@@ -397,7 +411,7 @@ export function useRuntimeFunctions(runtime: BehaviorRuntime): {
     return () => {
       current = false;
     };
-  }, [runtime]);
+  }, [runtime, asked]);
   return state.runtime === runtime
     ? { functions: state.functions, error: state.error, known: true }
     : { functions: [], error: null, known: false };

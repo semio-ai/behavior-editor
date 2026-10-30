@@ -38,9 +38,11 @@ export function useLocalArora(
     }
   }, []);
 
+  // A factory given after the editor mounted, as one waiting for the device's
+  // wasm is, starts the local Arora too.
   useEffect(() => {
-    if (atStart) start();
-  }, [atStart, start]);
+    if (atStart && create) start();
+  }, [atStart, create, start]);
 
   // Unmounted, the local Arora goes, its device with it; nothing else ends it.
   useEffect(

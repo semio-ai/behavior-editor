@@ -60,6 +60,10 @@ const NO_STATUS: DeviceStatus = { tick: null, time: null, rate: null, revision: 
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** The keys `session`'s last step listed, by key. */
+const keyMap = (session: DeviceSession | null): ReadonlyMap<string, KeyInfo> =>
+  new Map((session?.snapshot.keys ?? []).map((info) => [info.key, info]));
+
 /** The number of changes `diff` makes: nodes removed and set, ports unbound and bound, the root. */
 export function changeCount(diff: GraphDiff): number {
   return (
@@ -111,13 +115,17 @@ export function useDeviceMode(
     report: TickReport | null;
     previous: TickReport | null;
   }>({ report: null, previous: null });
-  const [storeState, setStoreState] = useState<ReadonlyMap<string, Value>>(new Map());
+  // Taken up, the session shows the store and keys its last step left, until
+  // its next: a paused local Arora takes none until asked.
+  const [storeState, setStoreState] = useState<ReadonlyMap<string, Value>>(
+    () => session?.snapshot.store ?? new Map(),
+  );
   const storeRef = useRef(storeState);
   const setStore = (next: ReadonlyMap<string, Value>) => {
     storeRef.current = next;
     setStoreState(next);
   };
-  const [keys, setKeys] = useState<ReadonlyMap<string, KeyInfo>>(new Map());
+  const [keys, setKeys] = useState<ReadonlyMap<string, KeyInfo>>(() => keyMap(session));
   const [pendingState, setPendingState] = useState<ReadonlySet<string>>(new Set());
   const pendingRef = useRef(pendingState);
   const setPending = (next: ReadonlySet<string>) => {
@@ -174,8 +182,8 @@ export function useDeviceMode(
     setError(null);
     setStatus(session?.status ?? NO_STATUS);
     setReports({ report: null, previous: null });
-    setStore(new Map());
-    setKeys(new Map());
+    setStore(session?.snapshot.store ?? new Map());
+    setKeys(keyMap(session));
     setPending(new Set());
     setHistory(new Map());
   }

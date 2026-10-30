@@ -53,6 +53,17 @@ const openStore = async (user: ReturnType<typeof userEvent.setup>) => {
 };
 
 describe("the store panel", () => {
+  it("shows the store a paused Arora's last step left to a file opened after it", async () => {
+    const { user } = renderEditor(SMILE.text, await arora(SMILE));
+    await step(user);
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "New" }));
+    const store = await openStore(user);
+    // No step since: the store and the keys are the last step's.
+    expect(within(store).getByRole("slider", { name: "face/smile" })).toBeInTheDocument();
+    expect(within(store).getByRole("status", { name: "rig/mouth_corner" })).toBeInTheDocument();
+  });
+
   it("shows a key the behavior publishes every tick as a value, not a control", async () => {
     const { user } = renderEditor(SMILE.text, await arora(SMILE));
     await step(user);

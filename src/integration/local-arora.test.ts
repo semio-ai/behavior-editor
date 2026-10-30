@@ -72,6 +72,15 @@ describe("the local Arora", () => {
     ]);
   });
 
+  it("applies a new rate at once, without waiting out the period it was at", async () => {
+    const session = await local({ rate: 0.5 });
+    session.play();
+    // Two seconds a step: the first comes at once, the next only after the period.
+    await ticksWithin(session, 200);
+    session.setRate(50);
+    expect((await ticksWithin(session, 300)).length).toBeGreaterThan(2);
+  });
+
   it("refuses a value to start from that no input opens", async () => {
     const [device, language] = await Promise.all([loadDevice(), loadLanguage()]);
     expect(() =>

@@ -44,6 +44,19 @@ describe("useLocalArora", () => {
     expect(started!.state.status).toBe("closed");
   });
 
+  it("starts the local Arora asked for at start once its factory is given", async () => {
+    const [device, language] = await Promise.all([loadDevice(), loadLanguage()]);
+    const create = () => createLocalArora(device, language, { playing: false });
+    const { result, rerender, unmount } = renderHook(
+      ({ make }: { make: (() => DeviceSession) | undefined }) => useLocalArora(make, true),
+      { initialProps: { make: undefined as (() => DeviceSession) | undefined } },
+    );
+    expect(result.current.session).toBeNull();
+    rerender({ make: create });
+    expect(result.current.session).not.toBeNull();
+    unmount();
+  });
+
   it("offers no start without a local Arora to make", () => {
     const { result } = renderHook(() => useLocalArora(undefined, true));
     expect(result.current.start).toBeUndefined();

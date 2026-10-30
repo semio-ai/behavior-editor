@@ -234,7 +234,10 @@ export class DeviceSession {
   /** The changes of the device's behavior another client made, so far. */
   #external = 0;
   #clock: ClockState;
-  /** Wakes the wait of a paused session for its next step, when it plays, steps or closes. */
+  /** The store and keys as the steps followed on this connection left them. */
+  #store = new Map<string, Value>();
+  #keys: KeyInfo[] = [];
+  /** Wakes the loop's wait for its next step, when the clock changes or the session closes. */
   #resume: (() => void) | null = null;
 
   /**
@@ -322,6 +325,15 @@ export class DeviceSession {
   /** The device's tick, clock, step rate and revision, as of the last step. */
   get status(): DeviceStatus {
     return this.#status;
+  }
+
+  /**
+   * The device's store and keys as of the last step followed on this
+   * connection: what a follower taking up the session shows before the next
+   * step, as a paused local Arora takes none.
+   */
+  get snapshot(): { store: ReadonlyMap<string, Value>; keys: readonly KeyInfo[] } {
+    return { store: this.#store, keys: this.#keys };
   }
 
   /** Listen to `type`; the function returned stops listening. */
@@ -584,6 +596,8 @@ export class DeviceSession {
     }
     this.#own = 0;
     this.#status = { tick: null, time: null, rate: null, revision: null };
+    this.#store = new Map();
+    this.#keys = [];
     this.#functions = null;
     const read = await this.#read(connection);
     const revision = read?.revision ?? (await this.#readRevision(runtime));
@@ -624,9 +638,17 @@ export class DeviceSession {
         this.#emit("error", error instanceof Error ? error : new Error(String(error)));
       }
       // A step that took its whole period still yields, so the page renders
-      // and takes input between steps.
+      // and takes input between steps. A change of the clock ends the wait:
+      // a new rate, a pause or a play applies at once.
       const rest = Math.max(0, period - (Date.now() - started));
-      await new Promise((resolve) => setTimeout(resolve, rest));
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, rest);
+        this.#resume = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      this.#resume = null;
     }
     // Let go of: the closure, when it comes, is the one the race takes.
     return new Promise<BridgeClosure>(() => {});
@@ -656,6 +678,13 @@ export class DeviceSession {
       revision,
     };
     if (revision !== null) this.#revised(revision);
+    const store = new Map(report.whole ? [] : this.#store);
+    for (const { key, value } of report.changes) {
+      if (value === null) store.delete(key);
+      else store.set(key, value);
+    }
+    this.#store = store;
+    this.#keys = keys;
     this.#emit("tick", { report, status: this.#status, keys });
   }
 

@@ -36,6 +36,14 @@ export interface Playback {
   write(key: string, value: Value | null): void;
 }
 
+/**
+ * Each runtime's calls, in the order they were made: whichever editor made
+ * them, a call waits for every call before it. An editor closing a file and
+ * one opening the next on the same runtime stop the first before starting
+ * the second.
+ */
+const queues = new WeakMap<BehaviorRuntime, Promise<unknown>>();
+
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** A key's value as a number to plot: a number, or a boolean as 0 or 1. */
@@ -54,7 +62,9 @@ function plotted(value: Value | undefined): number | null {
  * node afresh. Every later one is an edit of the behavior running, the diff
  * `diff` gives from the graph it runs to the next, so the nodes the change
  * leaves in place keep their state. Every call to the runtime waits for the
- * one before, so a tick never overtakes the start or the edit it follows.
+ * one before, whichever editor made it, so a tick never overtakes the start
+ * or the edit it follows, and a file opened starts after the one it replaces
+ * stopped.
  *
  * While `loaded` is `null`, the text being one that does not run, nothing
  * ticks: the behavior running stays as it last ticked, and the next behavior
@@ -82,7 +92,6 @@ export function usePlayback(
   const [history, setHistory] = useState<ReadonlyMap<string, readonly (number | null)[]>>(
     new Map(),
   );
-  const queue = useRef<Promise<unknown>>(Promise.resolve());
   const started = useRef(false);
   /** The graph the runtime runs, which an edit is the diff from; `null` when none runs. */
   const running = useRef<Graph | null>(null);
@@ -97,11 +106,14 @@ export function usePlayback(
   const runnable = useRef(loaded !== null);
   const stepping = useRef(false);
 
-  const enqueue = useCallback(<T>(task: () => Promise<T>) => {
-    const next = queue.current.then(task);
-    queue.current = next.catch(() => undefined);
-    return next;
-  }, []);
+  const enqueue = useCallback(
+    <T>(task: () => Promise<T>) => {
+      const next = (queues.get(runtime) ?? Promise.resolve()).then(task);
+      queues.set(runtime, next.catch(() => undefined));
+      return next;
+    },
+    [runtime],
+  );
 
   const [keys, setKeys] = useState<ReadonlyMap<string, KeyInfo>>(new Map());
   const [pendingState, setPendingState] = useState<ReadonlySet<string>>(new Set());

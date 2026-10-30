@@ -52,6 +52,8 @@ describe("the local Arora", () => {
     session.setRate(10);
     await stepped(session);
     expect(await seconds(session)).toBeCloseTo(before + 0.12, 9);
+    for (const rate of [0, -1, Infinity, NaN]) expect(() => session.setRate(rate)).toThrow(/invalid rate/);
+    expect(session.clockState.rate).toBe(10);
   });
 
   it("steps at its rate while it plays, and tells each change of its clock", async () => {

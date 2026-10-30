@@ -11,9 +11,9 @@ export interface LocalArora {
 }
 
 /**
- * The local Arora `create` makes, started when asked, or as the component
- * mounts with `atStart`, and kept until it unmounts: switching to another
- * Arora and back finds it as it was left.
+ * The local Arora `create` makes, started when asked, or once `atStart` is
+ * set, and kept until the component unmounts, whatever `atStart` says
+ * meanwhile: switching to another Arora and back finds it as it was left.
  */
 export function useLocalArora(
   create: (() => DeviceSession) | undefined,
@@ -40,14 +40,18 @@ export function useLocalArora(
 
   useEffect(() => {
     if (atStart) start();
-    // Unmounted, the local Arora goes, its device with it.
-    return () => {
+  }, [atStart, start]);
+
+  // Unmounted, the local Arora goes, its device with it; nothing else ends it.
+  useEffect(
+    () => () => {
       const started = current.current;
       current.current = null;
       setSession(null);
       void started?.close();
-    };
-  }, [atStart, start]);
+    },
+    [],
+  );
 
   return { session, start: create ? start : undefined, error };
 }

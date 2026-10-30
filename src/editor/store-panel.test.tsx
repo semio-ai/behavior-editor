@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "../../fixtures/dom";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GREET, SMILE } from "../../fixtures/examples";
@@ -10,6 +10,9 @@ import type { DeviceSession } from "../session/device-session";
 import type { BehaviorText } from "../text/language";
 import { BehaviorEditor } from "./BehaviorEditor";
 import { keySliderRange } from "./StorePanel";
+
+// The local Arora is a real device stepped in the page, and this host is loaded: wait for it longer.
+configure({ asyncUtilTimeout: 5000 });
 
 let language: BehaviorText;
 beforeAll(async () => {

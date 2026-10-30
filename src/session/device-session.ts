@@ -298,7 +298,8 @@ export class DeviceSession {
 
   /** How many steps a second the session takes, and how long each step of a device it drives is. */
   setRate(rate: number) {
-    if (!(rate > 0)) throw new Error(`invalid rate: ${rate}`);
+    // A rate of no period would step a driven device without ever yielding.
+    if (!Number.isFinite(rate) || rate <= 0) throw new Error(`invalid rate: ${rate}`);
     this.#setClock({ ...this.#clock, rate });
   }
 

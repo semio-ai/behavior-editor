@@ -30,7 +30,7 @@ import { behaviorKeys } from "./store-keys";
 import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
 import { useMediaQuery } from "./use-media-query";
-import { usePlayback, useRuntimeFunctions, whenIdle } from "./use-playback";
+import { askFunctions, usePlayback, useRuntimeFunctions, whenIdle } from "./use-playback";
 
 export interface BehaviorEditorProps {
   /** The language: its parser, formatter and resolver. */
@@ -128,6 +128,17 @@ export function BehaviorEditor({
   /** The view shown, which stays as files open and close. */
   const [tab, setTab] = useState<Tab>("diagram");
 
+  // A controlled editor whose text arrives after it mounted opens on it, as
+  // one mounted with it does; one the person closed stays closed.
+  useEffect(() => {
+    if (controlled === undefined || closed) return;
+    setSession((open) => {
+      if (open) return open;
+      serial.current += 1;
+      return { serial: serial.current, file: newFile(fileName), text: controlled, example: null };
+    });
+  }, [controlled, closed, fileName]);
+
   /**
    * Counts what replaces the file open: a file opened, a new one, an example,
    * a close. An open finishing after another of these was asked for is moot.
@@ -148,7 +159,7 @@ export function BehaviorEditor({
     let next = opened.text;
     if (opened.format !== "bt") {
       const from = host;
-      const functions = await from.functions();
+      const functions = await askFunctions(from);
       // Opened with another runtime's functions, the file would name functions
       // the runtime it opens on may not have: it opens nothing.
       if (shownHost.current !== from) {
@@ -232,11 +243,7 @@ export function BehaviorEditor({
       </div>
     );
   }
-  const active = example?.runtime
-    ? made?.serial === session.serial
-      ? made.runtime
-      : null
-    : host;
+  const active = example?.runtime ? (made?.serial === session.serial ? made.runtime : null) : host;
   if (!active) {
     return (
       <div className="be-root">
@@ -447,7 +454,9 @@ function Workspace({
     const now = source === text ? parsed : language.parse(text);
     const graph = source === text ? resolved : language.resolve(now.document, functions);
     if ([...now.diagnostics, ...graph.diagnostics].some((d) => d.severity === "error")) {
-      throw new Error(`The text has errors: a ${label} file is written from the graph it resolves to`);
+      throw new Error(
+        `The text has errors: a ${label} file is written from the graph it resolves to`,
+      );
     }
     const out = language.writeFile(graph, format, functions);
     if ("problems" in out) {
@@ -463,7 +472,9 @@ function Workspace({
   const save = (format: FileFormat, saveAs: boolean) =>
     fileAction(async () => {
       const { written, notice } = contents(format);
-      const target = saveAs ? { name: withExtension(file.name, format), format, handle: null } : file;
+      const target = saveAs
+        ? { name: withExtension(file.name, format), format, handle: null }
+        : file;
       const stored = await saveBehaviorFile(written, target, saveAs);
       if (!stored) return;
       files.remember(stored, written);

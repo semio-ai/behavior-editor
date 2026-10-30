@@ -159,6 +159,32 @@ describe("recent files", () => {
     await waitFor(() => expect(two.result.current.files[0]?.name).not.toBe("last.bt"));
   });
 
+  it("keeps a file remembered while another editor mounts, storage failing meanwhile", async () => {
+    // Storage answering each list late, as it stood when asked, and refusing writes.
+    const kept = memoryStore();
+    let lists = 0;
+    const failing: RecentStore = {
+      // The second list answers last: unqueued, the second editor's.
+      list: async () => {
+        const then = await kept.list();
+        await new Promise((resolve) => setTimeout(resolve, ++lists === 2 ? 200 : 20));
+        return then;
+      },
+      put: () => Promise.reject(new Error("quota")),
+      remove: () => Promise.reject(new Error("quota")),
+    };
+    const held = heldInMemory(failing);
+    const store = Promise.resolve(held);
+    const open = () => store;
+    const one = renderHook(() => useRecentFiles(open));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    act(() => one.result.current.remember(file("new.bt"), ""));
+    const two = renderHook(() => useRecentFiles(open));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect((await listRecent(held)).map((e) => e.name)).toEqual(["new.bt"]);
+    expect(two.result.current.files.map((e) => e.name)).toEqual(["new.bt"]);
+  });
+
   it("lists nothing it did not write", async () => {
     const store = await indexedDbStore();
     await rememberFile(store, file("a.bt"), "a", 1);

@@ -200,6 +200,8 @@ export class DeviceSession {
   /** The stop calls of the traces a lost connection left running. */
   #orphans: string[] = [];
   #functions: Promise<MethodSignature[]> | null = null;
+  /** The changes of the device's behavior another client made, so far. */
+  #external = 0;
 
   /**
    * A session over `bridge`, a connection to a device; or over the
@@ -297,11 +299,23 @@ export class DeviceSession {
   }
 
   /**
+   * How many changes of the device's behavior another client made since the
+   * session started, as `behaviorChanged` told them.
+   */
+  get externalChanges(): number {
+    return this.#external;
+  }
+
+  /**
    * Apply `diff` to the behavior the device runs: the nodes it sets or binds
    * restart, and every other keeps its state. `next` is the behavior it makes,
    * whose nodes the session follows from then on.
+   *
+   * With `unchangedSince`, a count of `externalChanges`, the edit is refused
+   * when another client changed the behavior since: a diff from the behavior
+   * the caller knew would not apply to that client's.
    */
-  edit(diff: GraphDiff, next?: Loaded): Promise<void> {
+  edit(diff: GraphDiff, next?: Loaded, { unchangedSince }: { unchangedSince?: number } = {}): Promise<void> {
     const empty =
       !diff.remove?.length &&
       !diff.set?.length &&
@@ -309,6 +323,9 @@ export class DeviceSession {
       !diff.bind?.length &&
       diff.root === undefined;
     const apply = async ({ runtime }: Connection) => {
+      if (unchangedSince !== undefined && unchangedSince !== this.#external) {
+        throw new Error("another client changed the device's behavior: the edit was not sent");
+      }
       await runtime.edit(diff, next);
       if (next) this.#followed = followed(next);
     };
@@ -480,6 +497,7 @@ export class DeviceSession {
       this.#revision = revision;
       this.#status = { ...this.#status, revision };
       if (known !== null && known !== revision) {
+        this.#external += 1;
         this.#emit("behaviorChanged", { revision, external: true });
       }
     }
@@ -553,6 +571,7 @@ export class DeviceSession {
       const connection = this.#connection;
       if (connection) void this.#enqueue((at) => this.#followOn(at), connection).catch(() => {});
     }
+    if (!ours) this.#external += 1;
     this.#emit("behaviorChanged", { revision, external: !ours });
   }
 

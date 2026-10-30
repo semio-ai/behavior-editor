@@ -128,6 +128,12 @@ describe("DeviceSession", () => {
       () => device.step(),
     );
     expect(changes[1]).toEqual({ revision: 6, external: true });
+    expect(session.externalChanges).toBe(1);
+    // An edit made against the behavior before that change is refused.
+    await expect(
+      session.edit({ root: GRAPH.nodes![1]!.id }, undefined, { unchangedSince: 0 }),
+    ).rejects.toThrow("another client changed the device's behavior");
+    expect(device.graph).toEqual({});
   });
 
   it("connects again after the connection drops, and tells a change made meanwhile", async () => {

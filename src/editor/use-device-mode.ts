@@ -96,7 +96,14 @@ export function useDeviceMode(
     runningRef.current = graph;
     setRunningState(graph);
   }, []);
-  const [changed, setChanged] = useState(false);
+  const [changedState, setChangedState] = useState(false);
+  const changed = changedState;
+  /** Whether another client changed the behavior the file ran as, read when an edit goes. */
+  const changedRef = useRef(false);
+  const markChanged = useCallback((next: boolean) => {
+    changedRef.current = next;
+    setChangedState(next);
+  }, []);
   const [liveEdits, setLiveEdits] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<DeviceStatus>(session?.status ?? NO_STATUS);
@@ -138,7 +145,7 @@ export function useDeviceMode(
     setKnown(session);
     setBehavior(undefined);
     setRunningGraph(null);
-    setChanged(false);
+    markChanged(false);
     setError(null);
     setStatus(session?.status ?? NO_STATUS);
     setReports({ report: null, previous: null });
@@ -164,10 +171,10 @@ export function useDeviceMode(
     () =>
       session?.on("behaviorChanged", (change) => {
         if (!change.external) return;
-        if (runningRef.current !== null) setChanged(true);
+        if (runningRef.current !== null) markChanged(true);
         else read();
       }),
-    [session, read],
+    [session, read, markChanged],
   );
 
   useEffect(
@@ -212,11 +219,15 @@ export function useDeviceMode(
 
   /** Send the file's changes the device does not have, as one edit. */
   const send = useCallback(() => {
+    if (!session) return;
+    // Another client's change, told before the edit goes, refuses it: it is
+    // a diff from the behavior the file ran as, not from theirs.
+    const unchangedSince = session.externalChanges;
     enqueue(async () => {
       const from = runningRef.current;
       const next = loadedRef.current;
-      if (!session || from === null || next === null) return;
-      await session.edit(diff(from, next.graph), next);
+      if (changedRef.current || from === null || next === null) return;
+      await session.edit(diff(from, next.graph), next, { unchangedSince });
       setRunningGraph(next.graph);
     });
   }, [session, diff, enqueue, setRunningGraph]);
@@ -232,20 +243,20 @@ export function useDeviceMode(
     enqueue(async () => {
       await session.run(next);
       setRunningGraph(next.graph);
-      setChanged(false);
+      markChanged(false);
       setBehavior((b) => (b ? { ...b, graph: next.graph } : b));
     });
-  }, [session, enqueue, setRunningGraph]);
+  }, [session, enqueue, setRunningGraph, markChanged]);
 
   const stop = useCallback(() => {
     if (!session) return;
     enqueue(async () => {
       await session.stop();
       setRunningGraph(null);
-      setChanged(false);
+      markChanged(false);
       setBehavior((b) => (b ? { ...b, graph: {} } : b));
     });
-  }, [session, enqueue, setRunningGraph]);
+  }, [session, enqueue, setRunningGraph, markChanged]);
 
   const write = useCallback(
     (key: string, value: Value | null) => {

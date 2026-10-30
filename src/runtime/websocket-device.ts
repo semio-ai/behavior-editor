@@ -14,10 +14,10 @@ export interface WebSocketLike {
   readonly readyState: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
-  onopen: ((event: unknown) => void) | null;
-  onmessage: ((event: { data: unknown }) => void) | null;
-  onclose: ((event: { code: number; reason: string }) => void) | null;
-  onerror: ((event: unknown) => void) | null;
+  onopen: ((event: Event) => void) | null;
+  onmessage: ((event: MessageEvent) => void) | null;
+  onclose: ((event: CloseEvent) => void) | null;
+  onerror: ((event: Event) => void) | null;
 }
 
 export interface WebSocketDeviceOptions {
@@ -83,15 +83,30 @@ export class WebSocketDevice implements AroraDevice {
     url: string = LOCAL_BRIDGE_URL,
     options: WebSocketDeviceOptions = {},
   ): Promise<WebSocketDevice> {
-    const open = options.open ?? ((at: string) => new WebSocket(at) as unknown as WebSocketLike);
+    const open = options.open ?? ((at: string): WebSocketLike => new WebSocket(at));
+    const timeoutMs = options.timeoutMs ?? 10_000;
     const socket = open(url);
     await new Promise<void>((resolve, reject) => {
-      socket.onopen = () => resolve();
-      socket.onerror = () => reject(new Error(`no device answers at ${url}`));
-      socket.onclose = (event) =>
+      // A connection not open within the timeout is let go: it would take the
+      // bridge's one client slot whenever it did open.
+      const timer = setTimeout(() => {
+        socket.close();
+        reject(new Error(`no device answered at ${url} within ${timeoutMs} ms`));
+      }, timeoutMs);
+      socket.onopen = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      socket.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error(`no device answers at ${url}`));
+      };
+      socket.onclose = (event) => {
+        clearTimeout(timer);
         reject(new Error(`no device answers at ${url}${event.reason ? `: ${event.reason}` : ""}`));
+      };
     });
-    const device = new WebSocketDevice(url, socket, options.timeoutMs ?? 10_000);
+    const device = new WebSocketDevice(url, socket, timeoutMs);
     try {
       await device.#seed();
     } catch (error) {

@@ -236,20 +236,29 @@ export function BehaviorEditor({
       setClosed(true);
     },
     openText: (name, text) => begin(newFile(name), text),
-    openDevice: async () => {
+    openDevice: async (unchanged = () => true) => {
       const from = attached;
       if (!from) return;
       const asked = ++requests.current;
       // Moot once another file replaced this one, or the device was let go
       // of or replaced: its answer opens nothing, and its failure is not shown.
       const current = () => requests.current === asked && shownHost.current === from;
+      /** Open the answer, unless the file changed while it was read: those changes are not discarded unasked. */
+      const replace = (file: BehaviorFile, text: string) => {
+        if (!unchanged()) {
+          throw new Error(
+            "The device's behavior was not opened: the file changed while it was read",
+          );
+        }
+        begin(file, text);
+      };
       try {
         const read = await from.deviceBehavior();
         if (!current()) return;
         if (!read) throw new Error("The device does not say what it runs");
         const held = ran.current.find((f) => isEmptyDiff(language.diff(f.graph, read.graph)));
         if (held) {
-          begin(newFile(held.name), held.text);
+          replace(newFile(held.name), held.text);
           return;
         }
         const functions = await askFunctions(from);
@@ -258,7 +267,7 @@ export function BehaviorEditor({
         if ("problems" in out) {
           throw new Error(`The device's behavior does not open: ${problemsText(out.problems)}`);
         }
-        begin(newFile(DEVICE_FILE), out.text);
+        replace(newFile(DEVICE_FILE), out.text);
       } catch (error) {
         if (current()) throw error;
       }
@@ -409,9 +418,10 @@ interface FileActions {
    * Open the behavior the attached device runs: as the file run there whose
    * graph it is, with its names, or as its graph, each node named by its id.
    * Its answer opens nothing once another file or device replaced the one
-   * open.
+   * open, and is refused once `unchanged` says the file open changed since
+   * it was asked for.
    */
-  openDevice(): Promise<void>;
+  openDevice(unchanged?: () => boolean): Promise<void>;
   /**
    * Ask to replace the file, with something read later: whether the ask is
    * still the last, nothing else having replaced the file since.
@@ -667,11 +677,16 @@ function Workspace({
       setSaved(text);
       setFileNotice(notice);
     });
-  /** Open what the device runs now, read again, in place of the file. */
-  const openDeviceBehavior = () =>
-    files.openDevice().catch((e: unknown) => {
+  /** The text now, which a read of the device's behavior checks is still the one it replaces. */
+  const textNow = useRef(text);
+  textNow.current = text;
+  /** Open what the device runs now, read again, in place of the file as it is now. */
+  const openDeviceBehavior = () => {
+    const asked = text;
+    return files.openDevice(() => textNow.current === asked).catch((e: unknown) => {
       setEditError(e instanceof Error ? e.message : String(e));
     });
+  };
   // The file as it runs on the device, to open with its names when the
   // device's behavior is viewed.
   const runsAsIs = device.relation === "running" && device.pendingChanges === 0 && runnable;

@@ -182,6 +182,17 @@ describe("BehaviorEditor on a device", () => {
     await waitFor(() => expect(screen.getByText("device.bt")).toBeTruthy());
   });
 
+  it("opens nothing over changes made while it reads the device's behavior, and says so", async () => {
+    const { device, user, type } = await setup(GREET, graphOf(ORDER.text));
+    await screen.findByRole("region", { name: "Device's behavior" });
+    device.readDelayMs = 300;
+    await user.click(screen.getByRole("button", { name: "Device's behavior" }));
+    type(`${GREET.text}# typed while it read\n`);
+    expect(await screen.findByText(/the file changed while it was read/)).toBeTruthy();
+    expect(screen.queryByText("device.bt")).toBeNull();
+    expect(textValue()).toBe(`${GREET.text}# typed while it read\n`);
+  });
+
   it("asks before the header's button discards unsaved changes", async () => {
     const { user, type } = await setup(GREET, graphOf(ORDER.text));
     await screen.findByRole("region", { name: "Device's behavior" });

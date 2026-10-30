@@ -1,4 +1,4 @@
-import type { Graph } from "../model/graph";
+import type { Graph, GraphDiff } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import type { BehaviorDocument, Span } from "./ast";
 
@@ -33,6 +33,19 @@ export interface BehaviorText {
    * the behavior it had. The empty graph loads none.
    */
   loadCall(graph: Graph): string;
+  /**
+   * The diff that takes `previous` to `next`, `Graph::diff`: the nodes only
+   * `next` has, or whose function or children change, set whole; one binding
+   * per port whose binding changes; the root when it changes. `{}` when they
+   * are the same graph.
+   */
+  diff(previous: Graph, next: Graph): GraphDiff;
+  /**
+   * The `arora_types::call::Call` JSON that applies `diff` to a device's
+   * behavior: the interpreter's `edit`, which restarts the nodes the diff sets
+   * or binds and keeps the state of every other.
+   */
+  editCall(diff: GraphDiff): string;
 }
 
 export interface ParseResult {

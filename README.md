@@ -90,22 +90,30 @@ the text gives, `arora_behavior::graph::Graph` in graph format behavior-tree
 its children, and its bindings: for each port, the value, store key or other
 node's port feeding it, or the key its output is written to.
 
+The editor starts a behavior when none runs: every node starts afresh. While
+one runs, each change of the text that resolves is sent as an edit, the
+`GraphDiff` from the graph running to the next (`language.diff`, arora's
+`Graph::diff`): the nodes the diff sets whole or binds a port of restart, and
+every other node keeps its state, so a `sequence_star` stays at the child it
+had reached and a `damp` goes on easing from its value. Stop and Reset start
+the next behavior afresh.
 
 - `MockArora` runs a resolved graph in process with `arora-behavior-tree`'s
   semantics: native control and data nodes, module leaves, detached nodes
   brought up to date on demand once per tick and called only when their
   arguments changed, sinks published after the tree in node-id order, state
-  in mutable parameters, kept across a restart for the nodes an edit left in
-  place. It reports each node's return value after the tick. Its math module
+  in mutable parameters. It applies an edit as a device does: the nodes the
+  diff sets or binds restart, and every other keeps its state. It reports each node's return value after the tick. Its math module
   carries the operations of the NGBT spectrum's examples, named as
   `arora-behavior-tree`'s `docs/text.md` names them (`add`, `mul`, `clamp`,
   `remap`, `lt`, `not`, `truthy`, `oscillator`, `damp`, `identity`, `wait`);
   it publishes its clock to `arora/time`.
 - `DeviceRuntime` runs it on an Arora device, through the device's own call
-  path: the interpreter's `load`, built by `language.loadCall`, which makes the
-  graph the device's behavior, ticked at every step and re-evaluated once it
-  completes. Loading another graph restarts every node of the behavior, and
-  loading the empty graph stops it. The host hands it the device as an
+  path, as any client's call reaches the interpreter: `start` sends `LOAD`
+  (`language.loadCall`), which makes the graph the device's behavior, ticked
+  at every step and re-evaluated once it completes, every node starting
+  afresh; `edit` sends `EDIT` (`language.editCall`) with a graph diff; `stop`
+  loads the empty graph. The host hands it the device as an
   `AroraDevice`: describe its methods, call one, write its inputs, list its
   keys, read its store and step it, each answering when it returns, values as
   the JSON of Arora's `Value`.
@@ -132,7 +140,8 @@ arora-web's browser device over arora's runtime, with the dataflow vocabulary of
 `arora-dataflow-nodes` registered as the host module `@arora/dataflow`. The test
 drives it through `DeviceRuntime`: a fallback that flips on a distance, a clamped
 and offset output, an oscillator on the device's clock, a `damp` converging, a
-stop, and the interpreter's edit call reaching the device.
+stop, and edits: the `damp` easing on across an edit of another node, and
+restarting when an edit binds it.
 
 The demo opens the NGBT spectrum's examples, each on a mock device, and
 `dataflow.bt` on that Arora device.

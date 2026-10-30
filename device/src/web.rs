@@ -15,8 +15,6 @@ use std::future::Future;
 use std::pin::Pin;
 
 use arora::{Caller, MethodSignature};
-use arora_behavior::graph::GraphDiff;
-use arora_behavior::interpreter_module::encode_edit;
 use arora_simple_data_store::SimpleDataStore;
 use arora_types::call::{Call, CallError};
 use arora_types::data::{DataStore, Key, KeyMeta, StateChange};
@@ -159,16 +157,6 @@ impl DataflowDevice {
             None => Ok(()),
         }
     }
-}
-
-/// The `Call` JSON that applies `diff_json`, a `GraphDiff`'s JSON, to a
-/// device's behavior: the interpreter module's EDIT, which keeps the state of
-/// the nodes the diff leaves in place.
-#[wasm_bindgen(js_name = editCall)]
-pub fn edit_call(diff_json: &str) -> Result<String, JsError> {
-    let diff: GraphDiff = serde_json::from_str(diff_json)
-        .map_err(|e| JsError::new(&format!("invalid diff json: {e}")))?;
-    to_json(&encode_edit(&diff))
 }
 
 fn to_json(value: &impl Serialize) -> Result<String, JsError> {

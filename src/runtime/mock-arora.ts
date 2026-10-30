@@ -1,4 +1,11 @@
-import type { Graph, GraphNode, Source } from "../model/graph";
+import {
+  applyDiff,
+  changedNodes,
+  type Graph,
+  type GraphDiff,
+  type GraphNode,
+  type Source,
+} from "../model/graph";
 import type { FrozenTy, FunctionSignature, MethodSignature } from "../model/signature";
 import { type Value, valueEquals, valueString, valueTag } from "../model/value";
 import type { Loaded } from "../text/language";
@@ -55,9 +62,11 @@ export const TIME_KEY = "arora/time";
  * - A store key reads as the store holds it, so a value fed back through a key
  *   arrives at the next tick.
  *
- * Starting a behavior while another runs keeps the state of the nodes the new
- * graph left as they were: their literal cells and the tree-local variables
- * they read.
+ * Starting a behavior starts every node afresh, as a device's LOAD does. An
+ * edit applies a graph diff, as a device's EDIT does: the nodes the diff sets
+ * or binds restart, and every other node keeps its state, its literal cells
+ * (a `sequence_star`'s place, a `damp`'s value) and the tree-local variables
+ * it reads.
  */
 export class MockArora implements BehaviorRuntime {
   readonly #store = new Map<string, Value>();
@@ -84,8 +93,23 @@ export class MockArora implements BehaviorRuntime {
 
   start(loaded: Loaded): Promise<void> {
     try {
-      this.#program = new Program(loaded.graph, this.#functions, this.#store, this.#program);
+      this.#program = new Program(loaded.graph, this.#functions, this.#store, null);
       this.#ticks = 0;
+      return Promise.resolve();
+    } catch (error) {
+      return Promise.reject(asError(error));
+    }
+  }
+
+  edit(diff: GraphDiff): Promise<void> {
+    try {
+      const running = this.#program;
+      if (!running) throw new Error("no behavior runs on the mock device: start one to edit it");
+      const next = applyDiff(running.graph, diff);
+      this.#program = new Program(next, this.#functions, this.#store, {
+        program: running,
+        fresh: changedNodes(diff),
+      });
       return Promise.resolve();
     } catch (error) {
       return Promise.reject(asError(error));
@@ -221,6 +245,7 @@ const portKey = (node: string, port: string) => `${node}|${port}`;
 
 /** A graph lowered for ticking: its cells, who reads whom, and what each detached node holds. */
 class Program {
+  readonly graph: Graph;
   /** The graph's nodes, by id. */
   readonly #nodes = new Map<string, GraphNode>();
   readonly #functions: ReadonlyMap<string, MockFunction>;
@@ -231,6 +256,11 @@ class Program {
   readonly #cells = new Map<string, Cell>();
   /** The cells each literal argument owns, by port: what a rebuilt graph carries over. */
   readonly #literalCells = new Map<string, LocalCell>();
+  /**
+   * The cells of the ports no binding names, by port, made as a port is first
+   * used: a node's own state, such as a `sequence_star`'s place.
+   */
+  readonly #unboundCells = new Map<string, LocalCell>();
   readonly #variables = new Map<string, Cell>();
   readonly #attached = new Set<string>();
   /** The detached nodes, in the order the tree lists them. */
@@ -252,8 +282,9 @@ class Program {
     graph: Graph,
     functions: ReadonlyMap<string, MockFunction>,
     store: Map<string, Value>,
-    previous: Program | null,
+    previous: { program: Program; fresh: ReadonlySet<string> } | null,
   ) {
+    this.graph = graph;
     this.#functions = functions;
     this.#store = store;
     for (const node of graph.nodes ?? []) {
@@ -284,7 +315,7 @@ class Program {
       }
     }
     this.#lowerDetached();
-    if (previous) this.#keepState(previous);
+    if (previous) this.#keepState(previous.program, previous.fresh);
   }
 
   /** Mark `id` and its descendants attached. */
@@ -318,7 +349,9 @@ class Program {
     const source = this.#bindings.get(at);
     let cell: Cell;
     if (!source) {
-      cell = new LocalCell();
+      const own = new LocalCell();
+      this.#unboundCells.set(at, own);
+      cell = own;
     } else if ("value" in source) {
       const own = new LocalCell(source.value);
       this.#literalCells.set(at, own);
@@ -429,15 +462,28 @@ class Program {
   }
 
   /**
-   * Take over the state `previous` holds for every node this graph left as it
-   * was: its literal cells, and the tree-local variables those nodes read.
+   * Take over the state `previous` holds for every node an edit left in
+   * place, `fresh` naming those it set or bound: its literal cells, the cells
+   * of its unbound ports, the tree-local variables it reads, and a detached
+   * node's last call, so it is called again only when its arguments change.
    */
-  #keepState(previous: Program) {
-    const same = (id: string) =>
-      definition(this.#nodes.get(id)) === definition(previous.#nodes.get(id));
+  #keepState(previous: Program, fresh: ReadonlySet<string>) {
+    const same = (id: string) => !fresh.has(id) && previous.#nodes.has(id);
+    const nodeOf = (at: string) => at.split("|")[0]!;
     for (const [at, cell] of this.#literalCells) {
       const held = previous.#literalCells.get(at);
-      if (held && same(at.split("|")[0]!)) cell.set(held.get());
+      if (held && same(nodeOf(at))) cell.set(held.get());
+    }
+    for (const [at, held] of previous.#unboundCells) {
+      const id = nodeOf(at);
+      if (!same(id) || this.#bindings.has(at)) continue;
+      this.#cell(id, at.slice(id.length + 1)).set(held.get());
+    }
+    for (const [id, state] of this.#state) {
+      const held = previous.#state.get(id);
+      if (!held || !same(id)) continue;
+      if (held.args) state.args = [...held.args];
+      state.outputs = new Map(held.outputs);
     }
     for (const node of this.#nodes.values()) {
       if (!same(node.id)) continue;
@@ -751,15 +797,6 @@ function tagOf(ty: FrozenTy): string | undefined {
   const tags: Record<string, string> = { boolean: "bool", string: "str", unit: "unit" };
   const kind = ty.value.kind;
   return tags[kind] ?? (kind.startsWith("array") ? undefined : kind);
-}
-
-/** A node's definition: what a rebuilt graph compares to know it left the node as it was. */
-function definition(node: GraphNode | undefined): string | undefined {
-  if (!node) return undefined;
-  const bind = Object.entries(node.bind ?? {})
-    .map(([port, source]) => JSON.stringify([port, source]))
-    .sort();
-  return JSON.stringify([node.function, node.children ?? null, bind]);
 }
 
 function isOptional(signature: FunctionSignature, param: string): boolean {

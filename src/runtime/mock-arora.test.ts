@@ -521,25 +521,146 @@ describe("MockArora", () => {
     ).rejects.toThrow(/cycle/);
   });
 
-  it("keeps the state of the nodes a new graph left as they were", async () => {
+  it("starts every node afresh, as a load does", async () => {
     const { device, tick, number } = await run(SMILE);
     await tick();
     await device.write("face/smile", { f64: 0.8 });
     await tick();
-    const halfway = await number("rig/mouth_corner");
-    // Restarting the same graph keeps the easing where it was.
+    const target = -0.2 + 0.8 * 1.2;
+    expect(await number("rig/mouth_corner")).toBeLessThan(target - 0.1);
     await device.start(SMILE.loaded);
     expect((await device.step(DT)).tick).toBe(1);
-    expect(await number("rig/mouth_corner")).toBeGreaterThan(halfway!);
-    // A changed node starts afresh: its easing jumps to its target.
-    const changed = structuredClone(SMILE.loaded);
-    const ease = idOf(SMILE.loaded, "mouth");
-    changed.graph.nodes!.find((n) => n.id === ease)!.bind![MATH.damp.half_life] = value({
-      f64: 0.5,
+    // The easing starts again from its target.
+    expect(await number("rig/mouth_corner")).toBeCloseTo(target, 10);
+  });
+
+  describe("an edit", () => {
+    /** `text` resolved against the math module, and the diff to it from `from`. */
+    const resolved = async (text: string) => {
+      const language = await loadLanguage();
+      const next = language.resolve(language.parse(text).document, MATH_FUNCTIONS);
+      expect(next.diagnostics).toEqual([]);
+      return { loaded: next, diff: (base: Loaded) => language.diff(base.graph, next.graph) };
+    };
+
+    it("keeps a damp's state when it edits another node, and restarts the damp it binds", async () => {
+      const smile = await resolved(SMILE.text);
+      const { device, tick, number, id } = await run(SMILE, smile.loaded);
+      await tick();
+      await device.write("face/smile", { f64: 0.8 });
+      await tick();
+      const halfway = (await number("rig/mouth_corner"))!;
+      const target = -0.2 + 0.8 * 1.2;
+      expect(halfway).toBeLessThan(target - 0.1);
+
+      const cheeks = await resolved(SMILE.text.replace("b: 0.6", "b: 0.7"));
+      const elsewhere = cheeks.diff(smile.loaded);
+      expect(elsewhere).toEqual({
+        bind: [{ node: id("cheeks"), port: MATH.mul.b, source: { value: { f64: 0.7 } } }],
+      });
+      await device.edit(elsewhere);
+      expect((await device.step(DT)).tick).toBe(3);
+      expect(await number("rig/cheek_raise")).toBeCloseTo(0.8 * 0.7, 10);
+      // The easing goes on from where it was: past halfway, short of its target.
+      const after = (await number("rig/mouth_corner"))!;
+      expect(after).toBeGreaterThan(halfway);
+      expect(after).toBeLessThan(target - 0.05);
+
+      const mouth = await resolved(
+        SMILE.text.replace("b: 0.6", "b: 0.7").replace("half_life: 0.12", "half_life: 0.5"),
+      );
+      await device.edit(mouth.diff(cheeks.loaded));
+      await device.step(DT);
+      // Bound anew, the easing restarts from its target.
+      expect(await number("rig/mouth_corner")).toBeCloseTo(target, 10);
     });
-    await device.start(changed);
-    await device.step(DT);
-    expect(await number("rig/mouth_corner")).toBeCloseTo(-0.2 + 0.8 * 1.2, 10);
+
+    it("keeps a sequence_star's place when it edits another node, and restarts it when it sets it", async () => {
+      const text = (extra: string, last: string) =>
+        [
+          "sequence_star",
+          "  wait(seconds: 0.05, now: {arora/time}, since: none)",
+          "  {phase} = identity(x: 1f64)",
+          "  wait(seconds: 10, now: {arora/time}, since: none)",
+          last,
+          "",
+          `other: {other} = identity(x: ${extra}f64)`,
+          "",
+        ].join("\n");
+      const first = await resolved(text("1", "  {phase} = identity(x: 2f64)"));
+      const { tick, number, id, device } = await run(SMILE, first.loaded);
+      for (let i = 0; i < 4; i++) await tick();
+      // Past the first wait and the first write, the sequence waits on its third child.
+      expect(await number("phase")).toBe(1);
+      const waiting = ["root", "root.2"].map(id).sort();
+      expect(Object.keys((await tick()).report.statuses!).sort()).toEqual(waiting);
+
+      const other = await resolved(text("2", "  {phase} = identity(x: 2f64)"));
+      const elsewhere = other.diff(first.loaded);
+      expect(elsewhere.set).toBeUndefined();
+      expect(elsewhere.bind?.map((b) => b.node)).toEqual([id("other")]);
+      await device.edit(elsewhere);
+      const resumed = (await tick()).report;
+      expect(Object.keys(resumed.statuses!).sort()).toEqual(waiting);
+      expect(await number("other")).toBe(2);
+
+      const grown = await resolved(text("2", "  {phase} = identity(x: 2f64)\n  succeed"));
+      const restart = grown.diff(other.loaded);
+      expect(restart.set?.map((n) => n.id)).toContain(id("root"));
+      await device.edit(restart);
+      // Set anew, the sequence starts again at its first child.
+      const restarted = (await tick()).report;
+      expect(restarted.statuses?.[id("root.0")]).toBeDefined();
+    });
+
+    it("keeps the place of a sequence_star whose place no binding holds", async () => {
+      const device = new MockArora({ store: { now: { f64: 0 } } });
+      await device.start(
+        loaded(
+          node("r", N.SEQUENCE_STAR, {}, ["a", "w", "b"]),
+          node("a", MATH.identity.id, { [MATH.identity.x]: value({ f64: 1 }) }),
+          node("w", MATH.wait.id, {
+            [MATH.wait.seconds]: value({ f64: 0.03 }),
+            [MATH.wait.now]: key(TIME_KEY),
+            [MATH.wait.since]: value({ option: null }),
+          }),
+          node("b", N.SUCCEED),
+        ),
+      );
+      expect((await device.step(DT)).statuses).toEqual({ r: "R", a: "S", w: "R" });
+      await device.edit({});
+      // On from the wait: the first child does not run again.
+      expect((await device.step(DT)).statuses).toEqual({ r: "S", w: "S", b: "S" });
+    });
+
+    it("calls a detached node again only when its arguments change", async () => {
+      const device = new MockArora({ store: { in: { f64: 3 } } });
+      const graph = (b: number) =>
+        loaded(
+          node("r", MATH.identity.id, { [MATH.identity.x]: key(".x"), [N.RET]: key("out") }),
+          node("d", MATH.mul.id, {
+            [MATH.mul.a]: key("in"),
+            [MATH.mul.b]: value({ f64: 2 }),
+            [N.RET]: key(".x"),
+          }),
+          node("e", MATH.mul.id, {
+            [MATH.mul.a]: key("in"),
+            [MATH.mul.b]: value({ f64: b }),
+            [N.RET]: key("other"),
+          }),
+        );
+      await device.start(graph(1));
+      expect((await device.step(DT)).detached).toEqual({ d: "called", e: "called" });
+      await device.edit({ bind: [{ node: "e", port: MATH.mul.b, source: { value: { f64: 5 } } }] });
+      const report = await device.step(DT);
+      expect(report.detached).toEqual({ d: "cached", e: "called" });
+      expect(await device.read("out")).toEqual({ f64: 6 });
+      expect(await device.read("other")).toEqual({ f64: 15 });
+    });
+
+    it("is refused when no behavior runs", async () => {
+      await expect(new MockArora().edit({})).rejects.toThrow(/no behavior runs/);
+    });
   });
 
   it("lists the keys a behavior reads, set or not, as inputs, and keeps its own clock and outputs closed", async () => {

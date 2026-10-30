@@ -343,11 +343,105 @@ describe("BehaviorEditor", () => {
     expect(screen.getByText("(unsaved changes)")).toBeTruthy();
   });
 
+  it("shows a refused edit until the text is back to the behavior running", async () => {
+    const runtime = new MockArora({ store: SMILE.store });
+    const calls: string[] = [];
+    runtime.edit = () => {
+      calls.push("edit");
+      return Promise.reject(new Error("the device refused the edit"));
+    };
+    const { user } = setup(SMILE, { runtime });
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    await user.click(screen.getByRole("treeitem", { name: /^cheeks: / }));
+    const b = screen.getByRole("textbox", { name: "b" });
+    await user.clear(b);
+    await user.type(b, "0.9{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("the device refused the edit");
+    await user.clear(screen.getByRole("textbox", { name: "b" }));
+    await user.type(screen.getByRole("textbox", { name: "b" }), "0.6{Enter}");
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(calls).toEqual(["edit"]);
+  });
+
+  it("keeps a tick's failure after a refused edit, when the text is back", async () => {
+    const runtime = new MockArora({ store: SMILE.store });
+    runtime.edit = () => Promise.reject(new Error("the device refused the edit"));
+    const { user } = setup(SMILE, { runtime });
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    await user.click(screen.getByRole("treeitem", { name: /^cheeks: / }));
+    await user.clear(screen.getByRole("textbox", { name: "b" }));
+    await user.type(screen.getByRole("textbox", { name: "b" }), "0.9{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("the device refused the edit");
+    runtime.step = () => Promise.reject(new Error("the tick failed"));
+    await user.click(screen.getByRole("button", { name: "Step" }));
+    expect(await screen.findByText("the tick failed")).toBeTruthy();
+    await user.clear(screen.getByRole("textbox", { name: "b" }));
+    await user.type(screen.getByRole("textbox", { name: "b" }), "0.6{Enter}");
+    await new Promise((resolve) => setTimeout(resolve, REPARSE_DELAY_MS));
+    expect(screen.getByRole("alert")).toHaveTextContent("the tick failed");
+  });
+
+  it("shows what an edit wrote to the store without a tick", async () => {
+    const runtime = new MockArora({ store: SMILE.store });
+    const edit = runtime.edit.bind(runtime);
+    // As a device applying the call with a step at zero dt.
+    runtime.edit = async (diff) => {
+      await edit(diff);
+      await runtime.write("rig/cheek_raise", { f64: 0.42 });
+    };
+    const { user } = setup(SMILE, { runtime });
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    await user.click(screen.getByRole("treeitem", { name: /^cheeks: / }));
+    const b = screen.getByRole("textbox", { name: "b" });
+    await user.clear(b);
+    await user.type(b, "0.9{Enter}");
+    await user.click(screen.getByRole("tab", { name: "Store" }));
+    const store = screen.getByRole("region", { name: "Store" });
+    await waitFor(() =>
+      expect(within(store).getByRole("status", { name: "rig/cheek_raise" })).toHaveTextContent(
+        "0.42",
+      ),
+    );
+    expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1");
+  });
+
+  it("edits the behavior running when the text changes, and starts it afresh on Reset", async () => {
+    const runtime = new MockArora({ store: SMILE.store });
+    const calls: string[] = [];
+    const start = runtime.start.bind(runtime);
+    const edit = runtime.edit.bind(runtime);
+    runtime.start = (loaded) => {
+      calls.push("start");
+      return start(loaded);
+    };
+    runtime.edit = (diff) => {
+      calls.push(`edit ${JSON.stringify(Object.keys(diff))}`);
+      return edit(diff);
+    };
+    const { user } = setup(SMILE, { runtime });
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    await user.click(screen.getByRole("treeitem", { name: /^cheeks: / }));
+    const b = screen.getByRole("textbox", { name: "b" });
+    await user.clear(b);
+    await user.type(b, "0.9{Enter}");
+    await waitFor(() => expect(calls).toEqual(["start", 'edit ["bind"]']));
+    // The edit goes on from the tick it reached.
+    await user.click(screen.getByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 2"));
+    await user.click(screen.getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(calls.at(-1)).toBe("start"));
+  });
+
   it("says why the runtime refused the behavior", async () => {
     const refusing: BehaviorRuntime = {
       ...new MockArora(),
       functions: () => Promise.resolve(MATH_FUNCTIONS),
       start: () => Promise.reject(new Error("the device has no interpreter")),
+      edit: () => Promise.reject(new Error("not started")),
       step: () => Promise.reject(new Error("not started")),
       write: () => Promise.resolve(),
       read: () => Promise.resolve(null),

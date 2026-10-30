@@ -1,4 +1,4 @@
-import { EMPTY_GRAPH, type Graph } from "../model/graph";
+import { EMPTY_GRAPH, type Graph, type GraphDiff } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import { type Value, valueEquals } from "../model/value";
 import type { Loaded } from "../text/language";
@@ -41,17 +41,24 @@ export interface DeviceRuntimeOptions {
   deviceId: string;
   /** The `Call` JSON that loads a graph as the device's behavior: the language's `loadCall`. */
   loadCall: (graph: Graph) => string;
+  /** The `Call` JSON that applies a diff to the device's behavior: the language's `editCall`. */
+  editCall: (diff: GraphDiff) => string;
 }
 
 /**
- * A behavior running on a device, through the device's own call path:
- * starting one loads its graph on the interpreter, as any client's call would.
- * The loaded behavior is ticked at every step and re-evaluated once it
- * completes, as a behavior tree is; loading another replaces it and restarts
- * every node of the behavior, and loading the empty graph stops it. What keeps
- * the state of the nodes left in place is an edit, the interpreter's EDIT,
- * which this runtime does not make. The device reports its store; it does not
- * say which nodes ticked or what the root returned.
+ * A behavior running on a device, through the device's own call path, as any
+ * client's call would reach the interpreter:
+ *
+ * - `start` sends LOAD with the behavior's graph: the device ticks it at every
+ *   step and re-evaluates it once it completes, as a behavior tree is, in place
+ *   of the behavior it had, every node starting afresh.
+ * - `edit` sends EDIT with a graph diff: the device restarts the nodes the diff
+ *   sets or binds, and every other node keeps its state, a `sequence_star`
+ *   its place among its children and a `damp` its value.
+ * - `stop` sends LOAD with the empty graph, which runs nothing.
+ *
+ * The device reports its store; it does not say which nodes ticked or what
+ * the root returned.
  */
 export class DeviceRuntime implements BehaviorRuntime {
   readonly #options: DeviceRuntimeOptions;
@@ -76,6 +83,15 @@ export class DeviceRuntime implements BehaviorRuntime {
       device.call(loadCall(loaded.graph));
       this.#running = true;
       this.#ticks = 0;
+      this.#seen = this.#snapshot();
+    });
+  }
+
+  edit(diff: GraphDiff): Promise<void> {
+    return this.#attempt(() => {
+      if (!this.#running) throw new Error("no behavior runs on the device: start one to edit it");
+      this.#options.device.call(this.#options.editCall(diff));
+      // The device applies a call with a step: a step reports what changed since.
       this.#seen = this.#snapshot();
     });
   }

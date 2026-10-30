@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { GREET, SMILE } from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
-import type { Graph } from "../model/graph";
+import type { Graph, GraphDiff } from "../model/graph";
 import type { Value } from "../model/value";
 import { type AroraDevice, DeviceRuntime } from "../runtime/device-runtime";
 import { MockArora } from "../runtime/mock-arora";
@@ -61,6 +61,7 @@ function deviceRuntime(device: FakeDevice) {
     device,
     deviceId: "D",
     loadCall: (graph: Graph) => JSON.stringify({ load: graph.root ?? "empty" }),
+    editCall: (diff: GraphDiff) => JSON.stringify({ edit: diff }),
   });
 }
 
@@ -153,6 +154,36 @@ describe("the store panel", () => {
     await waitFor(() => expect(after).not.toHaveAccessibleDescription("applies at the next step"));
     expect(Number((after as HTMLInputElement).value)).toBeCloseTo(written, 6);
     expect(device.store.get("face/smile")).toEqual({ f64: written });
+  });
+
+  it("shows another runtime's store without the writes pending on the last one", async () => {
+    const a = new FakeDevice();
+    a.meta.set("face/smile", { ty: "f64", editable: true });
+    a.store.set("face/smile", { f64: 0.2 });
+    const b = new FakeDevice();
+    b.meta.set("face/smile", { ty: "f64", editable: true });
+    b.store.set("face/smile", { f64: 0.3 });
+    const { user, view } = renderEditor(SMILE.text, deviceRuntime(a));
+    const store = await openStore(user);
+    const slider = await within(store).findByRole("slider", { name: "face/smile" });
+    fireEvent.change(slider, { target: { value: "0.8" } });
+    await waitFor(() => expect(slider).toHaveAccessibleDescription("applies at the next step"));
+    view.rerender(
+      <BehaviorEditor
+        language={language}
+        runtime={deviceRuntime(b)}
+        defaultText={SMILE.text}
+        autoPlay={false}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        Number((within(store).getByRole("slider", { name: "face/smile" }) as HTMLInputElement).value),
+      ).toBeCloseTo(0.3, 6),
+    );
+    expect(within(store).getByRole("slider", { name: "face/smile" })).not.toHaveAccessibleDescription(
+      "applies at the next step",
+    );
   });
 
   it("stops the behavior after it started, however soon the editor unmounts", async () => {

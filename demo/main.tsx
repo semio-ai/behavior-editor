@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { type FormEvent, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { EXAMPLES } from "../fixtures/examples";
 import { DATAFLOW_INPUTS } from "../fixtures/devices/dataflow";
@@ -8,8 +8,10 @@ import {
   type BehaviorExample,
   type BehaviorText,
   DeviceRuntime,
+  LOCAL_BRIDGE_URL,
   MATH_MODULE_ID,
   MockArora,
+  WebSocketDevice,
   createBehaviorText,
 } from "../src";
 import "../src/styles.css";
@@ -53,16 +55,116 @@ function examples(language: BehaviorText): BehaviorExample[] {
   return [...mocked, onDevice];
 }
 
+/** A device the demo is connected to, over its open local bridge. */
+interface Connected {
+  device: WebSocketDevice;
+  runtime: DeviceRuntime;
+}
+
+/**
+ * The editor, on the mock until the person connects it to a device: then
+ * every file but an example runs on that device.
+ */
+function Demo({ language, offered }: { language: BehaviorText; offered: BehaviorExample[] }) {
+  const [connected, setConnected] = useState<Connected | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [url, setUrl] = useState(LOCAL_BRIDGE_URL);
+  const [connecting, setConnecting] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  // A connection the device closes, or that another client takes, says why.
+  useEffect(() => {
+    if (!connected) return undefined;
+    let current = true;
+    connected.device.closed.then((reason) => {
+      if (!current) return;
+      setConnected(null);
+      setProblem(reason);
+    });
+    return () => {
+      current = false;
+    };
+  }, [connected]);
+
+  const connect = (event: FormEvent) => {
+    event.preventDefault();
+    setConnecting(true);
+    setProblem(null);
+    WebSocketDevice.connect(url)
+      .then((device) => {
+        const runtime = new DeviceRuntime({
+          device,
+          loadCall: (graph) => language.loadCall(graph),
+          editCall: (diff) => language.editCall(diff),
+        });
+        setConnected({ device, runtime });
+        setAsking(false);
+      })
+      .catch((e: unknown) => setProblem(e instanceof Error ? e.message : String(e)))
+      .finally(() => setConnecting(false));
+  };
+  const disconnect = () => {
+    connected?.device.close();
+    setConnected(null);
+  };
+
+  return (
+    <div style={{ maxWidth: 1600, margin: "0 auto" }}>
+      <div
+        className="be-root"
+        style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}
+      >
+        {connected ? (
+          <>
+            <span role="status">{`Connected to the device at ${connected.device.url}`}</span>
+            <button type="button" onClick={disconnect}>
+              Disconnect
+            </button>
+          </>
+        ) : asking ? (
+          <form onSubmit={connect} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <label className="be-inline">
+              Device&apos;s bridge
+              <input
+                type="text"
+                inputMode="url"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                size={28}
+              />
+            </label>
+            <button type="submit" className="be-primary" disabled={connecting}>
+              {connecting ? "Connecting…" : "Connect"}
+            </button>
+            <button type="button" onClick={() => setAsking(false)}>
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <button type="button" onClick={() => setAsking(true)}>
+            Connect to a device…
+          </button>
+        )}
+        {problem && (
+          <span className="be-problem" role="alert">
+            {problem}
+          </span>
+        )}
+      </div>
+      <BehaviorEditor
+        language={language}
+        runtime={connected?.runtime}
+        examples={offered}
+        moduleNames={{ [MATH_MODULE_ID]: "math" }}
+      />
+    </div>
+  );
+}
+
 await Promise.all([initBehaviorText(), initDataflowDevice()]);
 const language = createBehaviorText(behaviorText);
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <div style={{ maxWidth: 1600, margin: "0 auto" }}>
-      <BehaviorEditor
-        language={language}
-        examples={examples(language)}
-        moduleNames={{ [MATH_MODULE_ID]: "math" }}
-      />
-    </div>
+    <Demo language={language} offered={examples(language)} />
   </StrictMode>,
 );

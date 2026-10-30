@@ -50,5 +50,12 @@ export { MATH_MODULE_ID } from "./runtime/math-module";
 export {
   DeviceRuntime,
   type AroraDevice,
+  type DeviceAnswer,
   type DeviceRuntimeOptions,
 } from "./runtime/device-runtime";
+export {
+  LOCAL_BRIDGE_URL,
+  WebSocketDevice,
+  type WebSocketDeviceOptions,
+  type WebSocketLike,
+} from "./runtime/websocket-device";

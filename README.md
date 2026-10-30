@@ -161,8 +161,24 @@ the next behavior afresh.
   afresh; `edit` sends `EDIT` (`language.editCall`) with a graph diff; `stop`
   loads the empty graph. The host hands it the device as an
   `AroraDevice`: describe its methods, call one, write its inputs, list its
-  keys, read its store and step it, each answering when it returns, values as
-  the JSON of Arora's `Value`.
+  keys, read its store and step it, each answering when it returns or with a
+  promise, values as the JSON of Arora's `Value`. A device on its own clock
+  (`ownClock`) is not stepped: a step waits for the device's next one, and
+  reports what changed since the last step the editor saw, which may span
+  several of the device's. Such a device runs its behavior whether the editor
+  follows it or not: pausing stops following, not the device.
+- `WebSocketDevice` is an `AroraDevice` on its own clock: an Arora device
+  reached over its open local bridge, `arora-bridge-ws`, on
+  `ws://127.0.0.1:9000` by default (`LOCAL_BRIDGE_URL`).
+  `WebSocketDevice.connect(url)` opens the connection and reads the device's
+  keys and values; then `describe_methods` describes its functions, `call`
+  calls one by ids (the interpreter's `LOAD` and `EDIT` among them),
+  `write_values` writes its inputs, `list_keys` lists its keys with their
+  meta, and every `values_changed` the device pushes keeps the store it reads
+  current. A step waits for the next push carrying `arora/time`, or answers
+  after its `dtMs` when the device does not step. The bridge serves one client
+  at a time: `closed` says why the connection ended, another client taking it
+  among the reasons. The bridge unsets no key, so writing `null` is refused.
 
 ## Develop
 
@@ -194,7 +210,10 @@ and a tree back through Groot, as the same graph; `fixtures/files` holds one
 file per format, and a Groot tree with an unconnected port (`res=""`).
 
 The demo offers the NGBT spectrum's examples on its start screen, each on a
-mock device seeded for it, and `dataflow.bt` on that Arora device.
+mock device seeded for it, and `dataflow.bt` on that Arora device. **Connect to
+a device…** connects it to a running Arora device's open local bridge
+(`ws://127.0.0.1:9000` by default), on which every file but an example then
+runs.
 
 `npm run lint:rust` and `npm run test:rust` check both crates. The language's
 tests run in release, as its wasm is built: its nesting limit is set for a

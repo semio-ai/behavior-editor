@@ -6,6 +6,7 @@ import { useState } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { type Example, GREET, ORDER, SMILE } from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import type { MethodSignature } from "../model/signature";
 import type { BehaviorDocument, SourceNode } from "../text/ast";
 import type { BehaviorText } from "../text/language";
 import { MATH_MODULE_ID } from "../runtime/math-module";
@@ -434,6 +435,237 @@ describe("BehaviorEditor", () => {
     await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 2"));
     await user.click(screen.getByRole("button", { name: "Reset" }));
     await waitFor(() => expect(calls.at(-1)).toBe("start"));
+  });
+
+  it("opens a graph file as text, saves it as another format, and refuses one that cannot hold it", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const written: { name: string; text: string }[] = [];
+    const handle = (name: string, text = "") => ({
+      name,
+      // jsdom's File reads no text: the file as the editor reads it.
+      getFile: () => Promise.resolve({ name, text: () => Promise.resolve(text) }),
+      createWritable: () =>
+        Promise.resolve({
+          write: (data: string) => {
+            written.push({ name, text: data });
+            return Promise.resolve();
+          },
+          close: () => Promise.resolve(),
+        }),
+    });
+    vi.stubGlobal("showOpenFilePicker", () => Promise.resolve([handle("greet.json", json.text)]));
+    vi.stubGlobal("showSaveFilePicker", (options: { suggestedName: string }) =>
+      Promise.resolve(handle(options.suggestedName)),
+    );
+    const { user, texts } = setup(SMILE);
+    await screen.findByRole("tree", { name: "Behavior diagram" });
+    // The example's comments stay in its text: a graph file has none.
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Graph, JSON" }));
+    await waitFor(() => expect(written.at(-1)?.name).toBe("smile.json"));
+    expect(screen.getByText(/keeps no comments/)).toHaveAttribute("role", "status");
+
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+    expect(screen.getByText("greet.json")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Graph, YAML" }));
+    await waitFor(() => expect(written.at(-1)?.name).toBe("greet.yaml"));
+    expect(written.at(-1)?.text).toContain("- id: fresh\n  function: not\n");
+    expect(screen.queryByText(/keeps no comments/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Groot XML" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Groot XML cannot hold this behavior: Groot holds no node outside the tree",
+    );
+    expect(written).toHaveLength(2);
+  });
+
+  it("saves a graph file from the text as typed, before it is parsed again", async () => {
+    const written: string[] = [];
+    vi.stubGlobal("showSaveFilePicker", (options: { suggestedName: string }) =>
+      Promise.resolve({
+        name: options.suggestedName,
+        createWritable: () =>
+          Promise.resolve({
+            write: (data: string) => {
+              written.push(data);
+              return Promise.resolve();
+            },
+            close: () => Promise.resolve(),
+          }),
+      }),
+    );
+    const { user } = setup(SMILE);
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    await user.type(screen.getByRole("textbox", { name: "Behavior text" }), "late: not(x: true)\n");
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Graph, JSON" }));
+    await waitFor(() => expect(written).toHaveLength(1));
+    expect(written[0]).toContain('"id": "late"');
+    expect(screen.queryByText("(unsaved changes)")).toBeNull();
+  });
+
+  it("downloads a file named without an extension under the extension of its format", async () => {
+    const downloads: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloads.push(this.download);
+    });
+    const { createObjectURL, revokeObjectURL } = URL;
+    URL.createObjectURL = () => "blob:behavior";
+    URL.revokeObjectURL = () => undefined;
+    const { user } = setup(ORDER, { fileName: "draft" });
+    await screen.findByRole("tree", { name: "Behavior diagram" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(downloads).toEqual(["draft.bt"]));
+    expect(screen.getByText("draft.bt")).toBeTruthy();
+    click.mockRestore();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+  });
+
+  it("opens a graph file with the functions the runtime says once the picker returns", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const runtime = new MockArora({ store: GREET.store });
+    let said: (functions: MethodSignature[]) => void = () => {};
+    const saying = new Promise<MethodSignature[]>((resolve) => (said = resolve));
+    runtime.functions = () => saying;
+    let pick: (handles: unknown[]) => void = () => {};
+    vi.stubGlobal(
+      "showOpenFilePicker",
+      () => new Promise((resolve) => (pick = resolve)),
+    );
+    const { user, texts } = setup(SMILE, { runtime });
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    said(MATH_FUNCTIONS);
+    pick([
+      {
+        name: "greet.json",
+        getFile: () =>
+          Promise.resolve({ name: "greet.json", text: () => Promise.resolve(json.text) }),
+      },
+    ]);
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+  });
+
+  it("resolves a graph file opened against the functions the runtime said for it", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const runtime = new MockArora({ store: GREET.store });
+    // Its first answer lists nothing; asked again, it lists its functions.
+    let asked = 0;
+    runtime.functions = () => Promise.resolve(asked++ === 0 ? [] : MATH_FUNCTIONS);
+    vi.stubGlobal("showOpenFilePicker", () =>
+      Promise.resolve([
+        {
+          name: "greet.json",
+          getFile: () =>
+            Promise.resolve({ name: "greet.json", text: () => Promise.resolve(json.text) }),
+        },
+      ]),
+    );
+    const { user, texts } = setup(SMILE, { runtime });
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Step" })).toBeEnabled());
+  });
+
+  it("keeps the functions a file opened with when the first answer comes after", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const runtime = new MockArora({ store: GREET.store });
+    // The first answer comes late, and lists nothing; asked again, it lists its functions.
+    let first: (functions: MethodSignature[]) => void = () => {};
+    let asked = 0;
+    runtime.functions = () =>
+      asked++ === 0 ? new Promise((resolve) => (first = resolve)) : Promise.resolve(MATH_FUNCTIONS);
+    vi.stubGlobal("showOpenFilePicker", () =>
+      Promise.resolve([
+        {
+          name: "greet.json",
+          getFile: () =>
+            Promise.resolve({ name: "greet.json", text: () => Promise.resolve(json.text) }),
+        },
+      ]),
+    );
+    const { user, texts } = setup(SMILE, { runtime });
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+    first([]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByRole("button", { name: "Step" })).toBeEnabled();
+  });
+
+  it("opens no graph file whose functions came from a runtime switched away from", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const first = new MockArora({ store: GREET.store });
+    let said: (functions: MethodSignature[]) => void = () => {};
+    let asked = 0;
+    first.functions = () =>
+      asked++ === 0 ? Promise.resolve(MATH_FUNCTIONS) : new Promise((resolve) => (said = resolve));
+    vi.stubGlobal("showOpenFilePicker", () =>
+      Promise.resolve([
+        {
+          name: "greet.json",
+          getFile: () =>
+            Promise.resolve({ name: "greet.json", text: () => Promise.resolve(json.text) }),
+        },
+      ]),
+    );
+    const texts: string[] = [];
+    const props = {
+      language,
+      defaultText: SMILE.text,
+      fileName: SMILE.file,
+      autoPlay: false,
+      onTextChange: (t: string) => texts.push(t),
+    };
+    const user = userEvent.setup();
+    const { rerender } = render(<BehaviorEditor {...props} runtime={first} />);
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    rerender(<BehaviorEditor {...props} runtime={new MockArora({ store: GREET.store })} />);
+    said(MATH_FUNCTIONS);
+    expect(await screen.findByRole("alert")).toHaveTextContent("the runtime changed");
+    expect(texts).toEqual([]);
+  });
+
+  it("writes no file whose name says another format than the one saved", async () => {
+    const written: string[] = [];
+    const offered: unknown[] = [];
+    vi.stubGlobal("showSaveFilePicker", (options: unknown) => {
+      offered.push(options);
+      return Promise.resolve({
+        name: "tree.bt",
+        createWritable: () =>
+          Promise.resolve({
+            write: (data: string) => {
+              written.push(data);
+              return Promise.resolve();
+            },
+            close: () => Promise.resolve(),
+          }),
+      });
+    });
+    const { user } = setup(ORDER);
+    await screen.findByRole("tree", { name: "Behavior diagram" });
+    await user.click(screen.getByRole("button", { name: "Save as…" }));
+    await user.click(screen.getByRole("button", { name: "Graph, JSON" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "tree.bt is not named as Graph, JSON: name it .json",
+    );
+    expect(offered).toEqual([expect.objectContaining({ excludeAcceptAllOption: true })]);
+    expect(written).toEqual([]);
   });
 
   it("says why the runtime refused the behavior", async () => {

@@ -21,6 +21,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
 
+mod files;
+
 /// A function as a device's `describeMethods` lists it.
 #[derive(Serialize, Deserialize)]
 struct MethodSignature {
@@ -125,6 +127,56 @@ pub fn diff(previous_json: &str, next_json: &str) -> Result<String, JsError> {
 pub fn edit_call(diff_json: &str) -> Result<String, JsError> {
     let diff: GraphDiff = from_json(diff_json).map_err(error)?;
     serde_json::to_string(&encode_edit(&diff)).map_err(error)
+}
+
+/// A behavior file as the text the editor edits: `file` a readable graph in
+/// `format` (`json` or `yaml`), its names resolved against `functions_json`
+/// and the natives, or a Groot tree (`groot`). Answers `{ text }`, or
+/// `{ problems }` when the file does not load, each problem with its place:
+/// `line` and `column`, or `at`, the path of a reference in the file.
+#[wasm_bindgen(js_name = openFile)]
+pub fn open_file(file: &str, format: &str, functions_json: &str) -> Result<String, JsError> {
+    let functions = index(functions_json)?;
+    let outcome = match format {
+        "groot" => files::open_groot(file, &functions),
+        other => files::open_graph(file, graph_format(other)?, &functions),
+    };
+    outcome_json(outcome)
+}
+
+/// A resolved behavior as a file in `format`: a readable graph in JSON or
+/// YAML, each node by `names_json` (`{ "<node id>": "<name or path>" }`),
+/// each function and port by its name; or a Groot tree (`groot`). Answers
+/// `{ text }`, or `{ problems }` naming what the format cannot hold, a file
+/// that would not open again among them.
+#[wasm_bindgen(js_name = writeFile)]
+pub fn write_file(
+    graph_json: &str,
+    names_json: &str,
+    format: &str,
+    functions_json: &str,
+) -> Result<String, JsError> {
+    let graph: Graph = from_json(graph_json).map_err(error)?;
+    let names: HashMap<Uuid, String> = from_json(names_json).map_err(error)?;
+    let functions = index(functions_json)?;
+    let outcome = match format {
+        "groot" => files::write_groot(&graph, &names, &functions),
+        other => files::write_graph(&graph, &names, graph_format(other)?, &functions),
+    };
+    outcome_json(outcome)
+}
+
+fn graph_format(name: &str) -> Result<files::GraphFormat, JsError> {
+    files::GraphFormat::named(name)
+        .ok_or_else(|| error(format!("no file format `{name}`: json, yaml or groot")))
+}
+
+fn outcome_json(outcome: files::Outcome) -> Result<String, JsError> {
+    let value = match outcome {
+        Ok(text) => json!({ "text": text }),
+        Err(problems) => json!({ "problems": problems }),
+    };
+    Ok(value.to_string())
 }
 
 /// `json` read as a `T`, however deep the language lets it nest. serde_json

@@ -284,24 +284,38 @@ export function usePlayback(
   };
 }
 
-/** The module functions `runtime` offers, once it has said; and why it could not. */
+/**
+ * The module functions `runtime` offers, once it has said; and why it could
+ * not. `said` records functions the runtime said when asked again, so what
+ * the editor resolves against is what it last said.
+ */
 export function useRuntimeFunctions(runtime: BehaviorRuntime): {
   functions: MethodSignature[];
   error: string | null;
+  said(functions: MethodSignature[]): void;
 } {
   const [state, setState] = useState<{ functions: MethodSignature[]; error: string | null }>({
     functions: [],
     error: null,
   });
+  // Counts the lists asked for and recorded: an answer to an older request
+  // than the last does not replace a newer list.
+  const asked = useRef(0);
   useEffect(() => {
-    let current = true;
+    const mine = ++asked.current;
     runtime
       .functions()
-      .then((functions) => current && setState({ functions, error: null }))
-      .catch((e: unknown) => current && setState({ functions: [], error: message(e) }));
+      .then((functions) => asked.current === mine && setState({ functions, error: null }))
+      .catch(
+        (e: unknown) => asked.current === mine && setState({ functions: [], error: message(e) }),
+      );
     return () => {
-      current = false;
+      asked.current += 1;
     };
   }, [runtime]);
-  return state;
+  const said = useCallback((functions: MethodSignature[]) => {
+    asked.current += 1;
+    setState({ functions, error: null });
+  }, []);
+  return { ...state, said };
 }

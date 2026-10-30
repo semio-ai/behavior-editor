@@ -2,7 +2,14 @@ import type { Graph, GraphDiff, Source } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import { holdsExactly } from "../model/value";
 import type { BehaviorDocument } from "./ast";
-import type { BehaviorText, Diagnostic, Loaded, ParseResult } from "./language";
+import type {
+  BehaviorText,
+  Diagnostic,
+  FileOutcome,
+  GraphFileFormat,
+  Loaded,
+  ParseResult,
+} from "./language";
 
 /**
  * The exports of the package's wasm build, `@semio/behavior-editor/wasm`,
@@ -16,6 +23,8 @@ export interface BehaviorTextExports {
   loadCall(graphJson: string): string;
   diff(previousJson: string, nextJson: string): string;
   editCall(diffJson: string): string;
+  openFile(file: string, format: string, functionsJson: string): string;
+  writeFile(graphJson: string, namesJson: string, format: string, functionsJson: string): string;
 }
 
 /**
@@ -49,6 +58,20 @@ export function createBehaviorText(exports: BehaviorTextExports): BehaviorText {
     diff: (previous: Graph, next: Graph) =>
       JSON.parse(exports.diff(JSON.stringify(previous), JSON.stringify(next))) as GraphDiff,
     editCall: (diff: GraphDiff) => exports.editCall(JSON.stringify(diff)),
+    openFile: (file: string, format: GraphFileFormat, functions: MethodSignature[]) =>
+      JSON.parse(exports.openFile(file, format, JSON.stringify(functions))) as FileOutcome,
+    writeFile: (loaded: Loaded, format: GraphFileFormat, functions: MethodSignature[]) => {
+      // Each node by its name, or by its path where the text names it not.
+      const names = Object.fromEntries(loaded.nodes.map((n) => [n.id, n.name ?? n.path]));
+      return JSON.parse(
+        exports.writeFile(
+          JSON.stringify(loaded.graph),
+          JSON.stringify(names),
+          format,
+          JSON.stringify(functions),
+        ),
+      ) as FileOutcome;
+    },
   };
 }
 

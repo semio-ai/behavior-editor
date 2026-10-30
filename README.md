@@ -47,7 +47,7 @@ serves as is. Elsewhere, pass the module's bytes:
 | `runtime` | Where the behavior runs. A `MockArora` with the math module by default. |
 | `text`, `onTextChange` | The file's text, for a controlled editor. |
 | `defaultText` | The text an uncontrolled editor starts from. |
-| `fileName` | The name a new file is saved under. |
+| `fileName` | The name a new file is saved under; its extension says its format. |
 | `moduleNames` | Names the palette shows for module ids. |
 | `plotKeys` | The store keys plotted from the start. |
 | `autoPlay` | Whether the behavior ticks as soon as it resolves (default `true`). |
@@ -76,11 +76,43 @@ The editor:
   inputs), save a key the behavior publishes after every tick. A number's
   slider spans the bounds its runtime declares, within its type's limits. A key a tree node writes stays editable, marked as such,
   and a write a device applies at its next step shows as pending until then.
-- opens and saves `.bt` files through the File System Access API, or a file
-  input and a download where the browser lacks it.
+- opens and saves behavior files in four formats (below) through the File
+  System Access API, or a file input and a download where the browser lacks
+  it.
 
 Styles are plain CSS on `--be-` custom properties on `:root`, with a dark set
 that follows the system unless the page sets `data-theme` on its root element.
+
+## Files
+
+| Format | Extension | Holds |
+|---|---|---|
+| Behavior text | `.bt` | everything: the tree, the detached nodes, every binding, the comments and the layout |
+| Readable graph, JSON | `.json` | the graph: nodes, bindings, children and root, every reference by name where one resolves back to the same id, by id otherwise |
+| Readable graph, YAML | `.yaml`, `.yml` | the same graph, in YAML |
+| Groot XML | `.xml` | a tree alone: no node outside it, no binding to another node's port or a selection, no node name |
+
+Which form to use where is arora-behavior-tree's rule,
+[Which form to use](https://github.com/semio-ai/arora-sdk/blob/main/crates/arora-behavior-tree/docs/text.md#which-form-to-use).
+
+The editor edits a behavior as text, so a file opens as the text of the graph
+it holds: a readable graph is resolved against the runtime's functions (by
+names, by ids, or both, as `arora-behavior-tree`'s `readable` reads it), a
+Groot tree through its Groot loader, and the graph is written as text by its
+`display`, and that text is kept only when it resolves back to the same
+graph. A node the file names keeps its name, and a readable graph's nodes keep
+their ids: one the text would give another id is named by its id. A call
+in an argument is a node of the graph, which the text shows as a node of its
+own, named by its id. A file that does not load says why, with its place: a
+line and column, or the path of a reference (`nodes[2].bind.lo`).
+
+Save writes the file's own format, Save As the one picked, to a name with that
+format's extension. A graph file is written from the graph the text resolves
+to, so the text must resolve without errors; each node is written by its name,
+or by its path (`root.0.2`) when the text names it not. A graph file keeps no
+comments, which saving says. A file is written only when it opens again: JSON
+reads as deep as four times the language's nesting limit, YAML 128 levels.
+Saving a behavior Groot cannot hold is refused, naming what it cannot hold.
 
 ## Runtimes
 
@@ -142,6 +174,10 @@ drives it through `DeviceRuntime`: a fallback that flips on a distance, a clampe
 and offset output, an oscillator on the device's clock, a `damp` converging, a
 stop, and edits: the `damp` easing on across an edit of another node, and
 restarting when an edit binds it.
+
+`src/text/files.test.ts` reads every example back through each graph format,
+and a tree back through Groot, as the same graph; `fixtures/files` holds one
+file per format, and a Groot tree with an unconnected port (`res=""`).
 
 The demo opens the NGBT spectrum's examples, each on a mock device, and
 `dataflow.bt` on that Arora device.

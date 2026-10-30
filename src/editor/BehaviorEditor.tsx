@@ -1,13 +1,21 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Graph } from "../model/graph";
 import { type NodePath, deleteNode, moveNode, reparent, siblingPath, walk } from "../model/edit";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
+import type { BehaviorDocument } from "../text/ast";
 import type { BehaviorText, Diagnostic } from "../text/language";
 import { Diagram, type Drop } from "./Diagram";
 import { diagramRows, rowKey } from "./diagram-rows";
 import { type BehaviorFile, openBehaviorFile, saveBehaviorFile } from "./file-access";
 import { FileBar } from "./FileBar";
+import {
+  FILE_FORMATS,
+  type FileFormat,
+  formatOf,
+  problemsText,
+  withExtension,
+} from "./file-formats";
 import { functionIndex } from "./functions";
 import { type Edit, Inspector } from "./Inspector";
 import { PlaybackBar } from "./PlaybackBar";
@@ -27,7 +35,7 @@ export interface BehaviorEditorProps {
   /** The text an uncontrolled editor starts from. */
   defaultText?: string;
   onTextChange?(text: string): void;
-  /** The file's name until one is opened or saved. */
+  /** The file's name until one is opened or saved; its extension says its format. */
   fileName?: string;
   /** Names to show and write for module ids. */
   moduleNames?: Readonly<Record<string, string>>;
@@ -71,11 +79,21 @@ export function BehaviorEditor({
   autoPlay = true,
 }: BehaviorEditorProps) {
   const active = useMemo(() => runtime ?? new MockArora(), [runtime]);
+  // The runtime shown, which an open finishing late checks it still is.
+  const shown = useRef(active);
+  useEffect(() => {
+    shown.current = active;
+  }, [active]);
   const [own, setOwn] = useState(defaultText);
   const text = controlled ?? own;
-  const [file, setFile] = useState<BehaviorFile>({ name: fileName, handle: null });
+  const [file, setFile] = useState<BehaviorFile>(() => ({
+    name: fileName,
+    format: formatOf(fileName) ?? "bt",
+    handle: null,
+  }));
   const [saved, setSaved] = useState(text);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>("0");
   const [folds, setFolds] = useState<ReadonlySet<string>>(new Set());
   const [plotted, setPlotted] = useState<string[]>([...plotKeys]);
@@ -111,7 +129,7 @@ export function BehaviorEditor({
 
   const parsed = useMemo(() => language.parse(source), [language, source]);
   const natives = useMemo(() => language.natives(), [language]);
-  const { functions, error: functionsError } = useRuntimeFunctions(active);
+  const { functions, error: functionsError, said } = useRuntimeFunctions(active);
   const resolved = useMemo(
     () => language.resolve(parsed.document, functions),
     [language, parsed.document, functions],
@@ -197,17 +215,45 @@ export function BehaviorEditor({
 
   const fileAction = (run: () => Promise<void>) => () => {
     setFileError(null);
+    setFileNotice(null);
     run().catch((e: unknown) => setFileError(e instanceof Error ? e.message : String(e)));
   };
-  const save = (saveAs: boolean) =>
+  /**
+   * The file's contents in `format`: the text, or the graph it resolves to,
+   * written as the format writes it; and what the format does not keep.
+   */
+  const contents = (format: FileFormat): { written: string; notice: string | null } => {
+    if (format === "bt") return { written: text, notice: null };
+    const label = FILE_FORMATS.find((f) => f.format === format)!.label;
+    // The text as typed, which typing may not have had parsed yet.
+    const now = source === text ? parsed : language.parse(text);
+    const graph = source === text ? resolved : language.resolve(now.document, functions);
+    if ([...now.diagnostics, ...graph.diagnostics].some((d) => d.severity === "error")) {
+      throw new Error(`The text has errors: a ${label} file is written from the graph it resolves to`);
+    }
+    const out = language.writeFile(graph, format, functions);
+    if ("problems" in out) {
+      throw new Error(`${label} cannot hold this behavior: ${problemsText(out.problems)}`);
+    }
+    return {
+      written: out.text,
+      notice: hasComments(now.document)
+        ? `Saved as ${label}, which keeps no comments: the text's stay in its .bt`
+        : null,
+    };
+  };
+  const save = (format: FileFormat, saveAs: boolean) =>
     fileAction(async () => {
-      const written = await saveBehaviorFile(text, file, saveAs);
-      if (!written) return;
-      setFile(written);
+      const { written, notice } = contents(format);
+      const target = saveAs ? { name: withExtension(file.name, format), format, handle: null } : file;
+      const stored = await saveBehaviorFile(written, target, saveAs);
+      if (!stored) return;
+      setFile(stored);
       setSaved(text);
+      setFileNotice(notice);
     });
   const onNew = fileAction(async () => {
-    setFile({ name: fileName, handle: null });
+    setFile({ name: fileName, format: formatOf(fileName) ?? "bt", handle: null });
     setText("");
     setSaved("");
     setSelected("0");
@@ -216,9 +262,28 @@ export function BehaviorEditor({
   const onOpen = fileAction(async () => {
     const opened = await openBehaviorFile();
     if (!opened) return;
-    setFile({ name: opened.name, handle: opened.handle });
-    setText(opened.text);
-    setSaved(opened.text);
+    let next = opened.text;
+    if (opened.format !== "bt") {
+      // The runtime's functions as it says them now, which it may not have
+      // said yet when the picker opened.
+      const from = active;
+      const now = await from.functions();
+      // Opened with another runtime's functions, the file would name functions
+      // the runtime shown may not have: it opens nothing.
+      if (shown.current !== from) {
+        throw new Error(`${opened.name} was not opened: the runtime changed while it was`);
+      }
+      // The text then resolves against the same functions the file opened with.
+      said(now);
+      const out = language.openFile(opened.text, opened.format, now);
+      if ("problems" in out) {
+        throw new Error(`${opened.name} does not open: ${problemsText(out.problems)}`);
+      }
+      next = out.text;
+    }
+    setFile({ name: opened.name, format: opened.format, handle: opened.handle });
+    setText(next);
+    setSaved(next);
     setSelected("0");
     setFolds(new Set());
   });
@@ -336,9 +401,10 @@ export function BehaviorEditor({
           dirty={text !== saved}
           onNew={onNew}
           onOpen={onOpen}
-          onSave={save(false)}
-          onSaveAs={save(true)}
+          onSave={save(file.format, false)}
+          onSaveAs={(format) => save(format, true)()}
           error={fileError}
+          notice={fileNotice}
         />
         <PlaybackBar
           playing={playback.playing}
@@ -487,6 +553,16 @@ function Legend() {
       </span>
     </div>
   );
+}
+
+/** Whether `document` holds a comment anywhere. */
+function hasComments(document: BehaviorDocument): boolean {
+  const inNode = (node: BehaviorDocument["nodes"][number]): boolean =>
+    node.comments.length > 0 ||
+    node.comment !== null ||
+    node.call.arguments.some((a) => a.comments.length > 0) ||
+    node.children.some(inNode);
+  return document.comments.length > 0 || document.nodes.some(inNode);
 }
 
 function uniqueDiagnostics(...lists: readonly (readonly Diagnostic[])[]): Diagnostic[] {

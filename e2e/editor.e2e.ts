@@ -19,8 +19,11 @@ let client: TestClient;
 
 test.beforeEach(async () => {
   client = await testClient();
-  // Each test starts from a device running no behavior.
+  // Each test, and each attempt of one, starts from a device running no
+  // behavior, its inputs as the device seeds them.
   await client.session.stop();
+  await client.session.write("sensor/distance", { f32: 0.3 });
+  await client.session.write("face/smile_target", { f32: 1 });
 });
 
 test.afterEach(async ({ page }) => {

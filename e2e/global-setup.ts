@@ -1,22 +1,29 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { connect, createServer } from "node:net";
+import { type AddressInfo, type Server, connect, createServer } from "node:net";
 import { join } from "node:path";
 
 /** The native device's binary, which `npm run test:e2e` builds first. */
 const DEVICE = join(__dirname, "device", "target", "debug", "e2e-device");
 
-/** A loopback port free now. */
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() =>
-        typeof address === "object" && address ? resolve(address.port) : reject(new Error("no port")),
-      );
-    });
-  });
+/**
+ * `count` distinct loopback ports free now: each is held until all are
+ * chosen, so none is chosen twice.
+ */
+async function freePorts(count: number): Promise<number[]> {
+  const servers: Server[] = [];
+  try {
+    for (let i = 0; i < count; i++) {
+      const server = createServer();
+      servers.push(server);
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+    }
+    return servers.map((server) => (server.address() as AddressInfo).port);
+  } finally {
+    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
+  }
 }
 
 /** Whether something accepts connections on `port` now. */
@@ -47,7 +54,7 @@ async function served(port: number, device: ChildProcess): Promise<void> {
  * device stops with the suite.
  */
 export default async function globalSetup() {
-  const [editor, test] = [await freePort(), await freePort()];
+  const [editor, test] = (await freePorts(2)) as [number, number];
   const device = spawn(DEVICE, [String(editor), String(test)], {
     stdio: ["ignore", "inherit", "inherit"],
     env: { ...process.env, RUST_LOG: process.env.RUST_LOG ?? "warn" },
@@ -55,7 +62,13 @@ export default async function globalSetup() {
   const failed = new Promise<never>((_, reject) =>
     device.once("error", (e) => reject(new Error(`the device did not start: ${e.message}`))),
   );
-  await Promise.race([Promise.all([served(editor, device), served(test, device)]), failed]);
+  try {
+    await Promise.race([Promise.all([served(editor, device), served(test, device)]), failed]);
+  } catch (error) {
+    // A device that did not come up is not left running.
+    device.kill();
+    throw error;
+  }
   process.env.E2E_DEVICE_URL = `ws://127.0.0.1:${editor}`;
   process.env.E2E_TEST_URL = `ws://127.0.0.1:${test}`;
   return () => {

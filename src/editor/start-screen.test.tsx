@@ -481,6 +481,26 @@ describe("the start screen", () => {
     expect(screen.getByRole("region", { name: "Open a behavior" })).toBeTruthy();
   });
 
+  it("opens nothing from a picker answered after the host's text arrived", async () => {
+    let pick: (handles: unknown[]) => void = () => {};
+    vi.stubGlobal("showOpenFilePicker", () => new Promise((resolve) => (pick = resolve)));
+    const texts: string[] = [];
+    const props = {
+      language,
+      autoPlay: false,
+      fileName: ORDER.file,
+      onTextChange: (t: string) => texts.push(t),
+    };
+    const user = userEvent.setup();
+    const { rerender } = render(<BehaviorEditor {...props} />);
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    rerender(<BehaviorEditor {...props} text={ORDER.text} />);
+    await waitFor(() => expect(text()).toHaveValue(ORDER.text));
+    pick([handle("greet.bt", GREET.text).handle]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(texts).toEqual([]);
+  });
+
   it("shows no failure of a step from before the host switched away and back", async () => {
     const first = new MockArora({ store: ORDER.store });
     const second = new MockArora({ store: ORDER.store });

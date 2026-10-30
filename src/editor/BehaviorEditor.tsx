@@ -134,6 +134,9 @@ export function BehaviorEditor({
     if (controlled === undefined || closed) return;
     setSession((open) => {
       if (open) return open;
+      // The host's text replaces the file as an open would: an open asked
+      // before it is moot.
+      requests.current += 1;
       serial.current += 1;
       return { serial: serial.current, file: newFile(fileName), text: controlled, example: null };
     });

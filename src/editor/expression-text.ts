@@ -62,20 +62,20 @@ export function variableText(key: string): string {
   return plain ? `{${key}}` : `{${JSON.stringify(key)}}`;
 }
 
-/** The nodes `expression` reads, as `@node.<port>`, at any depth. */
-export function nodesRead(expression: Expression): string[] {
+/** The node outputs `expression` reads, as `@node.<port>` names them, at any depth. */
+export function portsRead(expression: Expression): { node: string; port: string }[] {
   const { kind } = expression;
   switch (kind.type) {
     case "port":
-      return [kind.node.text];
+      return [{ node: kind.node.text, port: kind.parameter.text }];
     case "array":
-      return kind.elements.flatMap(nodesRead);
+      return kind.elements.flatMap(portsRead);
     case "some":
-      return nodesRead(kind.value);
+      return portsRead(kind.value);
     case "select":
-      return nodesRead(kind.source);
+      return portsRead(kind.source);
     case "call":
-      return kind.call.arguments.flatMap((a) => nodesRead(a.value));
+      return kind.call.arguments.flatMap((a) => portsRead(a.value));
     default:
       return [];
   }

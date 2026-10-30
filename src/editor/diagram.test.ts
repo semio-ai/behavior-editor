@@ -1,9 +1,17 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { EXAMPLES, type Example, GREET, READERS_PARALLEL, idOf } from "../../fixtures/examples";
+import {
+  EXAMPLES,
+  type Example,
+  GREET,
+  READERS_PARALLEL,
+  RETURN_VALUES,
+  SMILE,
+  idOf,
+} from "../../fixtures/examples";
 import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
 import type { BehaviorText } from "../text/language";
 import { dropAt } from "./Diagram";
-import { PAD, layoutDiagram } from "./diagram-layout";
+import { PAD, layoutDiagram, outputY } from "./diagram-layout";
 import { diagramRows } from "./diagram-rows";
 import { functionIndex } from "./functions";
 
@@ -76,13 +84,167 @@ describe("the diagram's rows", () => {
       sources: [],
     });
     expect(rows.find((r) => r.key === "0.0.1")?.ports).toEqual([
-      { name: "x", text: "@fresh._ret", sources: ["1"] },
+      { name: "x", text: "@fresh._ret", sources: [{ key: "1", output: "_ret" }] },
     ]);
     expect(rows.find((r) => r.key === "0.0.2")?.descendantKeys).toEqual([
       "0.0.2.0",
       "0.0.2.1",
       "0.0.2.2",
     ]);
+  });
+});
+
+/** The layout of `text`, resolved against the mock device's functions. */
+function layoutOf(text: string) {
+  const { document } = language.parse(text);
+  const loaded = language.resolve(document, MATH_FUNCTIONS);
+  const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+  return layoutDiagram(diagramRows(document, index, loaded.nodes), new Set());
+}
+
+describe("the diagram's outputs", () => {
+  it("names each output: _ret where it is written, then the parameters a function writes back", () => {
+    const rows = rowsOf(RETURN_VALUES);
+    const outputs = (key: string) => rows.find((r) => r.key === key)!.outputs;
+    // A named node's return value, read by others, written nowhere.
+    expect(outputs("1")).toEqual([{ name: "_ret", text: "" }]);
+    // A node binding its return value to a store key.
+    expect(outputs("3")).toEqual([{ name: "_ret", text: "{face/level}" }]);
+    // A tree leaf binding its return value; a condition's status is its pill, not an output.
+    expect(outputs("0.0.1")).toEqual([{ name: "_ret", text: "{face/look}" }]);
+    expect(outputs("0.0.0")).toEqual([]);
+    // A function writing a parameter back lists it after _ret.
+    const mouth = rowsOf(SMILE).find((r) => r.node.name?.text === "mouth")!;
+    expect(mouth.outputs).toEqual([
+      { name: "_ret", text: "{rig/mouth_corner}" },
+      { name: "state", text: "" },
+    ]);
+  });
+
+  it("reads an output a reference names by its parameter's id", () => {
+    const damp = MATH_FUNCTIONS.find((f) => f.name === "damp")!.function;
+    const state = Object.entries(damp.parameters).find(([, p]) => p.name === "state")![0];
+    const text = `${SMILE.text}watch: identity(x: @mouth.${state})\n`;
+    const { document } = language.parse(text);
+    const loaded = language.resolve(document, MATH_FUNCTIONS);
+    const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+    const rows = diagramRows(document, index, loaded.nodes);
+    const mouth = rows.find((r) => r.node.name?.text === "mouth")!;
+    const watch = rows.find((r) => r.node.name?.text === "watch")!;
+    expect(watch.ports[0]!.sources).toEqual([{ key: mouth.key, output: "state" }]);
+    const layout = layoutDiagram(rows, new Set());
+    const box = layout.boxes.get(mouth.key)!;
+    const wire = layout.wires.find((w) => w.from === mouth.key && w.to === watch.key)!;
+    expect(wire.d.startsWith(`M${box.x + box.w},${box.y + outputY(box, 1)} `)).toBe(true);
+  });
+
+  it("tells apart the wires of one argument reading two outputs of a node", () => {
+    const text = `${SMILE.text}watch: identity(x: f64[@mouth._ret, @mouth.state])\n`;
+    const { document } = language.parse(text);
+    const loaded = language.resolve(document, MATH_FUNCTIONS);
+    const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+    const layout = layoutDiagram(diagramRows(document, index, loaded.nodes), new Set());
+    const ids = layout.wires.map((w) => w.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.filter((id) => id.endsWith(">5@0"))).toEqual(["3._ret>5@0", "3.state>5@0"]);
+  });
+
+  it("routes a wire back to a reader on its left over both nodes", () => {
+    const text =
+      "sequence\n  identity(x: @m.state)\n  m: damp(target: 1, half_life: 0.1, state: none)\n";
+    const { document } = language.parse(text);
+    const loaded = language.resolve(document, MATH_FUNCTIONS);
+    const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+    const layout = layoutDiagram(diagramRows(document, index, loaded.nodes), new Set());
+    const [reader, producer] = [layout.boxes.get("0.0")!, layout.boxes.get("0.1")!];
+    expect(reader.x + reader.w).toBeLessThan(producer.x);
+    const wire = layout.wires.find((w) => w.from === "0.1" && w.to === "0.0")!;
+    expect(wire.d).not.toContain("C");
+    const ys = [...wire.d.matchAll(/V(-?[\d.]+)/g)].map((m) => Number(m[1]));
+    expect(Math.min(...ys)).toBeLessThan(Math.min(reader.y, producer.y));
+  });
+
+  it("routes a wire to a reader under its producer across the gap between them", () => {
+    const layout = layoutOf("p: sequence\n  succeed\n  identity(x: @p._ret)\n");
+    const [producer, reader] = [layout.boxes.get("0")!, layout.boxes.get("0.1")!];
+    const wire = layout.wires.find((w) => w.from === "0" && w.to === "0.1")!;
+    const across = Number(/V(-?[\d.]+)/.exec(wire.d)![1]);
+    expect(across).toBeGreaterThan(producer.y + producer.h);
+    expect(across).toBeLessThan(reader.y);
+  });
+
+  it("routes a wire to a reader rows under its producer clear of the nodes between", () => {
+    const layout = layoutOf(
+      "sequence\n  a: identity(x: 1)\n  succeed\n  succeed\n  succeed\n  identity(x: @a._ret)\n",
+    );
+    const wire = layout.wires.find((w) => w.from === "0.0" && w.to === "0.4")!;
+    const between = ["0.1", "0.2", "0.3"].map((k) => layout.boxes.get(k)!);
+    expect(between[0]!.y).toBeGreaterThan(layout.boxes.get("0.0")!.y);
+    const [x, across] = [...wire.d.matchAll(/[HV](-?[\d.]+)/g)].map((m) => Number(m[1]));
+    for (const b of between) {
+      // The lane passes no node, and the way down passes right of each.
+      expect(across! < b.y || across! > b.y + b.h).toBe(true);
+      expect(x).toBeGreaterThan(b.x + b.w);
+    }
+  });
+
+  it.each([
+    [
+      "a reader in a nested sequence",
+      "sequence\n  sequence\n    identity(x: @a._ret)\n  a: identity(x: 1)\n",
+    ],
+    [
+      "a reader under its producer beside a sibling",
+      "sequence\n  p: sequence\n    identity(x: @p._ret)\n  damp(target: 1, half_life: 0.1, state: none)\n",
+    ],
+    [
+      "a parent reading its child beside a sibling",
+      "sequence_star(index: @a._ret)\n  a: identity(x: 1u16)\n  damp(target: 1, half_life: 0.1, state: none)\n",
+    ],
+    [
+      "a reader on the producer's left",
+      "sequence\n  identity(x: @m.state)\n  m: damp(target: 1, half_life: 0.1, state: none)\n",
+    ],
+  ])("routes a wire back clear of every node: %s", (_, text) => {
+    const layout = layoutOf(text);
+    const back = layout.wires.filter((w) => !w.d.includes("C"));
+    expect(back.length).toBeGreaterThan(0);
+    for (const wire of back) {
+      const points = [...wire.d.matchAll(/([MHV])(-?[\d.]+)(?:,(-?[\d.]+))?/g)];
+      let [x, y] = [Number(points[0]![2]), Number(points[0]![3])];
+      const segments: [number, number, number, number][] = [];
+      for (const [, op, v] of points.slice(1)) {
+        const [nx, ny] = op === "H" ? [Number(v), y] : [x, Number(v)];
+        segments.push([x, y, nx, ny]);
+        [x, y] = [nx, ny];
+      }
+      for (const box of layout.boxes.values()) {
+        const inside = ([ax, ay, bx, by]: [number, number, number, number]) =>
+          Math.min(ax, bx) < box.x + box.w &&
+          Math.max(ax, bx) > box.x &&
+          Math.min(ay, by) < box.y + box.h &&
+          Math.max(ay, by) > box.y;
+        expect(segments.filter(inside), `${wire.id} through ${box.row.key}`).toEqual([]);
+      }
+    }
+  });
+
+  it("curves a wire to the sibling on its right within the gap between them", () => {
+    const layout = layoutOf("sequence\n  a: identity(x: 1)\n  identity(x: @a._ret)\n");
+    const [producer, reader] = [layout.boxes.get("0.0")!, layout.boxes.get("0.1")!];
+    const wire = layout.wires.find((w) => w.from === "0.0" && w.to === "0.1")!;
+    const xs = /C(-?[\d.]+),[^ ]+ (-?[\d.]+),/.exec(wire.d)!.slice(1).map(Number);
+    for (const x of xs) {
+      expect(x).toBeGreaterThanOrEqual(producer.x + producer.w);
+      expect(x).toBeLessThanOrEqual(reader.x);
+    }
+  });
+
+  it("starts a wire at the output it reads", () => {
+    const layout = layoutDiagram(rowsOf(RETURN_VALUES), new Set());
+    const level = layout.boxes.get("3")!;
+    const wire = layout.wires.find((w) => w.from === "3" && w.to === "0.0.1")!;
+    expect(wire.d.startsWith(`M${level.x + level.w},${level.y + outputY(level, 0)} `)).toBe(true);
   });
 });
 

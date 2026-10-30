@@ -1,8 +1,9 @@
 import { type NodePath, walk } from "../model/edit";
 import { orderedParameters } from "../model/signature";
+import * as N from "../runtime/natives";
 import type { BehaviorDocument, SourceNode, Span } from "../text/ast";
 import type { LoadedNode } from "../text/language";
-import { expressionText, functionText, nodesRead } from "./expression-text";
+import { expressionText, functionText, portsRead } from "./expression-text";
 import {
   type FunctionEntry,
   type FunctionIndex,
@@ -11,12 +12,28 @@ import {
   nodeShape,
 } from "./functions";
 
-/** One argument line of a node: the parameter, what it reads, and the nodes that produce it. */
+/** An output an argument reads: the producing row, and which of its outputs. */
+export interface DiagramSource {
+  key: string;
+  output: string;
+}
+
+/** One argument line of a node: the parameter, what it reads, and the outputs it reads. */
 export interface DiagramPort {
   name: string;
   text: string;
-  /** The keys of the rows whose output this argument reads. */
-  sources: string[];
+  /** The outputs of other rows this argument reads. */
+  sources: DiagramSource[];
+}
+
+/**
+ * One output of a node: its return value `_ret`, or a parameter the function
+ * writes back. `text` is the store key or variable the output is written to,
+ * when the node binds one.
+ */
+export interface DiagramOutput {
+  name: string;
+  text: string;
 }
 
 /** A node of the document as the diagram draws it. */
@@ -36,8 +53,7 @@ export interface DiagramRow {
   glyph: string;
   title: string;
   ports: DiagramPort[];
-  /** Whether other nodes can read it: it has a name. */
-  produces: boolean;
+  outputs: DiagramOutput[];
   /** Its graph node, when the document resolved. */
   graphId: string | null;
   /** Whether no node holds it: a top-level node after the root. */
@@ -58,8 +74,15 @@ export function diagramRows(
   loaded: readonly LoadedNode[],
 ): DiagramRow[] {
   const nodes = walk(document);
-  const producers = new Map<string, string>();
-  for (const { node, path } of nodes) if (node.name) producers.set(node.name.text, rowKey(path));
+  const producers = new Map<string, Producer>();
+  for (const { node, path } of nodes) {
+    if (node.name) {
+      producers.set(node.name.text, {
+        key: rowKey(path),
+        entry: functions.lookup(node.call.function),
+      });
+    }
+  }
   const rows = new Map<string, DiagramRow>();
   for (const { node, path } of nodes) {
     const key = rowKey(path);
@@ -82,7 +105,7 @@ export function diagramRows(
       glyph: shape === "control" ? controlGlyph(entry) : "",
       title: `${name}${target}${functionText(node.call.function)}`,
       ports: ports(node, entry, producers),
-      produces: node.name !== null,
+      outputs: outputs(node, entry),
       graphId:
         loaded.find((l) => sameSpan(l.span, node.span) && l.name === (node.name?.text ?? null))
           ?.id ?? null,
@@ -105,7 +128,7 @@ export function diagramRows(
 function ports(
   node: SourceNode,
   entry: FunctionEntry | undefined,
-  producers: ReadonlyMap<string, string>,
+  producers: ReadonlyMap<string, Producer>,
 ): DiagramPort[] {
   const params = entry
     ? orderedParameters(entry.signature.function).map((p) => p.parameter.name)
@@ -120,10 +143,54 @@ function ports(
     return {
       name,
       text: expressionText(value),
-      sources: [...new Set(nodesRead(value))].flatMap((n) => {
-        const key = producers.get(n);
-        return key === undefined ? [] : [key];
+      sources: portsRead(value).flatMap(({ node: n, port }) => {
+        const producer = producers.get(n);
+        return producer === undefined
+          ? []
+          : [{ key: producer.key, output: outputName(port, producer.entry) }];
       }),
     };
   });
+}
+
+/** The name the language gives a node's return value. */
+export const RET = "_ret";
+
+/** A node others read by name: its row, and its function. */
+interface Producer {
+  key: string;
+  entry: FunctionEntry | undefined;
+}
+
+/**
+ * The name of the output `port` of a node calling `entry`: a reference may
+ * name a parameter by its id, and the return value by `_ret`'s.
+ */
+function outputName(port: string, entry: FunctionEntry | undefined): string {
+  if (port === N.RET) return RET;
+  return entry?.signature.function.parameters[port]?.name ?? port;
+}
+
+/**
+ * A node's outputs: `_ret` when the node binds it, can be read by name, or
+ * returns a value that is not a status (a status shows as the node's pill),
+ * then each parameter the function writes back, in declared order.
+ */
+function outputs(node: SourceNode, entry: FunctionEntry | undefined): DiagramOutput[] {
+  const fn = entry?.signature.function;
+  const returns = fn?.returnType;
+  const returnsData =
+    returns !== undefined &&
+    !(returns.type === "primitive" && returns.value.kind === "unit") &&
+    !(returns.type === "frozenScalar" && returns.value.reference.id === N.STATUS_ENUMERATION);
+  const ret =
+    node.target !== null || node.name !== null || returnsData
+      ? [{ name: RET, text: node.target ? expressionText(node.target) : "" }]
+      : [];
+  const written = fn
+    ? orderedParameters(fn)
+        .filter((p) => p.parameter.mutable)
+        .map((p) => ({ name: p.parameter.name, text: "" }))
+    : [];
+  return [...ret, ...written];
 }

@@ -12,7 +12,7 @@ export interface DiagramLayout {
   boxes: Map<string, Box>;
   /** The parent-to-child edges of the tree. */
   edges: { from: string; to: string; d: string }[];
-  /** The data wires: from the right edge of a producing node to the port reading it. */
+  /** The data wires: from the output a node produces, on its right edge, to the port reading it. */
   wires: Wire[];
   width: number;
   height: number;
@@ -30,6 +30,8 @@ export interface Box {
   lines: string[];
   /** The line each port starts on. */
   portLine: number[];
+  /** The output lines, under the ports: each output's name and where it is written. */
+  outputLines: string[];
   /** The rows a folded node hides, one square each, up to `MINI`. */
   minis: DiagramRow[] | null;
   folded: boolean;
@@ -37,6 +39,8 @@ export interface Box {
 }
 
 export interface Wire {
+  /** What tells it from every other wire: its ends, with the output and the port it joins. */
+  id: string;
   from: string;
   to: string;
   /** The port the wire reaches, or `null` when it reaches a folded node standing for the reader. */
@@ -62,6 +66,13 @@ const STACK_WIDTH = 640;
 /** The y of port `i`'s line, from the top of its box. */
 export const portY = (box: Box, i: number) => 32 + LINE * box.portLine[i]!;
 
+/** The y of output `i`'s line, from the top of its box. */
+export const outputY = (box: Box, i: number) => 32 + LINE * (box.lines.length + i);
+
+/** An output's line: `{face/level} ← _ret`, or its name alone when it is written nowhere. */
+export const outputText = (o: { name: string; text: string }) =>
+  o.text ? `${o.text} ← ${o.name}` : o.name;
+
 function wrapText(s: string, max: number): string[] {
   if (s.length <= max) return [s];
   const lines: string[] = [];
@@ -82,6 +93,82 @@ interface TreeBox extends Box {
   H: number;
   CW: number;
   stacked: boolean;
+}
+
+/** A segment of a route, along one axis: `[x1, y1, x2, y2]`. */
+type Segment = readonly [number, number, number, number];
+
+/** Whether `segment` runs through `box`, `margin` around it, rather than along or past it. */
+function crosses(segment: Segment, box: Box, margin: number): boolean {
+  const [ax, ay, bx, by] = segment;
+  const [left, right] = [Math.min(ax, bx), Math.max(ax, bx)];
+  const [top, bottom] = [Math.min(ay, by), Math.max(ay, by)];
+  return (
+    left < box.x + box.w + margin &&
+    right > box.x - margin &&
+    top < box.y + box.h + margin &&
+    bottom > box.y - margin
+  );
+}
+
+/**
+ * The path of a wire from `from`'s output at `start` back to `to`'s port at
+ * `end`, which is not on its right: out to the right, along a corridor down
+ * or up, along a lane, and into the port from its left. Lanes come in order:
+ * in the gap between the two nodes when one is above the other, nearest the
+ * reader then midway, over both, under both; corridors from nearest the
+ * producer to farthest right. The route taken is the first whose every
+ * segment clears every node, the two it joins included; with none, the one
+ * crossing the fewest.
+ */
+function routeBack(
+  from: Box,
+  to: Box,
+  [x1, y1]: readonly [number, number],
+  [x2, y2]: readonly [number, number],
+  boxes: readonly Box[],
+): string {
+  const x0 = x2 - 10;
+  const below = to.y - (from.y + from.h);
+  const above = from.y - (to.y + to.h);
+  const lanes = [
+    ...(below > 0 ? [to.y - Math.min(SG / 2, below / 2), from.y + from.h + below / 2] : []),
+    ...(above > 0 ? [to.y + to.h + Math.min(SG / 2, above / 2), to.y + to.h + above / 2] : []),
+    Math.min(from.y, to.y) - 8,
+    Math.max(from.y + from.h, to.y + to.h) + 8,
+  ];
+  const corridors = [
+    ...new Set([x1, ...boxes.map((b) => b.x + b.w)].filter((x) => x >= x1).map((x) => x + 9)),
+  ].sort((a, b) => a - b);
+  const crossings = (xr: number, lane: number) => {
+    const segments: Segment[] = [
+      [x1, y1, xr, y1],
+      [xr, y1, xr, lane],
+      [xr, lane, x0, lane],
+      [x0, lane, x0, y2],
+    ];
+    // A wire leaves its producer's edge and enters its reader's.
+    return boxes.reduce(
+      (count, b) =>
+        count +
+        segments.filter(
+          (segment, i) =>
+            !((b === from && i === 0) || (b === to && i === 3)) &&
+            crosses(segment, b, b === from || b === to ? 0 : 2),
+        ).length,
+      0,
+    );
+  };
+  let route: readonly [number, number, number] = [corridors[0]!, lanes[0]!, Infinity];
+  search: for (const lane of lanes) {
+    for (const xr of corridors) {
+      const count = crossings(xr, lane);
+      if (count < route[2]) route = [xr, lane, count];
+      if (count === 0) break search;
+    }
+  }
+  const [xr, lane] = route;
+  return `M${x1},${y1} H${xr} V${lane} H${x0} V${y2} H${x2}`;
 }
 
 /** The row standing for `key` with `folds`: its outermost folded ancestor, or itself. */
@@ -113,18 +200,20 @@ export function layoutDiagram(
       lines.push(...wrapText(`${p.name}  ${p.text}`, WRAP));
       return at;
     });
+    const outputLines = row.outputs.map(outputText);
     const minis = folded ? row.descendantKeys.slice(0, MINI).map((k) => byKey.get(k)!) : null;
     const chev = row.childKeys.length ? 2 : 0;
     const head =
       (row.title.length + (row.glyph ? row.glyph.length + 1 : 0) + chev) * CH_T + (pill ? 30 : 0);
     const textW = Math.max(
       head,
-      ...lines.map((l) => l.length * CH_S + 4),
+      ...[...lines, ...outputLines].map((l) => l.length * CH_S + 4),
       minis ? minis.length * 11 + (row.descendantKeys.length > MINI ? 34 : 0) : 0,
     );
     const condition = row.shape === "condition";
     const w = Math.ceil(Math.max(condition ? 132 : 112, textW + (condition ? 36 : 24)));
-    const h = (lines.length ? 28 + LINE * lines.length : 30) + (minis ? 16 : 0);
+    const textLines = lines.length + outputLines.length;
+    const h = (textLines ? 28 + LINE * textLines : 30) + (minis ? 16 : 0);
     boxes.set(row.key, {
       row,
       x: 0,
@@ -133,6 +222,7 @@ export function layoutDiagram(
       h,
       lines,
       portLine,
+      outputLines,
       minis,
       folded,
       pill,
@@ -205,7 +295,7 @@ export function layoutDiagram(
     let k = 0;
     for (const p of f.row.ports) {
       for (const s of p.sources) {
-        const producer = boxes.get(s);
+        const producer = boxes.get(s.key);
         if (producer && detached.has(producer)) k = Math.max(k, columnOf(producer) + 1);
       }
     }
@@ -247,7 +337,7 @@ export function layoutDiagram(
     const xs: number[] = [];
     for (const row of rows) {
       row.ports.forEach((p, i) => {
-        if (!p.sources.includes(f.row.key)) return;
+        if (!p.sources.some((source) => source.key === f.row.key)) return;
         const to = boxes.get(visibleKey(byKey, row.key, folds));
         if (!to || to === f || !placed.includes(to)) return;
         ys.push(to.y + (to.row === row ? portY(to, i) : 15) - 15);
@@ -280,26 +370,36 @@ export function layoutDiagram(
   for (const row of rows) {
     row.ports.forEach((p, i) => {
       for (const source of p.sources) {
-        const from = boxes.get(visibleKey(byKey, source, folds));
+        const from = boxes.get(visibleKey(byKey, source.key, folds));
         const to = boxes.get(visibleKey(byKey, row.key, folds));
         if (!from || !to || from === to) continue;
         const direct = to.row === row;
         const x1 = from.x + from.w;
-        const y1 = from.y + 15;
+        // A wire leaves the output it reads, or the top of a folded node standing for its producer.
+        const output =
+          from.row.key === source.key
+            ? from.row.outputs.findIndex((o) => o.name === source.output)
+            : -1;
+        const y1 = from.y + (output >= 0 ? outputY(from, output) : 15);
         const x2 = to.x;
         const y2 = to.y + (direct ? portY(to, i) : 15);
-        const id = `${from.row.key}>${to.row.key}@${y2}`;
+        const id = `${from.row.key}.${output >= 0 ? from.row.outputs[output]!.name : "top"}>${
+          to.row.key
+        }@${direct ? i : "folded"}`;
         if (seen.has(id)) continue;
         seen.add(id);
-        // A wire that runs back and down goes around the right of both nodes
-        // and into the port from above, so it crosses neither.
-        const xr = Math.max(x1, to.x + to.w) + 9;
-        const bend = Math.max(36, (x2 - x1) / 2);
+        // A wire to a reader on the right curves across the gap between
+        // them, its control points within it. Any other goes around the
+        // right of both nodes, then across the gap below its producer when
+        // the reader is under it, or over the top of both, and into the port
+        // from its left, so it crosses neither.
+        const back = x2 > x1 ? "" : routeBack(from, to, [x1, y1], [x2, y2], [...boxes.values()]);
+        const bend = Math.min(Math.max(36, (x2 - x1) / 2), x2 - x1);
         const d =
-          x2 >= x1 + 24 || y2 < y1
+          x2 > x1
             ? `M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`
-            : `M${x1},${y1} H${xr} V${to.y - 8} H${x2 - 10} V${y2} H${x2}`;
-        wires.push({ from: from.row.key, to: to.row.key, port: direct ? i : null, d });
+            : back;
+        wires.push({ id, from: from.row.key, to: to.row.key, port: direct ? i : null, d });
       }
     });
   }

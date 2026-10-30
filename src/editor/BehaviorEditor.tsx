@@ -1,8 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Graph } from "../model/graph";
+import { type Graph, isEmptyDiff } from "../model/graph";
 import { type NodePath, deleteNode, moveNode, reparent, siblingPath, walk } from "../model/edit";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
+import type { DeviceSession } from "../session/device-session";
+import { useSessionState } from "../session/use-device-session";
 import type { BehaviorDocument } from "../text/ast";
 import type { BehaviorText, Diagnostic } from "../text/language";
 import { Diagram, type Drop } from "./Diagram";
@@ -23,6 +25,8 @@ import {
 } from "./file-formats";
 import { functionIndex } from "./functions";
 import { type Edit, Inspector } from "./Inspector";
+import { DeviceBanner } from "./DeviceBanner";
+import { DeviceBar } from "./DeviceBar";
 import { PlaybackBar } from "./PlaybackBar";
 import { type RecentFile, useRecentFiles } from "./recent-files";
 import { type BehaviorExample, StartScreen } from "./StartScreen";
@@ -30,6 +34,7 @@ import { behaviorKeys } from "./store-keys";
 import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
 import { useMediaQuery } from "./use-media-query";
+import { useDeviceMode } from "./use-device-mode";
 import { usePlayback, useRuntimeFunctions, whenIdle } from "./use-playback";
 
 export interface BehaviorEditorProps {
@@ -37,6 +42,13 @@ export interface BehaviorEditorProps {
   language: BehaviorText;
   /** Where the behavior runs; a mock device with the math module by default. */
   runtime?: BehaviorRuntime;
+  /**
+   * A session with a device. While it is connected, or lost and connecting
+   * again, the editor shows what the device runs and does, and runs the file
+   * on it only when the person asks: see the README's "On a device". An
+   * example that brings its own runtime runs on that runtime.
+   */
+  session?: DeviceSession | null;
   /** The file's text, for a controlled editor; `onTextChange` receives every change. */
   text?: string;
   /**
@@ -75,7 +87,7 @@ const WIDE = "(min-width: 1100px)";
 export const REPARSE_DELAY_MS = 250;
 
 /** A file open in the editor: what it opened as, and the example it is, if one. */
-interface Session {
+interface OpenFile {
   /** Counts the files opened: each opens in a workspace of its own. */
   serial: number;
   file: BehaviorFile;
@@ -101,6 +113,7 @@ const newFile = (name: string): BehaviorFile => ({
 export function BehaviorEditor({
   language,
   runtime,
+  session = null,
   text: controlled,
   defaultText,
   onTextChange,
@@ -111,9 +124,14 @@ export function BehaviorEditor({
   autoPlay = true,
 }: BehaviorEditorProps) {
   const host = useMemo(() => runtime ?? new MockArora(), [runtime]);
+  const sessionState = useSessionState(session);
+  const attached =
+    sessionState?.status === "connected" || sessionState?.status === "lost" ? session : null;
+  /** The files the editor ran on a device, newest first: the device's behavior opens as one of them when it is. */
+  const ran = useRef<RanFile[]>([]);
   const recent = useRecentFiles();
   const serial = useRef(0);
-  const [session, setSession] = useState<Session | null>(() => {
+  const [openFile, setOpenFile] = useState<OpenFile | null>(() => {
     const text = controlled ?? defaultText;
     return text === undefined ? null : { serial: 0, file: newFile(fileName), text, example: null };
   });
@@ -132,7 +150,7 @@ export function BehaviorEditor({
     requests.current += 1;
     serial.current += 1;
     setStartError(null);
-    setSession({ serial: serial.current, file, text, example });
+    setOpenFile({ serial: serial.current, file, text, example });
     onTextChange?.(text);
   };
   /**
@@ -177,15 +195,17 @@ export function BehaviorEditor({
     },
     close: () => {
       requests.current += 1;
-      setSession(null);
+      setOpenFile(null);
       setClosed(true);
     },
+    openText: (name, text) => begin(newFile(name), text),
+    ran: ran.current,
   };
 
   // The runtime an example needs, made when it opens and disposed when it closes.
   const [made, setMade] = useState<{ serial: number; runtime: BehaviorRuntime } | null>(null);
-  const example = session?.example ?? null;
-  const opened = session?.serial ?? -1;
+  const example = openFile?.example ?? null;
+  const opened = openFile?.serial ?? -1;
   useEffect(() => {
     if (!example?.runtime) return undefined;
     const created = example.runtime();
@@ -199,7 +219,7 @@ export function BehaviorEditor({
     };
   }, [example, opened]);
 
-  if (!session) {
+  if (!openFile) {
     const attempt = (run: () => Promise<void>) => () => {
       setStartError(null);
       run().catch((e: unknown) => setStartError(e instanceof Error ? e.message : String(e)));
@@ -221,7 +241,7 @@ export function BehaviorEditor({
     );
   }
   const active = example?.runtime
-    ? made?.serial === session.serial
+    ? made?.serial === openFile.serial
       ? made.runtime
       : null
     : host;
@@ -236,16 +256,17 @@ export function BehaviorEditor({
   }
   return (
     <Workspace
-      key={session.serial}
+      key={openFile.serial}
       language={language}
       runtime={active}
-      session={session}
+      open={openFile}
       files={files}
       text={controlled}
       onTextChange={onTextChange}
       moduleNames={moduleNames}
-      plotKeys={session.example?.plotKeys ?? plotKeys}
+      plotKeys={openFile.example?.plotKeys ?? plotKeys}
       autoPlay={autoPlay}
+      device={example?.runtime ? null : attached}
       tab={tab}
       onTab={setTab}
     />
@@ -260,12 +281,29 @@ interface FileActions {
   open(): Promise<void>;
   openRecent(entry: RecentFile): Promise<void>;
   close(): void;
+  /** Open `text` as a new file named `name`. */
+  openText(name: string, text: string): void;
+  /** The files run on a device, newest first, which the workspace adds to. */
+  ran: RanFile[];
 }
+
+/** A file as it ran on a device: its name, its text, and the graph it resolved to. */
+interface RanFile {
+  name: string;
+  text: string;
+  graph: Graph;
+}
+
+/** How many files run on a device the editor remembers. */
+const RAN_FILES = 10;
+
+/** The name the device's behavior opens under when no file run on it has its graph. */
+const DEVICE_FILE = "device.bt";
 
 interface WorkspaceProps {
   language: BehaviorText;
   runtime: BehaviorRuntime;
-  session: Session;
+  open: OpenFile;
   files: FileActions;
   /** The text of a controlled editor. */
   text: string | undefined;
@@ -275,13 +313,15 @@ interface WorkspaceProps {
   autoPlay: boolean;
   tab: Tab;
   onTab(tab: Tab): void;
+  /** The session with the device the file runs on, while one is attached. */
+  device: DeviceSession | null;
 }
 
 /** One file open: the editor's views over it, its runtime running it. */
 function Workspace({
   language,
   runtime: active,
-  session,
+  open,
   files,
   text: controlled,
   onTextChange,
@@ -290,11 +330,12 @@ function Workspace({
   autoPlay,
   tab,
   onTab: setTab,
+  device: session,
 }: WorkspaceProps) {
-  const [own, setOwn] = useState(session.text);
+  const [own, setOwn] = useState(open.text);
   const text = controlled ?? own;
-  const [file, setFile] = useState<BehaviorFile>(session.file);
-  const [saved, setSaved] = useState(session.text);
+  const [file, setFile] = useState<BehaviorFile>(open.file);
+  const [saved, setSaved] = useState(open.text);
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>("0");
@@ -331,7 +372,7 @@ function Workspace({
 
   const parsed = useMemo(() => language.parse(source), [language, source]);
   const natives = useMemo(() => language.natives(), [language]);
-  const { functions, error: functionsError, known } = useRuntimeFunctions(active);
+  const { functions, error: functionsError, known } = useRuntimeFunctions(session ?? active);
   const resolved = useMemo(
     () => language.resolve(parsed.document, functions),
     [language, parsed.document, functions],
@@ -346,7 +387,10 @@ function Workspace({
     (previous: Graph, next: Graph) => language.diff(previous, next),
     [language],
   );
-  const playback = usePlayback(active, runnable ? resolved : null, autoPlay, diff);
+  const device = useDeviceMode(session, runnable ? resolved : null, diff);
+  const local = usePlayback(active, runnable && !session ? resolved : null, autoPlay, diff);
+  // On a device, the device's steps are what shows.
+  const playback = session ? device : local;
   const runtimeError = functionsError ?? playback.error;
 
   const index = useMemo(
@@ -459,6 +503,36 @@ function Workspace({
       setSaved(text);
       setFileNotice(notice);
     });
+  /**
+   * Open the device's behavior in place of the file: as the file run on the
+   * device whose graph it is, with its names, when the editor ran one;
+   * otherwise its graph as text, each node named by its id.
+   */
+  const openDevice = (graph: Graph) => {
+    const held = files.ran.find((f) => isEmptyDiff(language.diff(f.graph, graph)));
+    if (held) {
+      files.openText(held.name, held.text);
+      return;
+    }
+    const out = language.openFile(JSON.stringify(graph), "json", functions);
+    if ("problems" in out) {
+      setEditError(`The device's behavior does not open: ${problemsText(out.problems)}`);
+      return;
+    }
+    files.openText(DEVICE_FILE, out.text);
+  };
+  // The file as it runs on the device, to open with its names when the
+  // device's behavior is viewed.
+  const runsAsIs = device.relation === "running" && device.pendingChanges === 0 && runnable;
+  useEffect(() => {
+    if (!runsAsIs) return;
+    const ran = files.ran;
+    const at = ran.findIndex((f) => f.name === file.name);
+    if (at >= 0) ran.splice(at, 1);
+    ran.unshift({ name: file.name, text: source, graph: resolved.graph });
+    ran.splice(RAN_FILES);
+  }, [runsAsIs, files.ran, file.name, source, resolved.graph]);
+
   const toggleFold = (key: string) =>
     setFolds((f) => {
       const next = new Set(f);
@@ -580,18 +654,41 @@ function Workspace({
           error={fileError}
           notice={fileNotice}
         />
-        <PlaybackBar
-          playing={playback.playing}
-          onPlayingChange={playback.setPlaying}
-          onStep={playback.step}
-          onReset={playback.reset}
-          rate={playback.rate}
-          onRateChange={playback.setRate}
-          tick={playback.report?.tick ?? 0}
-          root={playback.report?.root}
-          runnable={runnable}
-        />
+        {session ? (
+          <DeviceBar device={device} />
+        ) : (
+          <PlaybackBar
+            playing={local.playing}
+            onPlayingChange={local.setPlaying}
+            onStep={local.step}
+            onReset={local.reset}
+            rate={local.rate}
+            onRateChange={local.setRate}
+            tick={local.report?.tick ?? 0}
+            root={local.report?.root}
+            runnable={runnable}
+          />
+        )}
       </header>
+      {session && (
+        <DeviceBanner
+          device={device}
+          loaded={runnable ? resolved : null}
+          index={index}
+          dirty={text !== saved}
+          onView={openDevice}
+          onReload={() => {
+            session
+              .deviceBehavior()
+              .then((read) => (read ? openDevice(read.graph) : setEditError("The device no longer says what it runs")))
+              .catch((e: unknown) => setEditError(e instanceof Error ? e.message : String(e)));
+          }}
+          onSelect={(id) => {
+            const row = rows.find((r) => r.graphId === id);
+            if (row) setSelected(row.key);
+          }}
+        />
+      )}
       {runtimeError && (
         <p className="be-alert" role="alert">
           {runtimeError}

@@ -76,6 +76,19 @@ function plotted(value: Value | undefined): number | null {
   return b === undefined ? null : Number(b);
 }
 
+/** `history` with one more tick, the store as `store` holds it. */
+export function withTick(
+  history: ReadonlyMap<string, readonly (number | null)[]>,
+  store: ReadonlyMap<string, Value>,
+): ReadonlyMap<string, readonly (number | null)[]> {
+  const out = new Map<string, readonly (number | null)[]>();
+  for (const key of new Set([...history.keys(), ...store.keys()])) {
+    const series = [...(history.get(key) ?? []), plotted(store.get(key))];
+    out.set(key, series.slice(-HISTORY));
+  }
+  return out;
+}
+
 /**
  * Run `loaded` on `runtime` whenever it changes and resolves, tick it at the
  * chosen rate while playing, and keep the store as the ticks leave it.
@@ -294,14 +307,7 @@ export function usePlayback(
       setStore(next);
       await readKeys();
       if (!live()) return;
-      setHistory((h) => {
-        const out = new Map<string, readonly (number | null)[]>();
-        for (const key of new Set([...h.keys(), ...next.keys()])) {
-          const series = [...(h.get(key) ?? []), plotted(next.get(key))];
-          out.set(key, series.slice(-HISTORY));
-        }
-        return out;
-      });
+      setHistory((h) => withTick(h, next));
     })
       .catch((e: unknown) => {
         if (!live()) return;
@@ -365,13 +371,13 @@ export function usePlayback(
  * not. `known` is false until the runtime of this render has said: what
  * another runtime said is not this one's.
  */
-export function useRuntimeFunctions(runtime: BehaviorRuntime): {
+export function useRuntimeFunctions(runtime: Pick<BehaviorRuntime, "functions">): {
   functions: MethodSignature[];
   error: string | null;
   known: boolean;
 } {
   const [state, setState] = useState<{
-    runtime: BehaviorRuntime | null;
+    runtime: Pick<BehaviorRuntime, "functions"> | null;
     functions: MethodSignature[];
     error: string | null;
   }>({ runtime: null, functions: [], error: null });

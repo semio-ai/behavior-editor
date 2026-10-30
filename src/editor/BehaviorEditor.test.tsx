@@ -584,6 +584,33 @@ describe("BehaviorEditor", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Step" })).toBeEnabled());
   });
 
+  it("keeps the functions a file opened with when the first answer comes after", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const runtime = new MockArora({ store: GREET.store });
+    // The first answer comes late, and lists nothing; asked again, it lists its functions.
+    let first: (functions: MethodSignature[]) => void = () => {};
+    let asked = 0;
+    runtime.functions = () =>
+      asked++ === 0 ? new Promise((resolve) => (first = resolve)) : Promise.resolve(MATH_FUNCTIONS);
+    vi.stubGlobal("showOpenFilePicker", () =>
+      Promise.resolve([
+        {
+          name: "greet.json",
+          getFile: () =>
+            Promise.resolve({ name: "greet.json", text: () => Promise.resolve(json.text) }),
+        },
+      ]),
+    );
+    const { user, texts } = setup(SMILE, { runtime });
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+    first([]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByRole("button", { name: "Step" })).toBeEnabled();
+  });
+
   it("writes no file whose name says another format than the one saved", async () => {
     const written: string[] = [];
     const offered: unknown[] = [];

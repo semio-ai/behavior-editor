@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { type NodePath, deleteNode, moveNode, reparent, siblingPath, walk } from "../model/edit";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
@@ -37,11 +37,16 @@ export interface BehaviorEditorProps {
 }
 
 type Tab = "diagram" | "text" | "store";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "diagram", label: "Diagram" },
-  { id: "text", label: "Text" },
-  { id: "store", label: "Store" },
-];
+interface TabInfo {
+  id: Tab;
+  label: string;
+}
+const DIAGRAM: TabInfo = { id: "diagram", label: "Diagram" };
+const TEXT: TabInfo = { id: "text", label: "Text" };
+const STORE: TabInfo = { id: "store", label: "Store" };
+/** A wide screen keeps the inspector and the store beside the tabbed views. */
+const WIDE_TABS = [DIAGRAM, TEXT];
+const NARROW_TABS = [DIAGRAM, TEXT, STORE];
 
 const WIDE = "(min-width: 1100px)";
 
@@ -50,7 +55,7 @@ export const REPARSE_DELAY_MS = 250;
 
 /**
  * An editor for a behavior: its tree and detached nodes as a diagram, and
- * its file as text, either editing the other; run on a device or a mock, its
+ * its file as text, in tabs, either editing the other; run on a device or a mock, its
  * statuses and store live; read from and saved to a local `.bt` file.
  */
 export function BehaviorEditor({
@@ -354,53 +359,93 @@ export function BehaviorEditor({
       )}
       {wide ? (
         <div className="be-main">
-          <div className="be-views">
-            {diagram}
-            {textView}
-          </div>
+          <ViewTabs
+            tabs={WIDE_TABS}
+            tab={tab === "store" ? "diagram" : tab}
+            onTab={setTab}
+            panels={{ diagram, text: textView }}
+          />
           <aside className="be-side">
             {inspector}
             {store}
           </aside>
         </div>
       ) : (
-        <div className="be-tabs">
-          <div className="be-tablist" role="tablist" aria-label="Views">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                role="tab"
-                id={`be-tab-${t.id}`}
-                aria-selected={tab === t.id}
-                aria-controls={`be-panel-${t.id}`}
-                tabIndex={tab === t.id ? 0 : -1}
-                onClick={() => setTab(t.id)}
-                onKeyDown={(event) => {
-                  const at = TABS.findIndex((x) => x.id === tab);
-                  const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-                  if (!step) return;
-                  const next = TABS[(at + step + TABS.length) % TABS.length]!;
-                  setTab(next.id);
-                  document.getElementById(`be-tab-${next.id}`)?.focus();
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <div role="tabpanel" id={`be-panel-${tab}`} aria-labelledby={`be-tab-${tab}`}>
-            {tab === "diagram" && (
+        <ViewTabs
+          tabs={NARROW_TABS}
+          tab={tab}
+          onTab={setTab}
+          panels={{
+            diagram: (
               <>
                 {diagram}
                 {inspector}
               </>
-            )}
-            {tab === "text" && textView}
-            {tab === "store" && store}
-          </div>
-        </div>
+            ),
+            text: textView,
+            store,
+          }}
+        />
       )}
+    </div>
+  );
+}
+
+/**
+ * Tabs over the editor's views, the arrow keys moving between them. A view
+ * shows while its tab is selected. The text stays mounted, hidden while
+ * another tab is, as its field holds what the editor cannot give back: its
+ * undo history. Every other view draws from the editor's state, and is drawn
+ * afresh, at its size, when its tab is selected.
+ */
+function ViewTabs({
+  tabs,
+  tab,
+  onTab,
+  panels,
+}: {
+  tabs: readonly TabInfo[];
+  tab: Tab;
+  onTab(tab: Tab): void;
+  panels: Partial<Record<Tab, ReactNode>>;
+}) {
+  return (
+    <div className="be-tabs">
+      <div className="be-tablist" role="tablist" aria-label="Views">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            id={`be-tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls={`be-panel-${t.id}`}
+            tabIndex={tab === t.id ? 0 : -1}
+            onClick={() => onTab(t.id)}
+            onKeyDown={(event) => {
+              const at = tabs.findIndex((x) => x.id === tab);
+              const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+              if (!step) return;
+              const next = tabs[(at + step + tabs.length) % tabs.length]!;
+              onTab(next.id);
+              document.getElementById(`be-tab-${next.id}`)?.focus();
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tabs.map((t) => (
+        <div
+          key={t.id}
+          role="tabpanel"
+          id={`be-panel-${t.id}`}
+          aria-labelledby={`be-tab-${t.id}`}
+          hidden={tab !== t.id}
+        >
+          {(tab === t.id || t.id === "text") && panels[t.id]}
+        </div>
+      ))}
     </div>
   );
 }

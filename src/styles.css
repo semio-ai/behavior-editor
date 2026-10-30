@@ -239,19 +239,6 @@
   gap: 12px;
   align-items: start;
 }
-/* The diagram is the main area; the text sits under it, or beside it on a very wide screen. */
-.be-views {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-  min-width: 0;
-}
-@media (min-width: 1800px) {
-  .be-views {
-    grid-template-columns: minmax(0, 1fr) minmax(360px, 34rem);
-  }
-}
 .be-side {
   display: flex;
   flex-direction: column;
@@ -284,6 +271,10 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+}
+/* A panel whose tab is not selected stays mounted, and out of sight. */
+.be-tabs [role="tabpanel"][hidden] {
+  display: none;
 }
 .be-pane,
 .be-inspector,

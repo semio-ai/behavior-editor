@@ -297,6 +297,16 @@ describe("BehaviorEditor", () => {
     expect(texts.at(-1)).toBe(`${ORDER.text}# note`);
   });
 
+  it("keeps the text's own field across tab changes, and its undo history with it", async () => {
+    const { user } = setup(ORDER);
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    const field = screen.getByRole("textbox", { name: "Behavior text" });
+    await user.click(screen.getByRole("tab", { name: "Diagram" }));
+    expect(screen.queryByRole("textbox", { name: "Behavior text" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    expect(screen.getByRole("textbox", { name: "Behavior text" })).toBe(field);
+  });
+
   it("parses a file replacing the text at once, whatever typing left waiting", async () => {
     const { user } = setup(ORDER);
     await user.click(screen.getByRole("tab", { name: "Text" }));
@@ -348,17 +358,20 @@ describe("BehaviorEditor", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("the device has no interpreter");
   });
 
-  it("puts the diagram and the text side by side on a wide screen", async () => {
+  it("tabs the diagram and the text beside the store on a wide screen", async () => {
     vi.stubGlobal("matchMedia", (query: string) => ({
       matches: true,
       media: query,
       addEventListener: () => {},
       removeEventListener: () => {},
     }));
-    setup(ORDER);
+    const { user } = setup(ORDER);
     expect(await screen.findByRole("tree", { name: "Behavior diagram" })).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: "Behavior text" })).toBeTruthy();
-    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Behavior text" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Store" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    expect(screen.getByRole("textbox", { name: "Behavior text" })).toHaveValue(ORDER.text);
+    expect(screen.queryByRole("tree", { name: "Behavior diagram" })).toBeNull();
     await act(() => Promise.resolve());
   });
 });

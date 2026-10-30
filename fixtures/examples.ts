@@ -21,6 +21,7 @@ import greet from "./examples/greet.bt?raw";
 import order from "./examples/order.bt?raw";
 import readersFallback from "./examples/readers-fallback.bt?raw";
 import readersParallel from "./examples/readers-parallel.bt?raw";
+import returnValues from "./examples/return-values.bt?raw";
 import smile from "./examples/smile.bt?raw";
 
 /** A function as the fixtures call it: its name, id, and parameter ids by name. */
@@ -393,6 +394,41 @@ export const ORDER = build(
   ["v"],
 );
 
+export const RETURN_VALUES = build(
+  "return-values",
+  "Return values",
+  "return-values.bt",
+  returnValues,
+  {
+    fn: FALLBACK,
+    children: [
+      {
+        fn: SEQUENCE,
+        children: [
+          { fn: math("truthy"), args: { x: { ref: "near" } } },
+          { target: "face/look", fn: math("identity"), args: { x: { ref: "level" } } },
+        ],
+      },
+      { target: "face/look", fn: math("identity"), args: { x: 0 } },
+    ],
+  },
+  [
+    { name: "near", fn: math("lt"), args: { a: { key: "sensor/distance" }, b: 0.5 } },
+    {
+      name: "cm",
+      fn: math("clamp"),
+      args: {
+        x: { call: math("mul"), args: { a: { key: "sensor/distance" }, b: 100 } },
+        min: 0,
+        max: 50,
+      },
+    },
+    { name: "level", target: "face/level", fn: math("add"), args: { a: { ref: "cm" }, b: 1 } },
+  ],
+  { "sensor/distance": { f64: 0.3 } },
+  ["sensor/distance", "face/level", "face/look"],
+);
+
 export const EXAMPLES: readonly Example[] = [
   SMILE,
   BREATHING,
@@ -400,6 +436,7 @@ export const EXAMPLES: readonly Example[] = [
   READERS_PARALLEL,
   READERS_FALLBACK,
   ORDER,
+  RETURN_VALUES,
 ];
 
 /** The graph node id of the node `loaded` names `name`, or whose path is `name`. */

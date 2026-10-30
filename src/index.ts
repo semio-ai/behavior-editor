@@ -1,5 +1,4 @@
 export { BehaviorEditor, type BehaviorEditorProps } from "./editor/BehaviorEditor";
-export { whenIdle } from "./editor/use-playback";
 export type { BehaviorExample } from "./editor/StartScreen";
 
 export type {
@@ -38,16 +37,14 @@ export type {
 } from "./model/signature";
 export type { StructureField, Value } from "./model/value";
 
-export type { BehaviorRuntime, DetachedActivity, Status, TickReport } from "./runtime/runtime";
 export {
-  MockArora,
   TIME_KEY,
-  type CallResult,
-  type MockAroraOptions,
-  type MockFunction,
-  type MockModule,
-} from "./runtime/mock-arora";
-export { MATH_MODULE_ID } from "./runtime/math-module";
+  type BehaviorRuntime,
+  type DetachedActivity,
+  type KeyInfo,
+  type Status,
+  type TickReport,
+} from "./runtime/runtime";
 export {
   DeviceRuntime,
   followed,
@@ -73,6 +70,8 @@ export {
   REVISION_KEY,
   type Backoff,
   type BehaviorChange,
+  type ClockState,
+  type SessionClock,
   type DeviceBehavior,
   type DeviceSessionOptions,
   type DeviceStatus,

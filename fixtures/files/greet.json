@@ -21,21 +21,31 @@
     },
     {
       "id": "root.0.0",
-      "function": "truthy",
+      "function": "equal",
       "bind": {
-        "x": {
+        "a": {
           "key": "person/visible"
+        },
+        "b": {
+          "value": {
+            "bool": true
+          }
         }
       }
     },
     {
       "id": "root.0.1",
-      "function": "truthy",
+      "function": "equal",
       "bind": {
-        "x": {
+        "a": {
           "port": {
             "node": "fresh",
             "port": "_ret"
+          }
+        },
+        "b": {
+          "value": {
+            "bool": true
           }
         }
       }
@@ -53,56 +63,51 @@
       "id": "root.0.2.0",
       "function": "damp",
       "bind": {
-        "_ret": {
-          "key": "rig/arm_raise"
+        "dt": {
+          "key": "arora/dt"
         },
-        "half_life": {
+        "in": {
           "value": {
-            "f64": 0.12
+            "f32": 1.0
           }
         },
-        "initial": {
-          "key": "rig/arm_raise"
+        "param.half_life": {
+          "value": {
+            "f32": 0.12
+          }
         },
         "state": {
-          "value": {
-            "option": null
-          }
-        },
-        "target": {
-          "value": {
-            "f64": 1.0
-          }
+          "key": "rig/arm_raise"
         }
       }
     },
     {
       "id": "root.0.2.1",
-      "function": "mul",
+      "function": "multiply",
       "bind": {
         "_ret": {
           "key": "rig/arm_wave"
         },
-        "a": {
+        "operand_0": {
           "port": {
-            "node": "root.0.2.1.a",
+            "node": "root.0.2.1.operand_0",
             "port": "_ret"
           }
         },
-        "b": {
+        "operand_1": {
           "value": {
-            "f64": 0.6
+            "f32": 0.6
           }
         }
       }
     },
     {
-      "id": "root.0.2.1.a",
+      "id": "root.0.2.1.operand_0",
       "function": "oscillator",
       "bind": {
         "frequency": {
           "value": {
-            "f64": 1.6
+            "f32": 1.6
           }
         },
         "t": {
@@ -112,33 +117,43 @@
     },
     {
       "id": "root.0.2.2",
-      "function": "wait",
+      "function": "fallback",
+      "children": [
+        "root.0.2.2.0",
+        "root.0.2.2.1"
+      ]
+    },
+    {
+      "id": "root.0.2.2.0",
+      "function": "equal",
       "bind": {
-        "now": {
-          "key": "arora/time"
-        },
-        "seconds": {
-          "value": {
-            "f64": 2.0
+        "a": {
+          "port": {
+            "node": "waved",
+            "port": "_ret"
           }
         },
-        "since": {
+        "b": {
           "value": {
-            "option": null
+            "bool": true
           }
         }
       }
     },
     {
+      "id": "root.0.2.2.1",
+      "function": "running"
+    },
+    {
       "id": "root.0.3",
-      "function": "identity",
+      "function": "not",
       "bind": {
         "_ret": {
           "key": "social/greeted"
         },
-        "x": {
+        "in": {
           "value": {
-            "bool": true
+            "bool": false
           }
         }
       }
@@ -148,33 +163,29 @@
       "function": "parallel",
       "children": [
         "root.1.0",
-        "root.1.1"
+        "root.1.1",
+        "root.1.2"
       ]
     },
     {
       "id": "root.1.0",
       "function": "damp",
       "bind": {
-        "_ret": {
-          "key": "rig/arm_raise"
+        "dt": {
+          "key": "arora/dt"
         },
-        "half_life": {
+        "in": {
           "value": {
-            "f64": 0.2
+            "f32": 0.0
           }
         },
-        "initial": {
-          "key": "rig/arm_raise"
+        "param.half_life": {
+          "value": {
+            "f32": 0.2
+          }
         },
         "state": {
-          "value": {
-            "option": null
-          }
-        },
-        "target": {
-          "value": {
-            "f64": 0.0
-          }
+          "key": "rig/arm_raise"
         }
       }
     },
@@ -182,26 +193,33 @@
       "id": "root.1.1",
       "function": "damp",
       "bind": {
-        "_ret": {
-          "key": "rig/arm_wave"
+        "dt": {
+          "key": "arora/dt"
         },
-        "half_life": {
+        "in": {
           "value": {
-            "f64": 0.2
+            "f32": 0.0
           }
         },
-        "initial": {
-          "key": "rig/arm_wave"
+        "param.half_life": {
+          "value": {
+            "f32": 0.2
+          }
         },
         "state": {
-          "value": {
-            "option": null
-          }
+          "key": "rig/arm_wave"
+        }
+      }
+    },
+    {
+      "id": "root.1.2",
+      "function": "time",
+      "bind": {
+        "_ret": {
+          "key": "social/rested_at"
         },
-        "target": {
-          "value": {
-            "f64": 0.0
-          }
+        "t": {
+          "key": "arora/time"
         }
       }
     },
@@ -209,8 +227,49 @@
       "id": "fresh",
       "function": "not",
       "bind": {
-        "x": {
+        "in": {
           "key": "social/greeted"
+        }
+      }
+    },
+    {
+      "id": "waved",
+      "function": "greaterthan",
+      "bind": {
+        "lhs": {
+          "port": {
+            "node": "detached.1.lhs",
+            "port": "_ret"
+          }
+        },
+        "rhs": {
+          "value": {
+            "f32": 2.0
+          }
+        }
+      }
+    },
+    {
+      "id": "detached.1.lhs",
+      "function": "subtract",
+      "bind": {
+        "lhs": {
+          "port": {
+            "node": "detached.1.lhs.lhs",
+            "port": "_ret"
+          }
+        },
+        "rhs": {
+          "key": "social/rested_at"
+        }
+      }
+    },
+    {
+      "id": "detached.1.lhs.lhs",
+      "function": "time",
+      "bind": {
+        "t": {
+          "key": "arora/time"
         }
       }
     }

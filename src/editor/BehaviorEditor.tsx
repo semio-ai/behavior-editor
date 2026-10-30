@@ -2,11 +2,9 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { type Graph, isEmptyDiff } from "../model/graph";
 import { type NodePath, deleteNode, moveNode, reparent, siblingPath, walk } from "../model/edit";
 import type { MethodSignature } from "../model/signature";
-import { MockArora } from "../runtime/mock-arora";
-import type { BehaviorRuntime } from "../runtime/runtime";
-import type { DeviceSession } from "../session/device-session";
+import type { DeviceSession, SessionState } from "../session/device-session";
 import { useSessionState } from "../session/use-device-session";
-import type { BehaviorDocument } from "../text/ast";
+import type { BehaviorDocument, Span } from "../text/ast";
 import type { BehaviorText, Diagnostic } from "../text/language";
 import { Diagram, type Drop } from "./Diagram";
 import { diagramRows, rowKey } from "./diagram-rows";
@@ -24,7 +22,7 @@ import {
   problemsText,
   withExtension,
 } from "./file-formats";
-import { functionIndex, missingFunctions } from "./functions";
+import { functionIndex, missingFunctions, unknownCalls } from "./functions";
 import { type Edit, Inspector } from "./Inspector";
 import { DeviceBanner } from "./DeviceBanner";
 import { DeviceBar } from "./DeviceBar";
@@ -37,23 +35,28 @@ import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
 import { useMediaQuery } from "./use-media-query";
 import { type DeviceMode, useDeviceMode } from "./use-device-mode";
-import { askFunctions, usePlayback, useRuntimeFunctions, whenIdle } from "./use-playback";
+import { useRuntimeFunctions } from "./use-functions";
+import { useLocalArora } from "./use-local-arora";
 
 export interface BehaviorEditorProps {
   /** The language: its parser, formatter and resolver. */
   language: BehaviorText;
   /**
-   * Where the behavior runs with no device attached; a mock device with the
-   * math module by default.
-   */
-  runtime?: BehaviorRuntime;
-  /**
-   * A session with a device. While it is connected, or lost and connecting
-   * again, the editor shows what the device runs and does, and runs the file
-   * on it only when the person asks: see the README's "On a device". Every
-   * file opened works on the device then, an example as any other.
+   * A session with an Arora the host connected to. While it is connected, or
+   * lost and connecting again, it is the Arora the editor works on: see the
+   * README's "On an Arora". Every file opened works on it then, an example
+   * as any other.
    */
   session?: DeviceSession | null;
+  /**
+   * Start a local Arora, an Arora device in the page
+   * (`@semio/behavior-editor/local-arora`'s `createLocalArora`): offered
+   * while no Arora is attached, and attached while no connected one is. The
+   * editor keeps it, its behavior and store, until it unmounts.
+   */
+  localArora?: () => DeviceSession;
+  /** Whether to start the local Arora as the editor mounts. */
+  startLocalArora?: boolean;
   /** The file's text, for a controlled editor; `onTextChange` receives every change. */
   text?: string;
   /**
@@ -70,8 +73,6 @@ export interface BehaviorEditorProps {
   moduleNames?: Readonly<Record<string, string>>;
   /** The store keys plotted from the start. */
   plotKeys?: readonly string[];
-  /** Whether the behavior ticks as soon as it resolves; otherwise it waits for Play or Step. */
-  autoPlay?: boolean;
 }
 
 type Tab = "diagram" | "text" | "store";
@@ -103,6 +104,9 @@ interface OpenFile {
 
 const NO_EXAMPLES: readonly BehaviorExample[] = [];
 
+/** What an editor with no Arora asks for functions: none, which it knows to be no index. */
+const NO_ARORA = { functions: () => Promise.resolve([]) };
+
 /** A new file named `name`, in the format its extension says. */
 const newFile = (name: string): BehaviorFile => ({
   name,
@@ -112,15 +116,17 @@ const newFile = (name: string): BehaviorFile => ({
 
 /**
  * An editor for a behavior: its tree and detached nodes as a diagram, and
- * its file as text, in tabs, either editing the other; run on a device or a
- * mock, its statuses and store live; read from and saved to local files.
- * With no behavior, it shows a start screen: a new behavior, a file to open,
- * the files opened lately, and the host's examples.
+ * its file as text, in tabs, either editing the other; run on an Arora, a
+ * local one in the page or one connected to, its statuses and store live;
+ * read from and saved to local files. With no Arora, it edits, opens and
+ * saves, and runs nothing. With no behavior, it shows a start screen: a new
+ * behavior, a file to open, the files opened lately, and the host's examples.
  */
 export function BehaviorEditor({
   language,
-  runtime,
-  session = null,
+  session: connected = null,
+  localArora,
+  startLocalArora = false,
   text: controlled,
   defaultText,
   onTextChange,
@@ -128,17 +134,21 @@ export function BehaviorEditor({
   examples = NO_EXAMPLES,
   moduleNames,
   plotKeys = [],
-  autoPlay = true,
 }: BehaviorEditorProps) {
-  const host = useMemo(() => runtime ?? new MockArora(), [runtime]);
-  const sessionState = useSessionState(session);
-  const attached =
-    sessionState?.status === "connected" || sessionState?.status === "lost" ? session : null;
+  const local = useLocalArora(localArora, startLocalArora);
+  const connectedState = useSessionState(connected);
+  const localState = useSessionState(local.session);
+  const live = (state: SessionState | null) =>
+    state?.status === "connected" || state?.status === "lost";
+  // The Arora the editor works on: the one connected to while it is, the
+  // local one otherwise, while it runs.
+  const attached = live(connectedState) ? connected : live(localState) ? local.session : null;
+  const sessionState = attached === connected ? connectedState : localState;
   /** The files the editor ran on a device, newest first: the device's behavior opens as one of them when it is. */
   const ran = useRef<RanFile[]>([]);
-  // Where a file opens: the device attached, or the editor's runtime. An
-  // open finishing late checks it still is.
-  const opensOn: Pick<BehaviorRuntime, "functions"> = attached ?? host;
+  // Where a file opens: the Arora attached, or none. An open finishing late
+  // checks it still is.
+  const opensOn: Pick<DeviceSession, "functions"> = attached ?? NO_ARORA;
   const shownHost = useRef(opensOn);
   useEffect(() => {
     shownHost.current = opensOn;
@@ -184,18 +194,23 @@ export function BehaviorEditor({
     onTextChange?.(text);
   };
   /**
-   * Open a file, as text: a graph file through the functions of the runtime it
+   * Open a file, as text: a graph file through the functions of the Arora it
    * opens on. Nothing opens when something else replaced the file meanwhile.
    */
   const openAsText = async (asked: number, opened: BehaviorFile & { text: string }) => {
     let next = opened.text;
     if (opened.format !== "bt") {
+      if (!attached) {
+        throw new Error(
+          `${opened.name} opens on an Arora: its calls are found among an Arora's functions`,
+        );
+      }
       const from = opensOn;
-      const functions = await askFunctions(from);
-      // Opened with another runtime's functions, the file would name functions
-      // the runtime it opens on may not have: it opens nothing.
+      const functions = await from.functions();
+      // Opened with another Arora's functions, the file would name functions
+      // the Arora it opens on may not have: it opens nothing.
       if (shownHost.current !== from) {
-        throw new Error(`${opened.name} was not opened: the runtime changed while it was`);
+        throw new Error(`${opened.name} was not opened: the Arora changed while it was`);
       }
       const out = language.openFile(opened.text, opened.format, functions);
       if ("problems" in out) {
@@ -261,7 +276,7 @@ export function BehaviorEditor({
           replace(newFile(held.name), held.text);
           return;
         }
-        const functions = await askFunctions(from);
+        const functions = await from.functions();
         if (!current()) return;
         const out = language.openFile(JSON.stringify(read.graph), "json", functions);
         if ("problems" in out) {
@@ -278,25 +293,6 @@ export function BehaviorEditor({
     },
     ran: ran.current,
   };
-
-  // The runtime an example runs on with no device attached, made when it
-  // opens and disposed when it closes. It is made while a device is attached
-  // too, idle, so that letting go of the device hands the file to it at once.
-  const [made, setMade] = useState<{ serial: number; runtime: BehaviorRuntime } | null>(null);
-  const example = openFile?.example ?? null;
-  const opened = openFile?.serial ?? -1;
-  useEffect(() => {
-    if (!example?.runtime) return undefined;
-    const created = example.runtime();
-    setMade({ serial: opened, runtime: created.runtime });
-    // The workspace's stop is queued on the runtime as it unmounts, in this
-    // same commit: the runtime goes once that and every call before it ran.
-    return () => {
-      Promise.resolve()
-        .then(() => whenIdle(created.runtime))
-        .then(() => created.dispose?.());
-    };
-  }, [example, opened]);
 
   if (!openFile) {
     const attempt = (run: () => Promise<void>) => () => {
@@ -323,29 +319,19 @@ export function BehaviorEditor({
       </div>
     );
   }
-  const active = example?.runtime ? (made?.serial === openFile.serial ? made.runtime : null) : host;
-  if (!active) {
-    return (
-      <div className="be-root">
-        <p className="be-fine" role="status">
-          {`Opening ${example!.title}…`}
-        </p>
-      </div>
-    );
-  }
   return (
     <Workspace
       key={openFile.serial}
       language={language}
-      runtime={active}
       open={openFile}
       files={files}
       text={controlled}
       onTextChange={onTextChange}
       moduleNames={moduleNames}
       plotKeys={openFile.example?.plotKeys ?? plotKeys}
-      autoPlay={autoPlay}
       device={attached}
+      onStartLocal={local.start}
+      localError={local.error}
       tab={tab}
       onTab={setTab}
     />
@@ -373,7 +359,8 @@ function useExampleFits(
   useEffect(() => {
     if (!session || !connection) return undefined;
     let current = true;
-    askFunctions(session)
+    session
+      .functions()
       .then((functions) => current && setSaid({ session, functions }))
       // The start screen marks nothing it could not learn; the file opened tells why.
       .catch(() => undefined);
@@ -446,8 +433,6 @@ const DEVICE_FILE = "device.bt";
 
 interface WorkspaceProps {
   language: BehaviorText;
-  /** The runtime the file runs on while no device is attached. */
-  runtime: BehaviorRuntime;
   open: OpenFile;
   files: FileActions;
   /** The text of a controlled editor. */
@@ -455,30 +440,30 @@ interface WorkspaceProps {
   onTextChange: ((text: string) => void) | undefined;
   moduleNames: Readonly<Record<string, string>> | undefined;
   plotKeys: readonly string[];
-  autoPlay: boolean;
   tab: Tab;
   onTab(tab: Tab): void;
-  /**
-   * The session with the device attached, if one is: the file works on the
-   * device, and nothing runs on `runtime`.
-   */
+  /** The session with the Arora attached, if one is: the file works on it. */
   device: DeviceSession | null;
+  /** Start the local Arora, when the host offers one. */
+  onStartLocal: (() => void) | undefined;
+  /** Why the local Arora did not start. */
+  localError: string | null;
 }
 
-/** One file open: the editor's views over it, its runtime running it. */
+/** One file open: the editor's views over it, on the Arora attached, if one is. */
 function Workspace({
   language,
-  runtime: active,
   open,
   files,
   text: controlled,
   onTextChange,
   moduleNames,
   plotKeys,
-  autoPlay,
   tab,
   onTab: setTab,
   device: session,
+  onStartLocal,
+  localError,
 }: WorkspaceProps) {
   const [own, setOwn] = useState(open.text);
   const text = controlled ?? own;
@@ -524,14 +509,14 @@ function Workspace({
   const sessionState = useSessionState(session);
   const connection = sessionState?.status === "connected" ? sessionState : null;
   const { functions, error: functionsError, known } = useRuntimeFunctions(
-    session ?? active,
+    session ?? NO_ARORA,
     connection,
   );
   const resolved = useMemo(
     () => language.resolve(parsed.document, functions),
     [language, parsed.document, functions],
   );
-  // A behavior runs once resolved against its runtime's own functions: one
+  // A behavior runs once resolved against its Arora's own functions: one
   // resolved against another's would name functions it may not have. Nor does
   // one whose text has errors: the parse leaves out the lines it could not
   // read, and the graph would be part of the file.
@@ -544,9 +529,7 @@ function Workspace({
     [language],
   );
   const device = useDeviceMode(session, runnable ? resolved : null, diff);
-  const local = usePlayback(active, runnable && !session ? resolved : null, autoPlay, diff);
-  // On a device, the device's steps are what shows.
-  const playback = session ? device : local;
+  const playback = device;
   const runtimeError = functionsError ?? playback.error;
 
   const index = useMemo(
@@ -560,9 +543,21 @@ function Workspace({
   );
   const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
   const selectedRow = (selected !== null && byKey.get(selected)) || null;
+  // With no Arora, no function index says what a module call calls: the
+  // resolver's word on those calls is left out, and the rest stands.
+  const unchecked = useMemo(
+    () => (session ? null : unknownCalls(parsed.document, index).map((call) => call.span)),
+    [session, parsed.document, index],
+  );
   const diagnostics = useMemo(
-    () => uniqueDiagnostics(parsed.diagnostics, resolved.diagnostics),
-    [parsed.diagnostics, resolved.diagnostics],
+    () =>
+      uniqueDiagnostics(
+        parsed.diagnostics,
+        unchecked
+          ? resolved.diagnostics.filter((d) => !unchecked.some((span) => within(d.span, span)))
+          : resolved.diagnostics,
+      ),
+    [parsed.diagnostics, resolved.diagnostics, unchecked],
   );
   // On a device, the file is the device's to run: what keeps it from running
   // there is told, the functions it calls that the device lacks first.
@@ -823,7 +818,7 @@ function Workspace({
           notice={fileNotice}
         />
         <div className="be-header-run">
-          <RunsOn session={session} />
+          <RunsOn session={session} onStartLocal={onStartLocal} error={localError} />
           {session && (
             <DeviceBehaviorButton
               device={device}
@@ -831,21 +826,8 @@ function Workspace({
               onOpen={openDeviceBehavior}
             />
           )}
-          {session ? (
-            <DeviceBar device={device} />
-          ) : (
-            <PlaybackBar
-              playing={local.playing}
-              onPlayingChange={local.setPlaying}
-              onStep={local.step}
-              onReset={local.reset}
-              rate={local.rate}
-              onRateChange={local.setRate}
-              tick={local.report?.tick ?? 0}
-              root={local.report?.root}
-              runnable={runnable}
-            />
-          )}
+          {session && <PlaybackBar session={session} />}
+          {session && <DeviceBar device={device} />}
         </div>
       </header>
       {session && (
@@ -1018,27 +1000,60 @@ function DeviceBehaviorButton({
 }
 
 /**
- * Where the behavior runs: on the device attached, the editor only following
- * it, or simulated in the page, on the editor's runtime or the example's.
+ * The Arora the behavior runs on: a local one, which the page steps, named
+ * as its session says; a device, which steps itself, and what the session is
+ * connected to; or none, with the local Arora to start when the host offers
+ * one.
  */
-function RunsOn({ session }: { session: DeviceSession | null }) {
+function RunsOn({
+  session,
+  onStartLocal,
+  error,
+}: {
+  session: DeviceSession | null;
+  onStartLocal: (() => void) | undefined;
+  error: string | null;
+}) {
   const state = useSessionState(session);
   const lost = state?.status === "lost";
-  return session ? (
+  if (!session) {
+    return (
+      <>
+        <output
+          className="be-runs-on"
+          aria-label="Runs on"
+          title="No Arora is attached: the behavior is edited, opened and saved, and runs nowhere; its calls of module functions are not checked, with no Arora's functions to check them against."
+        >
+          No Arora
+        </output>
+        {onStartLocal && (
+          <button type="button" onClick={onStartLocal}>
+            Start a local Arora
+          </button>
+        )}
+        {error && (
+          <span className="be-problem" role="alert">
+            {error}
+          </span>
+        )}
+      </>
+    );
+  }
+  return session.clock === "driven" ? (
     <output
-      className="be-runs-on be-runs-on-device"
+      className="be-runs-on be-runs-on-local"
       aria-label="Runs on"
-      title="The behavior runs on the device: nothing ticks in this page."
+      title="The behavior runs on an Arora in this page, which the editor steps."
     >
-      {`Device${session.label ? ` ${session.label}` : ""}${lost ? " (reconnecting)" : ""}`}
+      {session.label ?? "Local Arora"}
     </output>
   ) : (
     <output
-      className="be-runs-on be-runs-on-simulated"
+      className="be-runs-on be-runs-on-device"
       aria-label="Runs on"
-      title="The behavior runs in this page, on a simulated runtime: no device runs it."
+      title="The behavior runs on the device, which steps itself: nothing ticks in this page."
     >
-      Simulated
+      {`Device${session.label ? ` ${session.label}` : ""}${lost ? " (reconnecting)" : ""}`}
     </output>
   );
 }
@@ -1086,6 +1101,9 @@ function hasComments(document: BehaviorDocument): boolean {
     node.children.some(inNode);
   return document.comments.length > 0 || document.nodes.some(inNode);
 }
+
+/** Whether `span` lies within `outer`. */
+const within = (span: Span, outer: Span) => span.start >= outer.start && span.end <= outer.end;
 
 function uniqueDiagnostics(...lists: readonly (readonly Diagnostic[])[]): Diagnostic[] {
   const seen = new Set<string>();

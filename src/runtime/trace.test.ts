@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GREET } from "../../fixtures/examples";
+import { loadedOf } from "../../fixtures/local-arora";
 import { RET } from "./natives";
 import { TraceView, watchedNodes } from "./trace";
 
@@ -99,10 +100,11 @@ describe("TraceView", () => {
 });
 
 describe("watchedNodes", () => {
-  it("watches the nodes the text names and those outside the tree", () => {
-    const named = GREET.loaded.nodes.filter((n) => n.name !== null || !n.attached);
-    expect(watchedNodes(GREET.loaded)).toEqual(named.map((n) => n.id));
+  it("watches the nodes the text names and those outside the tree", async () => {
+    const loaded = await loadedOf(GREET);
+    const named = loaded.nodes.filter((n) => n.name !== null || !n.attached);
+    expect(watchedNodes(loaded)).toEqual(named.map((n) => n.id));
     expect(named.length).toBeGreaterThan(0);
-    expect(named.length).toBeLessThan(GREET.loaded.nodes.length);
+    expect(named.length).toBeLessThan(loaded.nodes.length);
   });
 });

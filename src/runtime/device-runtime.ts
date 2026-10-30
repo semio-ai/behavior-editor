@@ -127,8 +127,7 @@ export interface DeviceRuntimeOptions {
  * trace (arora-behavior's `docs/trace.md`): `start` starts one, watching the
  * outputs of the nodes the text names and of the detached ones, and each step
  * folds the reports written since into each node's status, each detached
- * node's activity and each watched node's return value, as the mock reports
- * them. An edit that changes the nodes watched, or a report that follows one
+ * node's activity and each watched node's return value. An edit that changes the nodes watched, or a report that follows one
  * not read, starts the trace over; `stop` halts it. Without a trace, the
  * device reports its store alone.
  *

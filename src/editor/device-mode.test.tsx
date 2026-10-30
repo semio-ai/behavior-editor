@@ -6,11 +6,12 @@ import { StrictMode, useState } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { type Example, GREET, ORDER } from "../../fixtures/examples";
 import { FAKE_CALLS, FakeDevice } from "../../fixtures/fake-device";
-import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import { loadLanguage } from "../../fixtures/language";
+import { DATAFLOW_FUNCTIONS, loadDevice } from "../../fixtures/local-arora";
 import { type Graph, isEmptyDiff } from "../model/graph";
-import { MATH_MODULE_ID } from "../runtime/math-module";
-import { MockArora } from "../runtime/mock-arora";
+import { valueNumber } from "../model/value";
 import { DeviceSession } from "../session/device-session";
+import { DATAFLOW_MODULE_ID, type DeviceModule, createLocalArora } from "../local-arora/local-arora";
 import type { BehaviorText } from "../text/language";
 import { BehaviorEditor } from "./BehaviorEditor";
 import { reopenPageStore } from "./recent-files";
@@ -20,8 +21,10 @@ import type { BehaviorExample } from "./StartScreen";
 configure({ asyncUtilTimeout: 5000 });
 
 let language: BehaviorText;
+let localDevice: DeviceModule;
 beforeAll(async () => {
   language = await loadLanguage();
+  localDevice = await loadDevice();
 });
 
 const sessions: DeviceSession[] = [];
@@ -34,9 +37,28 @@ afterEach(async () => {
   reopenPageStore();
 });
 
-/** The graph `text` resolves to against the math module. */
+/**
+ * A way to start a local Arora seeded as ORDER is, paused so that only the
+ * editor steps it: each one it makes is in `made`, the last the one kept.
+ */
+function localAroras() {
+  const made: DeviceSession[] = [];
+  const start = () => {
+    const session = createLocalArora(localDevice, language, {
+      inputs: ORDER.inputs,
+      values: ORDER.values,
+      playing: false,
+    });
+    made.push(session);
+    sessions.push(session);
+    return session;
+  };
+  return { made, start };
+}
+
+/** The graph `text` resolves to against `@arora/dataflow`'s functions. */
 const graphOf = (text: string): Graph =>
-  language.resolve(language.parse(text).document, MATH_FUNCTIONS).graph;
+  language.resolve(language.parse(text).document, DATAFLOW_FUNCTIONS).graph;
 
 const same = (a: Graph, b: Graph) => isEmptyDiff(language.diff(a, b));
 
@@ -65,7 +87,7 @@ async function setup(example: Example, running: Graph, prepare?: (device: FakeDe
         text={text}
         onTextChange={setText}
         fileName={example.file}
-        moduleNames={{ [MATH_MODULE_ID]: "math" }}
+        moduleNames={{ [DATAFLOW_MODULE_ID]: "dataflow" }}
       />
     );
   }
@@ -114,7 +136,7 @@ describe("BehaviorEditor on a device", () => {
       "The device runs another behavior than this file.",
     );
     // Its nodes are not this file's: none shows a state.
-    expect(screen.queryByRole("treeitem", { name: /running|succeeded|failed/ })).toBeNull();
+    expect(screen.queryByRole("treeitem", { name: /, (running|succeeded|failed)/ })).toBeNull();
 
     await user.click(within(offer).getByRole("button", { name: "Compare" }));
     const comparison = screen.getByRole("region", { name: "Comparison" });
@@ -222,14 +244,14 @@ describe("BehaviorEditor on a device", () => {
   it("sends each change as an edit, or keeps it for Apply with live edits off", async () => {
     const { device, user, type } = await setup(ORDER, graphOf(ORDER.text));
     await waitFor(() => expect(screen.getByRole("switch", { name: "Live edits" })).toBeTruthy());
-    const next = ORDER.text.replace("b: 10)", "b: 20)");
+    const next = ORDER.text.replace("operand_1: 10f32)", "operand_1: 20f32)");
     expect(next).not.toBe(ORDER.text);
     type(next);
     await waitFor(() => expect(edits(device)).toHaveLength(1));
     expect(same(device.graph, graphOf(next))).toBe(true);
 
     await user.click(screen.getByRole("switch", { name: "Live edits" }));
-    const later = next.replace("b: 20)", "b: 30)");
+    const later = next.replace("operand_1: 20f32)", "operand_1: 30f32)");
     type(later);
     const apply = await screen.findByRole("button", { name: "Apply 1 change" });
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -332,22 +354,31 @@ describe("BehaviorEditor on a device", () => {
     );
   });
 
-  it("leaves the device running when the session closes, and goes back to its own runtime", async () => {
+  it("leaves the device running when the session closes, and runs nothing with no Arora left", async () => {
     const { device, session } = await setup(ORDER, graphOf(ORDER.text));
     await waitFor(() => expect(screen.getByRole("switch", { name: "Live edits" })).toBeTruthy());
     await act(() => session.close());
-    expect(await screen.findByRole("button", { name: "Play" })).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Runs on" })).toHaveTextContent("No Arora"),
+    );
+    expect(screen.queryByRole("group", { name: "Playback" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Device" })).toBeNull();
+    expect(banner()).toBeNull();
     expect(loads(device)).toEqual([]);
     expect(same(device.graph, graphOf(ORDER.text))).toBe(true);
   });
 });
 
 /**
- * The uncontrolled editor on its start screen, offering ORDER and GREET each
- * on a mock of its own, attached to a device running `running` whose
- * functions are the math module's but for `lacks`.
+ * The uncontrolled editor on its start screen, offering ORDER and GREET,
+ * attached to a device running `running` whose functions are
+ * `@arora/dataflow`'s but for `lacks`. With `local`, it starts a local Arora
+ * as it mounts, and the device is attached only once `attach` is called.
  */
-async function startOn(running: Graph, lacks: readonly string[] = []) {
+async function startOn(
+  running: Graph,
+  { lacks = [], local = false }: { lacks?: readonly string[]; local?: boolean } = {},
+) {
   const device = new FakeDevice({ graph: running, revision: 3 });
   device.functions = device.functions.filter((f) => !lacks.includes(f.name));
   const session = new DeviceSession(() => device.connect(), {
@@ -358,32 +389,26 @@ async function startOn(running: Graph, lacks: readonly string[] = []) {
   });
   sessions.push(session);
   timers.push(setInterval(() => device.step(), 10));
-  const mocks: MockArora[] = [];
-  const offered = (example: Example, title: string): BehaviorExample => ({
-    title,
-    fileName: example.file,
-    text: example.text,
-    runtime: () => {
-      const runtime = new MockArora({ store: example.store });
-      vi.spyOn(runtime, "step");
-      mocks.push(runtime);
-      return { runtime };
-    },
-  });
-  const examples = [offered(ORDER, "Order"), offered(GREET, "Greet")];
+  const examples: BehaviorExample[] = [
+    { title: "Order", fileName: ORDER.file, text: ORDER.text },
+    { title: "Greet", fileName: GREET.file, text: GREET.text },
+  ];
+  const locals = localAroras();
+  let attachHost: (attached: boolean) => void = () => {};
   function Host() {
-    const [attached, setAttached] = useState(true);
-    detach = () => setAttached(false);
+    const [attached, setAttached] = useState(!local);
+    attachHost = setAttached;
     return (
       <BehaviorEditor
         language={language}
         session={attached ? session : null}
+        localArora={local ? locals.start : undefined}
+        startLocalArora={local}
         examples={examples}
-        moduleNames={{ [MATH_MODULE_ID]: "math" }}
+        moduleNames={{ [DATAFLOW_MODULE_ID]: "dataflow" }}
       />
     );
   }
-  let detach = () => {};
   const user = userEvent.setup();
   render(
     <StrictMode>
@@ -391,8 +416,15 @@ async function startOn(running: Graph, lacks: readonly string[] = []) {
     </StrictMode>,
   );
   await waitFor(() => expect(session.state.status).toBe("connected"));
-  const steps = () => mocks.reduce((n, m) => n + vi.mocked(m.step).mock.calls.length, 0);
-  return { device, session, user, steps, detach: () => act(() => detach()) };
+  return {
+    device,
+    session,
+    user,
+    /** The local Arora the editor keeps. */
+    local: () => locals.made.at(-1)!,
+    attach: () => act(() => attachHost(true)),
+    detach: () => act(() => attachHost(false)),
+  };
 }
 
 const runsOn = () => screen.getByRole("status", { name: "Runs on" }).textContent;
@@ -429,10 +461,10 @@ describe("BehaviorEditor on a device, opening an example", () => {
 
 
   it("marks the examples the device cannot run on the start screen", async () => {
-    await startOn(graphOf(ORDER.text), ["oscillator", "wait"]);
+    await startOn(graphOf(ORDER.text), { lacks: ["oscillator", "greaterthan"] });
     const greet = await screen.findByRole("button", { name: /^Greet/ });
     await waitFor(() =>
-      expect(greet).toHaveTextContent("Not on this device: calls oscillator, wait"),
+      expect(greet).toHaveTextContent("Not on this device: calls oscillator, greaterthan"),
     );
     expect(greet).toHaveClass("be-start-foreign");
     const order = screen.getByRole("button", { name: /^Order/ });
@@ -440,8 +472,8 @@ describe("BehaviorEditor on a device, opening an example", () => {
     expect(order).not.toHaveClass("be-start-foreign");
   });
 
-  it("works on the device, not the example's own runtime, and nothing ticks in the page", async () => {
-    const { user, steps } = await startOn(graphOf(GREET.text));
+  it("works on the device, and nothing ticks in the page", async () => {
+    const { user } = await startOn(graphOf(GREET.text));
     await user.click(await screen.findByRole("button", { name: /^Order/ }));
     const offer = await screen.findByRole("region", { name: "Device's behavior" });
     expect(within(offer).getByRole("status").textContent).toBe(
@@ -449,43 +481,90 @@ describe("BehaviorEditor on a device, opening an example", () => {
     );
     expect(runsOn()).toBe("Device the test robot");
     expect(screen.getByRole("group", { name: "Device" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
+    // The device steps itself: the page has no clock to play.
+    expect(screen.queryByRole("group", { name: "Playback" })).toBeNull();
     const tick = () => screen.getByLabelText("Device tick").textContent!;
     await waitFor(() => expect(tick()).toMatch(/^tick \d+$/));
     expect(within(offer).getByRole("button", { name: "Run this file on the device" })).toBeEnabled();
-    expect(steps()).toBe(0);
   });
 
   it("says which functions the device lacks, and does not run the file", async () => {
-    const { user, steps } = await startOn(graphOf(ORDER.text), ["oscillator", "wait"]);
+    const { user } = await startOn(graphOf(ORDER.text), { lacks: ["oscillator", "greaterthan"] });
     await user.click(await screen.findByRole("button", { name: /^Greet/ }));
     const reason = await screen.findByText(
-      "This file calls functions this device doesn't have: oscillator, wait.",
+      "This file calls functions this device doesn't have: oscillator, greaterthan.",
     );
     const offer = screen.getByRole("region", { name: "Device's behavior" });
     expect(offer).toContainElement(reason);
     const run = within(offer).getByRole("button", { name: "Run this file on the device" });
     expect(run).toBeDisabled();
     expect(run).toHaveAccessibleDescription(
-      "This file calls functions this device doesn't have: oscillator, wait.",
+      "This file calls functions this device doesn't have: oscillator, greaterthan.",
     );
     // The diagnostics point at the calls.
     const diagnostics = screen.getByRole("list", { name: "Diagnostics", hidden: true });
-    expect(within(diagnostics).getByText(/no function is named `wait`/, { exact: false })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
-    expect(steps()).toBe(0);
+    expect(within(diagnostics).getByText(/no function is named `greaterthan`/, { exact: false })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Playback" })).toBeNull();
   });
 
-  it("goes back to the example's own runtime once the device is let go of", async () => {
-    const { user, steps, detach } = await startOn(graphOf(GREET.text), ["oscillator", "wait"]);
+  it("hands the file to a device connected to, the local Arora keeping its behavior and store", async () => {
+    const { user, attach, local } = await startOn(graphOf(GREET.text), { local: true });
+    // The start screen offers the attached Arora's behavior once the local one is.
+    await screen.findByRole("button", { name: "Open the device's behavior" });
+    await user.click(screen.getByRole("button", { name: /^Order/ }));
+    expect(runsOn()).toBe("Local Arora");
+    // A file opened on the local Arora runs there at once.
+    expect(await screen.findByRole("switch", { name: "Live edits" })).toBeChecked();
+    expect(screen.getByRole("group", { name: "Playback" })).toBeTruthy();
+    // A value written there, which the counter goes on from.
+    await local().write("v", { f32: 100 });
+    await user.click(screen.getByRole("button", { name: "Step" }));
+    await waitFor(async () => expect(valueNumber(await local().read("v"))).toBeGreaterThan(100));
+
+    attach();
+    await waitFor(() => expect(runsOn()).toBe("Device the test robot"));
+    expect(screen.queryByRole("group", { name: "Playback" })).toBeNull();
+    // The device runs another behavior: the file waits to be run there.
+    const offer = await screen.findByRole("region", { name: "Device's behavior" });
+    expect(within(offer).getByRole("status").textContent).toBe(
+      "The device runs another behavior than this file.",
+    );
+    const kept = await local().deviceBehavior();
+    expect(same(kept!.graph, graphOf(ORDER.text))).toBe(true);
+    expect(valueNumber(await local().read("v"))).toBeGreaterThan(100);
+  });
+
+  it("attaches the local Arora as it was left once the device is let go of, running nothing unasked", async () => {
+    const { user, attach, detach, local } = await startOn(graphOf(GREET.text), { local: true });
+    // The start screen offers the attached Arora's behavior once the local one is.
+    await screen.findByRole("button", { name: "Open the device's behavior" });
+    await user.click(screen.getByRole("button", { name: /^Order/ }));
+    expect(runsOn()).toBe("Local Arora");
+    expect(await screen.findByRole("switch", { name: "Live edits" })).toBeChecked();
+    await local().write("v", { f32: 100 });
+    await user.click(screen.getByRole("button", { name: "Step" }));
+    await waitFor(async () => expect(valueNumber(await local().read("v"))).toBeGreaterThan(100));
+
+    // On the device, another file opens: it does not run there unasked.
+    attach();
+    await waitFor(() => expect(runsOn()).toBe("Device the test robot"));
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close" }));
     await user.click(await screen.findByRole("button", { name: /^Greet/ }));
-    await screen.findByText(/This file calls functions this device doesn't have/);
-    expect(runsOn()).toBe("Device the test robot");
+    await screen.findByRole("switch", { name: "Live edits" });
+
+    // Let go of the device: the local Arora is back, its behavior and store as they were.
     detach();
-    expect(await screen.findByRole("button", { name: "Pause" })).toBeTruthy();
-    expect(runsOn()).toBe("Simulated");
-    expect(banner()).toBeNull();
-    expect(screen.queryByText(/This file calls functions/)).toBeNull();
-    await waitFor(() => expect(steps()).toBeGreaterThan(0));
+    await waitFor(() => expect(runsOn()).toBe("Local Arora"));
+    const offer = await screen.findByRole("region", { name: "Device's behavior" });
+    expect(within(offer).getByRole("status").textContent).toBe(
+      "The device runs another behavior than this file.",
+    );
+    expect(within(offer).getByRole("button", { name: "Run this file on the device" })).toBeEnabled();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const kept = await local().deviceBehavior();
+    expect(same(kept!.graph, graphOf(ORDER.text))).toBe(true);
+    // Its store too: the counter goes on from the value written there.
+    expect(valueNumber(await local().read("v"))).toBeGreaterThan(100);
   });
 });

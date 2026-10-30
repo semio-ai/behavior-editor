@@ -4,7 +4,7 @@
  */
 import { type WebSocket as Socket, WebSocketServer } from "ws";
 import type { Value } from "../src/model/value";
-import { mathModule } from "../src/runtime/math-module";
+import { DATAFLOW_FUNCTIONS } from "./local-arora";
 
 export type Message = Record<string, unknown> & { type: string };
 
@@ -87,9 +87,7 @@ export class FakeBridge {
       case "describe_methods":
         return {
           type: "describe_methods_resp",
-          methods: mathModule()
-            .functions.map((f) => f.signature)
-            .filter((m) => !message.path || m.name.startsWith(message.path as string)),
+          methods: DATAFLOW_FUNCTIONS.filter((m) => !message.path || m.name.startsWith(message.path as string)),
         };
       case "call":
         return { request_id: message.request_id, ...this.callResult, type: "call_resp" };

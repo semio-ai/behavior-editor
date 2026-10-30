@@ -1,7 +1,7 @@
 import type { Value } from "../model/value";
 import type { AroraDevice } from "../runtime/device-runtime";
 import { parseExact } from "../runtime/exact-json";
-import { TIME_KEY } from "../runtime/mock-arora";
+import { TIME_KEY } from "../runtime/runtime";
 import type { BridgeClient, Call } from "./bridge-client";
 
 /**
@@ -19,10 +19,12 @@ export const TAKEN_KEYS = 32;
 
 /**
  * A device reached through a bridge client, as `DeviceRuntime` follows it:
- * on its own clock (`ownClock`), stepping whether a client follows it or not.
+ * on its own clock (`ownClock`), stepping whether a client follows it or not,
+ * unless its client steps it (`BridgeClient.step`), as the local Arora's does.
  *
- * `step` waits for the next push carrying the device's clock, `arora/time`,
- * or answers after `dtMs` when none comes. The store is read from what the
+ * On its own clock, `step` waits for the next push carrying the device's
+ * clock, `arora/time`, or answers after `dtMs` when none comes; otherwise it
+ * steps the device through its client. The store is read from what the
  * device pushed, which starts as what it held when the device was taken up,
  * and which each step reads again whole, as the device pushes what it sets
  * and not what it unsets: a read is as current as the device's last step.
@@ -31,7 +33,7 @@ export const TAKEN_KEYS = 32;
  * reports do.
  */
 export class BridgeDevice implements AroraDevice {
-  readonly ownClock = true;
+  readonly ownClock: boolean;
   readonly client: BridgeClient;
 
   readonly #values = new Map<string, unknown>();
@@ -57,6 +59,7 @@ export class BridgeDevice implements AroraDevice {
 
   private constructor(client: BridgeClient) {
     this.client = client;
+    this.ownClock = client.step === undefined;
     client.onValues((values) => this.#pushed(values));
     void client.closed.then(({ reason }) => {
       this.#closedWith = reason;
@@ -134,6 +137,11 @@ export class BridgeDevice implements AroraDevice {
 
   async step(dtMs: number): Promise<void> {
     this.#check();
+    if (this.client.step) {
+      await this.client.step(dtMs);
+      await this.#reconcile();
+      return;
+    }
     await new Promise<void>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined = undefined;
       const stepped = () => {

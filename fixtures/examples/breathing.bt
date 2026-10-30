@@ -2,7 +2,7 @@
 # flush only when face/energy changes.
 running
 
-wave: oscillator(t: {arora/time}, frequency: {face/breath_rate})
-amplitude: remap(x: {face/energy}, in_min: 0, in_max: 1, out_min: 0.03, out_max: 0.2)
-chest: {rig/chest} = add(a: mul(a: @wave._ret, b: @amplitude._ret), b: 0.5)
-flush: {face/flush} = remap(x: {face/energy}, in_min: 0, in_max: 1, out_min: 0.15, out_max: 0.85)
+wave: oscillator(frequency: {face/breath_rate}, t: {arora/time})
+amplitude: remap(in: {face/energy}, in_min: 0f32, in_max: 1f32, out_min: 0.03f32, out_max: 0.2f32)
+chest: {rig/chest} = add(operand_0: multiply(operand_0: @wave._ret, operand_1: @amplitude._ret), operand_1: 0.5f32)
+flush: {face/flush} = remap(in: {face/energy}, in_min: 0f32, in_max: 1f32, out_min: 0.15f32, out_max: 0.85f32)

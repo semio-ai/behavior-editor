@@ -12,8 +12,8 @@ import { type TestClient, testClient } from "./test-client";
  * another client would, and to read what it runs and holds.
  */
 
-/** The behavior calling `@arora/dataflow` the demo offers. */
-const dataflow = readFileSync(join(__dirname, "..", "fixtures", "devices", "dataflow.bt"), "utf8");
+/** The Dataflow example the demo offers. */
+const dataflow = readFileSync(join(__dirname, "..", "fixtures", "examples", "dataflow.bt"), "utf8");
 
 let client: TestClient;
 
@@ -44,8 +44,13 @@ async function deviceTick(page: Page): Promise<number> {
 
 /** Open the demo and connect it to the native device's editor bridge. */
 async function connect(page: Page) {
-  const url = process.env.E2E_DEVICE_URL!;
   await page.goto("/");
+  await attach(page);
+}
+
+/** Connect the page as it is to the native device's editor bridge. */
+async function attach(page: Page) {
+  const url = process.env.E2E_DEVICE_URL!;
   await page.getByLabel("Device's bridge").fill(url);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByText(`Connected to ${url}`)).toBeVisible();
@@ -70,21 +75,20 @@ async function revisionAfter(from: number): Promise<number> {
   return now;
 }
 
-test("an example calling functions the device lacks says so, and nothing ticks in the page", async ({
+test("runs every example on the device; a file calling a function it lacks says so, and nothing ticks in the page", async ({
   page,
 }) => {
   await connect(page);
-  const greet = page.getByRole("button", { name: /^Greet/ });
-  await expect(greet).toContainText("Not on this device: calls truthy, mul, wait, identity");
-  await expect(page.getByRole("button", { name: /^Dataflow/ })).toContainText("Runs on the device");
+  for (const title of [/^Smile mapping/, /^Greet/, /^Order/, /^Dataflow/]) {
+    await expect(page.getByRole("button", { name: title })).toContainText("Runs on the device");
+  }
 
-  await greet.click();
-  await expect(banner(page)).toContainText(
-    "This file calls functions this device doesn't have: truthy, mul, wait, identity.",
-  );
+  await page.getByRole("button", { name: "New behavior" }).click();
+  await typeText(page, "sequence\n  nope(x: 1f32)\n");
+  await expect(banner(page)).toContainText("This file calls functions this device doesn't have: nope.");
   const run = banner(page).getByRole("button", { name: "Run this file on the device" });
   await expect(run).toBeDisabled();
-  await expect(run).toHaveAccessibleDescription(/doesn't have: truthy, mul, wait, identity/);
+  await expect(run).toHaveAccessibleDescription(/doesn't have: nope/);
   await expect(runsOn(page)).toHaveText(`Device ${process.env.E2E_DEVICE_URL}`);
   // The device's clock is what shows: nothing plays in the page.
   await expect(page.getByRole("group", { name: "Playback" })).toHaveCount(0);
@@ -93,6 +97,29 @@ test("an example calling functions the device lacks says so, and nothing ticks i
   await expect.poll(() => deviceTick(page)).toBeGreaterThan(first);
   // Nothing was loaded on the device.
   expect((await client.session.deviceBehavior())?.graph.nodes ?? []).toEqual([]);
+});
+
+test("an example runs on the local Arora, then the same file runs on the device", async ({ page }) => {
+  await page.goto("/");
+  await openExample(page, /^Return values/);
+  await expect(runsOn(page)).toHaveText("Local Arora");
+  await expect(page.getByRole("switch", { name: "Live edits" })).toBeChecked();
+  const store = page.getByRole("region", { name: "Store" });
+  // 0.3 m is near: the local Arora writes level's return value to face/look.
+  await expect(store.getByRole("status", { name: "face/look" })).toHaveText(/^31(\.\d+)?$/);
+  await expect(page.getByRole("treeitem", { name: /^level/ })).toBeVisible();
+
+  // The same file, on the native device: the device runs it as the local Arora did.
+  await attach(page);
+  await expect(runsOn(page)).toHaveText(`Device ${process.env.E2E_DEVICE_URL}`);
+  await expect(banner(page)).toContainText("The device runs no behavior.");
+  await banner(page).getByRole("button", { name: "Run this file on the device" }).click();
+  await expect(page.getByRole("switch", { name: "Live edits" })).toBeChecked();
+  await expect(page.getByRole("treeitem", { name: /^fallback, succeeded/ })).toBeVisible();
+  await expect.poll(() => client.number("face/look")).toBeCloseTo(31, 3);
+  await client.session.write("sensor/distance", { f32: 0.8 });
+  await expect.poll(() => client.number("face/look")).toBe(0);
+  await expect.poll(() => client.number("face/level")).toBeCloseTo(51, 3);
 });
 
 test("runs the dataflow example on the device, then sends live edits and applies held ones", async ({
@@ -190,7 +217,7 @@ test("opens the device's behavior from the start screen, and from the header wit
   await expect(page.getByRole("switch", { name: "Live edits" })).toBeChecked();
 });
 
-test("disconnecting leaves the device running, and the editor back on its simulated runtime", async ({
+test("disconnecting leaves the device running, and the editor back on the local Arora", async ({
   page,
 }) => {
   await connect(page);
@@ -201,9 +228,8 @@ test("disconnecting leaves the device running, and the editor back on its simula
   const revision = await client.revision();
 
   await page.getByRole("button", { name: "Disconnect" }).click();
-  await expect(runsOn(page)).toHaveText("Simulated");
+  await expect(runsOn(page)).toHaveText("Local Arora");
   await expect(page.getByRole("group", { name: "Playback" })).toBeVisible();
-  await expect(banner(page)).toHaveCount(0);
 
   // The device runs on, its behavior as it was.
   const time = await client.number("arora/time");
@@ -213,7 +239,7 @@ test("disconnecting leaves the device running, and the editor back on its simula
   expect(await client.number("face/level")).toBeCloseTo(31, 3);
 });
 
-test.describe("with no device", () => {
+test.describe("on the local Arora", () => {
   test.beforeEach(async ({ page }) => {
     // The pickers' fallbacks: a file input to open, a download to save.
     await page.addInitScript(() => {
@@ -224,19 +250,20 @@ test.describe("with no device", () => {
     await page.goto("/");
   });
 
-  test("the start screen opens an example, simulated, its diagram showing outputs and values", async ({
+  test("the start screen opens an example on the local Arora, its diagram showing outputs and values", async ({
     page,
   }) => {
     await expect(page.getByRole("heading", { name: "Open a behavior" })).toBeVisible();
     await expect(page.getByRole("button", { name: "New behavior" })).toBeVisible();
     await openExample(page, /^Smile mapping/);
     await expect(page.getByText("smile.bt")).toBeVisible();
-    await expect(runsOn(page)).toHaveText("Simulated");
-    // Playing, the editor's tick advances and the nodes report values.
-    const tick = page.getByRole("status", { name: "Tick" });
-    await expect
-      .poll(async () => Number((await tick.textContent())!.replace(/^tick /, "")))
-      .toBeGreaterThan(5);
+    await expect(runsOn(page)).toHaveText("Local Arora");
+    // The page steps the local Arora: its tick advances, and the nodes report values.
+    await expect.poll(() => deviceTick(page)).toBeGreaterThan(5);
+    await page.getByRole("button", { name: "Pause" }).click();
+    const paused = await deviceTick(page);
+    await page.getByRole("button", { name: "Step" }).click();
+    await expect.poll(() => deviceTick(page)).toBe(paused + 1);
     const mouth = page.getByRole("treeitem", { name: /^mouth/ });
     await expect(mouth).toHaveAccessibleDescription(/rig\/mouth_corner/);
     await expect(page.locator(".be-output").first()).toBeVisible();
@@ -249,10 +276,10 @@ test.describe("with no device", () => {
   const TREE = [
     "sequence",
     "  sequence_star",
-    "    truthy(x: {person/visible})",
+    "    equal(a: {person/visible}, b: true)",
     '    set_string(variable: {face/mood}, value: "near")',
-    "  {rig/arm_raise} = damp(target: 1, half_life: 0.12, state: none, initial: {rig/arm_raise})",
-    "  wait(seconds: 2, now: {arora/time}, since: none)",
+    "  damp(in: 1f32, param.half_life: 0.12f32, dt: {arora/dt}, state: {rig/arm_raise})",
+    "  slew(in: 2f32, param.max_rate: 1f32, dt: {arora/dt}, state: 0f32)",
     "",
   ].join("\n");
 
@@ -264,7 +291,7 @@ test.describe("with no device", () => {
     test(`saves as ${label} and opens it again`, async ({ page }) => {
       await page.getByRole("button", { name: "New behavior" }).click();
       await typeText(page, TREE);
-      await expect(page.getByRole("treeitem", { name: /^wait/ })).toBeVisible();
+      await expect(page.getByRole("treeitem", { name: /^slew/ })).toBeVisible();
       await page.getByRole("button", { name: "File", exact: true }).click();
       await page.getByRole("menuitem", { name: "Save as…" }).click();
       const downloading = page.waitForEvent("download");
@@ -276,7 +303,7 @@ test.describe("with no device", () => {
 
       await page.getByRole("button", { name: "File", exact: true }).click();
       await page.getByRole("menuitem", { name: "New" }).click();
-      await expect(page.getByRole("treeitem", { name: /^wait/ })).toHaveCount(0);
+      await expect(page.getByRole("treeitem", { name: /^slew/ })).toHaveCount(0);
       await page.getByRole("button", { name: "File", exact: true }).click();
       const choosing = page.waitForEvent("filechooser");
       await page.getByRole("menuitem", { name: "Open…" }).click();
@@ -286,7 +313,7 @@ test.describe("with no device", () => {
         buffer: await readFile(path),
       });
       await expect(page.getByText(file, { exact: true })).toBeVisible();
-      await expect(page.getByRole("treeitem", { name: /^wait/ })).toBeVisible();
+      await expect(page.getByRole("treeitem", { name: /^slew/ })).toBeVisible();
     });
   }
 });

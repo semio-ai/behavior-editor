@@ -12,7 +12,7 @@ import {
   valueString,
 } from "../model/value";
 import type { BehaviorKeys } from "./store-keys";
-import { HISTORY } from "./use-playback";
+import { HISTORY } from "./use-functions";
 
 export interface StorePanelProps {
   store: ReadonlyMap<string, Value>;

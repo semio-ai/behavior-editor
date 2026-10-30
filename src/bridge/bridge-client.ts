@@ -57,8 +57,10 @@ export interface BridgeClosure {
  * the device does; a refusal rejects with the device's reason, and so does
  * every operation once the connection ended.
  *
- * The device steps on its own: a client never steps it. It pushes what each
- * step changed, its clock `arora/time` among it, to `onValues`' listeners.
+ * The device steps on its own, and a client does not step it, save the one
+ * client of a device the page itself steps, the local Arora's, which offers
+ * `step`. It pushes what each step changed, its clock `arora/time` among it,
+ * to `onValues`' listeners.
  * Values cross as the JSON of Arora's `Value`, an integer past ±(2^53 − 1)
  * keeping its digits where the transport parses with `parseExact`.
  *
@@ -86,6 +88,13 @@ export interface BridgeClient {
    * returned stops listening.
    */
   onValues(listener: (values: Record<string, Value>) => void, prefixes?: readonly string[]): () => void;
+  /**
+   * Step the device by `dtMs` milliseconds, pushing what the step changed
+   * before answering: offered by the client of a device the page steps, as
+   * the local Arora's is, and absent on a device that steps itself, as every
+   * remote one does.
+   */
+  step?(dtMs: number): Promise<void>;
   /** End the connection. The device goes on running its behavior. */
   close(): void;
   /** Settles when the connection ends, with why. */

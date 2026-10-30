@@ -10,8 +10,7 @@ import { type Value, valueNumber } from "../model/value";
 import type { BridgeClient, BridgeClosure } from "../bridge/bridge-client";
 import { BridgeDevice } from "../bridge/bridge-device";
 import { DeviceRuntime, type FollowedBehavior, followed } from "../runtime/device-runtime";
-import { TIME_KEY } from "../runtime/mock-arora";
-import type { KeyInfo, TickReport } from "../runtime/runtime";
+import { type KeyInfo, TIME_KEY, type TickReport } from "../runtime/runtime";
 import type { BehaviorText, Loaded } from "../text/language";
 
 /**
@@ -80,6 +79,20 @@ export interface BehaviorChange {
   external: boolean;
 }
 
+/**
+ * Who steps the device: `self`, a device on its own clock, as every remote
+ * one is; or `driven`, a device the session steps, as the local Arora in the
+ * page is, at the session's `rate` while it plays.
+ */
+export type SessionClock = "self" | "driven";
+
+/** Whether a session driving its device's clock steps it, and how often. */
+export interface ClockState {
+  playing: boolean;
+  /** Steps per second. */
+  rate: number;
+}
+
 /** What a session tells the ones following it. */
 export interface SessionEvents {
   state: SessionState;
@@ -87,6 +100,8 @@ export interface SessionEvents {
   tick: SessionTick;
   /** Following the device failed at a step: it goes on at the next. */
   error: Error;
+  /** The session started or stopped stepping a device it drives, or changed its rate. */
+  clock: ClockState;
 }
 
 /** How a session waits before connecting again after a loss: doubling from `firstMs` up to `maxMs`. */
@@ -103,8 +118,13 @@ export type SessionLanguage = Pick<
 
 export interface DeviceSessionOptions {
   language: SessionLanguage;
-  /** How many times a second the session follows the device: 30 by default. */
+  /**
+   * How many times a second the session follows the device: 30 by default.
+   * A device the session drives steps that often, each step that long.
+   */
   rate?: number;
+  /** Whether a session driving its device's clock steps it from the start: `true` by default. */
+  playing?: boolean;
   /**
    * Whether to connect again when the connection drops, and how long to wait
    * between attempts: 0.5 s doubling up to 10 s by default. Only a session
@@ -143,6 +163,11 @@ async function shut(client: BridgeClient) {
   await client.closed;
 }
 
+/** Throw unless `rate` is a finite positive number of steps a second: a period of zero would never yield. */
+function validRate(rate: number) {
+  if (!Number.isFinite(rate) || rate <= 0) throw new Error(`invalid rate: ${rate}`);
+}
+
 const FIRST_MS = 500;
 const MAX_MS = 10_000;
 
@@ -164,6 +189,11 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  *
  * Every operation on the device waits for the one before it, the steps the
  * session takes to follow it among them.
+ *
+ * Most devices step on their own clock (`clock` is `self`): the session
+ * follows them. A device whose client offers to step it, the local Arora in
+ * the page, is driven (`clock` is `driven`): the session steps it at its
+ * `rate` while it plays, or one step at a time (`step`) while paused.
  */
 export class DeviceSession {
   /** What the session is connected to, in words, when its host said. */
@@ -179,6 +209,7 @@ export class DeviceSession {
     behaviorChanged: new Set(),
     tick: new Set(),
     error: new Set(),
+    clock: new Set(),
   };
   #queue: Promise<unknown> = Promise.resolve();
   /** Whether the client closed the session. */
@@ -202,6 +233,12 @@ export class DeviceSession {
   #functions: Promise<MethodSignature[]> | null = null;
   /** The changes of the device's behavior another client made, so far. */
   #external = 0;
+  #clock: ClockState;
+  /** The store and keys as the steps followed on this connection left them. */
+  #store = new Map<string, Value>();
+  #keys: KeyInfo[] = [];
+  /** Wakes the loop's wait for its next step, when the clock changes or the session closes. */
+  #resume: (() => void) | null = null;
 
   /**
    * A session over `bridge`, a connection to a device; or over the
@@ -224,8 +261,61 @@ export class DeviceSession {
           maxMs: (reconnect === true ? undefined : reconnect.maxMs) ?? MAX_MS,
         }
       : null;
+    const rate = options.rate ?? 30;
+    validRate(rate);
     this.#state = { status: "connecting" };
+    this.#clock = { playing: options.playing ?? true, rate };
     this.#ended = this.#run();
+  }
+
+  /** Who steps the device the session is connected to; `null` while it is not. */
+  get clock(): SessionClock | null {
+    const connection = this.#connection;
+    if (!connection) return null;
+    return connection.client.step ? "driven" : "self";
+  }
+
+  /** Whether the session steps a device it drives, and how often: see `clock`. */
+  get clockState(): ClockState {
+    return this.#clock;
+  }
+
+  /** Step a device the session drives at its rate. */
+  play() {
+    this.#setClock({ ...this.#clock, playing: true });
+  }
+
+  /** Stop stepping a device the session drives: it holds, and steps only when asked. */
+  pause() {
+    this.#setClock({ ...this.#clock, playing: false });
+  }
+
+  /**
+   * Step a device the session drives, and settle once the step was followed.
+   * A step that fails tells `error`, as a step of the session's own does.
+   */
+  step(): Promise<void> {
+    const connection = this.#connection;
+    if (!connection?.client.step) {
+      return Promise.reject(new Error("the device steps on its own clock"));
+    }
+    return this.#enqueue((at) => this.#step(at), connection).catch((error: unknown) => {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      this.#emit("error", failure);
+      throw failure;
+    });
+  }
+
+  /** How many steps a second the session takes, and how long each step of a device it drives is. */
+  setRate(rate: number) {
+    validRate(rate);
+    this.#setClock({ ...this.#clock, rate });
+  }
+
+  #setClock(clock: ClockState) {
+    this.#clock = clock;
+    this.#resume?.();
+    this.#emit("clock", clock);
   }
 
   get state(): SessionState {
@@ -235,6 +325,15 @@ export class DeviceSession {
   /** The device's tick, clock, step rate and revision, as of the last step. */
   get status(): DeviceStatus {
     return this.#status;
+  }
+
+  /**
+   * The device's store and keys as of the last step followed on this
+   * connection: what a follower taking up the session shows before the next
+   * step, as a paused local Arora takes none.
+   */
+  get snapshot(): { store: ReadonlyMap<string, Value>; keys: readonly KeyInfo[] } {
+    return { store: this.#store, keys: this.#keys };
   }
 
   /** Listen to `type`; the function returned stops listening. */
@@ -367,6 +466,7 @@ export class DeviceSession {
     if (this.#closed) return this.#closed;
     this.#closing = true;
     this.#wake?.();
+    this.#resume?.();
     const connection = this.#connection;
     this.#connection = null;
     this.#setState({ status: "closed", reason: null, refused: false });
@@ -496,6 +596,8 @@ export class DeviceSession {
     }
     this.#own = 0;
     this.#status = { tick: null, time: null, rate: null, revision: null };
+    this.#store = new Map();
+    this.#keys = [];
     this.#functions = null;
     const read = await this.#read(connection);
     const revision = read?.revision ?? (await this.#readRevision(runtime));
@@ -516,8 +618,15 @@ export class DeviceSession {
    * of, or drops: a step that fails as the connection closes ends it.
    */
   async #follow(connection: Connection): Promise<BridgeClosure> {
-    const period = 1000 / (this.#options.rate ?? 30);
+    const driven = connection.client.step !== undefined;
     while (this.#connection === connection) {
+      // A device the session drives holds while the session is paused.
+      if (driven && !this.#clock.playing) {
+        await new Promise<void>((resolve) => (this.#resume = resolve));
+        this.#resume = null;
+        continue;
+      }
+      const period = 1000 / this.#clock.rate;
       const started = Date.now();
       try {
         await this.#enqueue((at) => this.#step(at), connection);
@@ -528,8 +637,18 @@ export class DeviceSession {
         if (this.#connection !== connection) break;
         this.#emit("error", error instanceof Error ? error : new Error(String(error)));
       }
-      const rest = period - (Date.now() - started);
-      if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest));
+      // A step that took its whole period still yields, so the page renders
+      // and takes input between steps. A change of the clock ends the wait:
+      // a new rate, a pause or a play applies at once.
+      const rest = Math.max(0, period - (Date.now() - started));
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, rest);
+        this.#resume = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      this.#resume = null;
     }
     // Let go of: the closure, when it comes, is the one the race takes.
     return new Promise<BridgeClosure>(() => {});
@@ -538,7 +657,7 @@ export class DeviceSession {
   /** One step of following the device. */
   async #step(connection: Connection) {
     const { device, runtime } = connection;
-    const report = await runtime.step(1000 / (this.#options.rate ?? 30));
+    const report = await runtime.step(1000 / this.#clock.rate);
     const keys = await runtime.keys();
     const [time, dt, revision] = await Promise.all([
       runtime.read(TIME_KEY),
@@ -559,6 +678,13 @@ export class DeviceSession {
       revision,
     };
     if (revision !== null) this.#revised(revision);
+    const store = new Map(report.whole ? [] : this.#store);
+    for (const { key, value } of report.changes) {
+      if (value === null) store.delete(key);
+      else store.set(key, value);
+    }
+    this.#store = store;
+    this.#keys = keys;
     this.#emit("tick", { report, status: this.#status, keys });
   }
 

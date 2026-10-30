@@ -18,7 +18,7 @@ import type {
 import { type Graph, type GraphDiff, applyDiff } from "../src/model/graph";
 import type { MethodSignature } from "../src/model/signature";
 import type { Value } from "../src/model/value";
-import { mathModule } from "../src/runtime/math-module";
+import { DATAFLOW_FUNCTIONS } from "./local-arora";
 import type { TraceReport, TraceStatus } from "../src/runtime/trace";
 import { DT_KEY, REVISION_KEY, type SessionLanguage } from "../src/session/device-session";
 
@@ -72,8 +72,8 @@ export class FakeDevice {
   readDelayMs = 0;
   /** Why it refuses to list its keys, while it does. */
   refusesKeys: string | null = null;
-  /** The functions its modules offer: the math module's by default. */
-  functions: MethodSignature[] = mathModule().functions.map((f) => f.signature);
+  /** The functions its modules offer: `@arora/dataflow`'s by default. */
+  functions: MethodSignature[] = DATAFLOW_FUNCTIONS;
   /** Each node's status, as the next trace report states it. */
   statuses: Record<string, TraceStatus> = {};
   /** The interpreter's tick. */

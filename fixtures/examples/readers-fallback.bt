@@ -1,11 +1,11 @@
 # Three readers of one value, the first that holds wins: the rest are never asked.
 fallback
-  truthy(x: @near._ret)
-  truthy(x: @mid._ret)
-  truthy(x: @far._ret)
+  equal(a: @near._ret, b: true)
+  equal(a: @mid._ret, b: true)
+  equal(a: @far._ret, b: true)
 
-raw: mul(a: {sensor/distance}, b: 100)
-cm: clamp(x: @raw._ret, min: 0, max: 1000)
-near: lt(a: @cm._ret, b: 10)
-mid: lt(a: @cm._ret, b: 30)
-far: lt(a: @cm._ret, b: 50)
+raw: multiply(operand_0: {sensor/distance}, operand_1: 100f32)
+cm: clamp(in: @raw._ret, min: 0f32, max: 1000f32)
+near: lessthan(lhs: @cm._ret, rhs: 10f32)
+mid: lessthan(lhs: @cm._ret, rhs: 30f32)
+far: lessthan(lhs: @cm._ret, rhs: 50f32)

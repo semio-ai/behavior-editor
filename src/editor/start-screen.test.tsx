@@ -1,53 +1,62 @@
 // @vitest-environment jsdom
 import "../../fixtures/dom";
-import { act, cleanup, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, configure, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { GREET, ORDER } from "../../fixtures/examples";
-import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
-import type { Graph } from "../model/graph";
-import type { MethodSignature } from "../model/signature";
-import { MockArora } from "../runtime/mock-arora";
+import { loadLanguage } from "../../fixtures/language";
+import { loadDevice } from "../../fixtures/local-arora";
+import { type DeviceModule, createLocalArora } from "../local-arora/local-arora";
+import { valueNumber } from "../model/value";
+import type { DeviceSession } from "../session/device-session";
 import type { BehaviorText } from "../text/language";
 import { BehaviorEditor, type BehaviorEditorProps } from "./BehaviorEditor";
 import { reopenPageStore } from "./recent-files";
-import { usePlayback } from "./use-playback";
 import type { BehaviorExample } from "./StartScreen";
 
+// The local Arora is a real device stepped in the page, and this host is loaded: wait for it longer.
+configure({ asyncUtilTimeout: 5000 });
+
 let language: BehaviorText;
+let device: DeviceModule;
 beforeAll(async () => {
   language = await loadLanguage();
+  device = await loadDevice();
 });
 
-afterEach(() => {
+/** Every local Arora the tests started, the last the one an editor keeps. */
+const locals: DeviceSession[] = [];
+/** Start a local Arora seeded as ORDER is, paused so that the test steps it. */
+const startLocal = () => {
+  const session = createLocalArora(device, language, {
+    inputs: ORDER.inputs,
+    values: ORDER.values,
+    playing: false,
+  });
+  locals.push(session);
+  return session;
+};
+
+afterEach(async () => {
   cleanup();
   vi.unstubAllGlobals();
   // Each test starts as a new page: no recent file.
   reopenPageStore();
+  for (const session of locals.splice(0)) await session.close();
 });
 
-/** The examples a host offers: ORDER on a runtime of its own, GREET on the editor's. */
-function examples() {
-  const made: { runtime: MockArora; disposed: boolean }[] = [];
-  const list: BehaviorExample[] = [
-    {
-      title: "Order",
-      fileName: ORDER.file,
-      text: ORDER.text,
-      runtime: () => {
-        const entry = { runtime: new MockArora({ store: ORDER.store }), disposed: false };
-        made.push(entry);
-        return { runtime: entry.runtime, dispose: () => (entry.disposed = true) };
-      },
-    },
-    { title: "Greet", fileName: GREET.file, text: GREET.text },
-  ];
-  return { list, made };
-}
+/** The examples a host offers: files, opened on whichever Arora is attached. */
+const EXAMPLES: BehaviorExample[] = [
+  { title: "Order", fileName: ORDER.file, text: ORDER.text },
+  { title: "Greet", fileName: GREET.file, text: GREET.text },
+];
 
+/** The editor on a local Arora it starts as it mounts, unless `props` say otherwise. */
 function setup(props: Partial<BehaviorEditorProps> = {}) {
   const user = userEvent.setup();
-  render(<BehaviorEditor language={language} autoPlay={false} {...props} />);
+  render(
+    <BehaviorEditor language={language} localArora={startLocal} startLocalArora {...props} />,
+  );
   return { user };
 }
 
@@ -76,12 +85,11 @@ function handle(name: string, contents: string, allowed: PermissionState = "gran
 
 describe("the start screen", () => {
   it("opens with no behavior, offering a new one, a file, and the host's examples", () => {
-    const { list } = examples();
-    setup({ examples: list });
+    setup({ examples: EXAMPLES, localArora: undefined, startLocalArora: false });
     const start = screen.getByRole("region", { name: "Open a behavior" });
     expect(within(start).getByRole("button", { name: "New behavior" })).toBeTruthy();
     expect(within(start).getByRole("button", { name: "Open…" })).toBeTruthy();
-    // With no device, there is no device's behavior to open.
+    // With no Arora, there is no Arora's behavior to open.
     expect(within(start).queryByRole("button", { name: "Open the device's behavior" })).toBeNull();
     const shown = within(screen.getByRole("region", { name: "Examples" })).getAllByRole("button");
     expect(shown.map((b) => b.textContent)).toEqual([`Order${ORDER.file}`, `Greet${GREET.file}`]);
@@ -101,12 +109,14 @@ describe("the start screen", () => {
     expect(screen.getByText(ORDER.file)).toBeTruthy();
   });
 
-  it("opens an example from the keyboard, on the runtime it declares, and closes it", async () => {
-    const { list, made } = examples();
-    const { user } = setup({ examples: list });
-    // New, Open, then the examples: every action is reached with Tab.
+  it("opens an example from the keyboard, runs it on the local Arora, and closes it", async () => {
+    const { user } = setup({ examples: EXAMPLES });
+    // New, Open, the Arora's behavior once the local Arora is attached, then
+    // the examples: every action is reached with Tab.
+    await screen.findByRole("button", { name: "Open the device's behavior" });
     await user.tab();
     expect(screen.getByRole("button", { name: "New behavior" })).toHaveFocus();
+    await user.tab();
     await user.tab();
     await user.tab();
     expect(screen.getByRole("button", { name: /^Order/ })).toHaveFocus();
@@ -114,27 +124,44 @@ describe("the start screen", () => {
     await screen.findByRole("tree", { name: "Behavior diagram" });
     expect(text()).toHaveValue(ORDER.text);
     expect(screen.getByText(ORDER.file)).toBeTruthy();
-    const opened = made.at(-1)!;
+    // A file opened on the local Arora runs there at once; the page steps it.
+    expect(await screen.findByRole("switch", { name: "Live edits" })).toBeChecked();
+    const local = locals.at(-1)!;
+    const before = valueNumber(await local.read("v"))!;
     await user.click(screen.getByRole("button", { name: "Step" }));
-    await waitFor(async () => expect(await opened.runtime.read("v")).toEqual({ f64: 1 }));
+    await waitFor(async () => expect(valueNumber(await local.read("v"))).toBeGreaterThan(before));
 
     await user.click(screen.getByRole("button", { name: "File" }));
     await user.click(screen.getByRole("menuitem", { name: "Close" }));
     expect(screen.getByRole("heading", { name: "Open a behavior" })).toHaveFocus();
-    await waitFor(() => expect(made.every((m) => m.disposed)).toBe(true));
+    // The local Arora stays, running the file as it was left.
+    expect(local.state.status).toBe("connected");
   });
 
-  it("starts a new behavior on the editor's runtime", async () => {
-    const runtime = new MockArora();
-    const { user } = setup({ runtime, fileName: "draft.bt" });
+  it("with no Arora, edits a file and runs nothing, and starts a local Arora when asked", async () => {
+    const { user } = setup({ defaultText: GREET.text, fileName: GREET.file, startLocalArora: false });
+    const runsOn = () => screen.getByRole("status", { name: "Runs on" });
+    expect(runsOn()).toHaveTextContent("No Arora");
+    expect(screen.queryByRole("group", { name: "Playback" })).toBeNull();
+    // No function index says what a module call calls: no call is told unknown.
+    expect(screen.queryByText(/no function is named/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Start a local Arora" }));
+    await waitFor(() => expect(runsOn()).toHaveTextContent("Local Arora"));
+    expect(screen.getByRole("group", { name: "Playback" })).toBeTruthy();
+    // Started with the file open, the local Arora runs it only when asked.
+    const offer = await screen.findByRole("region", { name: "Device's behavior" });
+    expect(within(offer).getByRole("button", { name: "Run this file on the device" })).toBeEnabled();
+  });
+
+  it("starts a new behavior on the local Arora", async () => {
+    const { user } = setup({ fileName: "draft.bt" });
     await user.click(screen.getByRole("button", { name: "New behavior" }));
     expect(text()).toHaveValue("");
     expect(screen.getByText("draft.bt")).toBeTruthy();
   });
 
   it("asks before closing a file with unsaved changes", async () => {
-    const { list } = examples();
-    const { user } = setup({ examples: list });
+    const { user } = setup({ examples: EXAMPLES });
     await user.click(screen.getByRole("button", { name: /^Greet/ }));
     await user.click(screen.getByRole("tab", { name: "Text" }));
     await user.type(text(), "# a comment\n");
@@ -229,68 +256,6 @@ describe("the start screen", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: /^greet\.bt/ })).toBeNull());
   });
 
-  it("opens a file on the editor's runtime only once the one it replaces stopped", async () => {
-    const runtime = new MockArora({ store: ORDER.store });
-    const calls: string[] = [];
-    let release: () => void = () => {};
-    const held = new Promise<void>((resolve) => (release = resolve));
-    const { start, step, stop } = runtime;
-    runtime.start = (loaded) => {
-      calls.push("start");
-      return start.call(runtime, loaded);
-    };
-    runtime.stop = () => {
-      calls.push("stop");
-      return stop.call(runtime);
-    };
-    runtime.step = async (dt) => {
-      calls.push("step");
-      await held;
-      return step.call(runtime, dt);
-    };
-    vi.stubGlobal("showOpenFilePicker", () =>
-      Promise.resolve([handle("greet.bt", GREET.text).handle]),
-    );
-    const { user } = setup({ runtime, defaultText: ORDER.text, fileName: ORDER.file });
-    await waitFor(() => expect(calls).toEqual(["start"]));
-    await user.click(screen.getByRole("button", { name: "Step" }));
-    await user.click(screen.getByRole("button", { name: "File" }));
-    await user.click(screen.getByRole("menuitem", { name: "Open…" }));
-    await waitFor(() => expect(text()).toHaveValue(GREET.text));
-    // Long enough for the new file to have started, were it not waiting for the stop.
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(calls).toEqual(["start", "step"]);
-    release();
-    await waitFor(() => expect(calls).toEqual(["start", "step", "stop", "start"]));
-  });
-
-  it("disposes an example's runtime once the behavior on it stopped", async () => {
-    const order: string[] = [];
-    const runtime = new MockArora({ store: ORDER.store });
-    const { stop } = runtime;
-    runtime.stop = () => {
-      order.push("stop");
-      return stop.call(runtime);
-    };
-    const { user } = setup({
-      examples: [
-        {
-          title: "Order",
-          fileName: ORDER.file,
-          text: ORDER.text,
-          runtime: () => ({ runtime, dispose: () => order.push("dispose") }),
-        },
-      ],
-    });
-    await user.click(screen.getByRole("button", { name: /^Order/ }));
-    await screen.findByRole("tree", { name: "Behavior diagram" });
-    order.length = 0;
-    await user.click(screen.getByRole("button", { name: "File" }));
-    await user.click(screen.getByRole("menuitem", { name: "Close" }));
-    await waitFor(() => expect(order).toContain("dispose"));
-    expect(order.indexOf("stop")).toBeLessThan(order.indexOf("dispose"));
-  });
-
   it("opens nothing from a picker answered after another file replaced the one open", async () => {
     let pick: (handles: unknown[]) => void = () => {};
     vi.stubGlobal("showOpenFilePicker", () => new Promise((resolve) => (pick = resolve)));
@@ -304,80 +269,31 @@ describe("the start screen", () => {
     expect(text()).toHaveValue("succeed\n");
   });
 
-  it("starts the behavior on a runtime the host switches to, a step of the previous still pending", async () => {
-    const first = new MockArora({ store: ORDER.store });
-    const second = new MockArora({ store: ORDER.store });
-    let release: () => void = () => {};
-    const held = new Promise<void>((resolve) => (release = resolve));
-    const { step } = first;
-    first.step = async (dt) => {
-      await held;
-      return step.call(first, dt);
+  it("runs a file opened on the local Arora only once it said its functions", async () => {
+    let say: () => void = () => {};
+    const said = new Promise<void>((resolve) => (say = resolve));
+    const runs: unknown[] = [];
+    const held = () => {
+      const session = startLocal();
+      const { functions, run } = session;
+      session.functions = async () => {
+        await said;
+        return functions.call(session);
+      };
+      session.run = (loaded) => {
+        runs.push(loaded);
+        return run.call(session, loaded);
+      };
+      return session;
     };
-    const started: string[] = [];
-    const { start } = second;
-    second.start = (loaded) => {
-      started.push("second");
-      return start.call(second, loaded);
-    };
-    const user = userEvent.setup();
-    const props = { language, autoPlay: false, defaultText: ORDER.text, fileName: ORDER.file };
-    const { rerender } = render(<BehaviorEditor {...props} runtime={first} />);
-    await user.click(await screen.findByRole("button", { name: "Step" }));
-    rerender(<BehaviorEditor {...props} runtime={second} />);
-    await waitFor(() => expect(started).toEqual(["second"]));
-    release();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await user.click(screen.getByRole("button", { name: "Step" }));
-    await waitFor(async () => expect(await second.read("v")).toEqual({ f64: 1 }));
-  });
-
-  it("shows nothing a runtime the host switched away from answers late", async () => {
-    const first = new MockArora({ store: ORDER.store });
-    const second = new MockArora({ store: ORDER.store });
-    let release: () => void = () => {};
-    const held = new Promise<void>((resolve) => (release = resolve));
-    first.step = async () => {
-      await held;
-      throw new Error("the first runtime's step failed");
-    };
-    const user = userEvent.setup();
-    const props = { language, autoPlay: false, defaultText: ORDER.text, fileName: ORDER.file };
-    const { rerender } = render(<BehaviorEditor {...props} runtime={first} />);
-    await user.click(await screen.findByRole("button", { name: "Step" }));
-    rerender(<BehaviorEditor {...props} runtime={second} />);
-    await user.click(screen.getByRole("button", { name: "Step" }));
-    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
-    release();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.queryByText("the first runtime's step failed")).toBeNull();
-    expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1");
-  });
-
-  it("runs a behavior on a runtime switched to only once resolved against its own functions", async () => {
-    const first = new MockArora({ store: ORDER.store });
-    // Another catalogue: the same functions under other ids, said late.
-    const renamed = MATH_FUNCTIONS.map((f) => ({ ...f, id: `${f.id.slice(0, -4)}beef` }));
-    let say: (functions: MethodSignature[]) => void = () => {};
-    const second = new MockArora({ store: ORDER.store });
-    second.functions = () => new Promise((resolve) => (say = resolve));
-    const started: Graph[] = [];
-    second.start = (loaded) => {
-      started.push(loaded.graph);
-      return Promise.resolve();
-    };
-    const props = { language, autoPlay: false, defaultText: ORDER.text, fileName: ORDER.file };
-    const { rerender } = render(<BehaviorEditor {...props} runtime={first} />);
-    await screen.findByRole("tree", { name: "Behavior diagram" });
-    rerender(<BehaviorEditor {...props} runtime={second} />);
+    const { user } = setup({ examples: EXAMPLES, localArora: held });
+    await screen.findByRole("button", { name: "Open the device's behavior" });
+    await user.click(screen.getByRole("button", { name: /^Order/ }));
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(started).toEqual([]);
-    say(renamed);
-    await waitFor(() => expect(started).toHaveLength(1));
-    const ids = new Set(renamed.map((f) => f.id));
-    const calls = (started[0]!.nodes ?? []).map((n) => n.function);
-    expect(calls.some((id) => ids.has(id))).toBe(true);
-    expect(calls.some((id) => MATH_FUNCTIONS.some((f) => f.id === id))).toBe(false);
+    expect(runs).toEqual([]);
+    say();
+    await waitFor(() => expect(runs).toHaveLength(1));
+    expect(await screen.findByRole("switch", { name: "Live edits" })).toBeChecked();
   });
 
   it("shows no failure of an open that something else replaced", async () => {
@@ -398,79 +314,16 @@ describe("the start screen", () => {
       Promise.resolve([handle("greet.bt", GREET.text).handle]),
     );
     const user = userEvent.setup();
-    const first = render(<BehaviorEditor language={language} autoPlay={false} />);
+    const first = render(<BehaviorEditor language={language} />);
     await user.click(screen.getByRole("button", { name: "Open…" }));
     await waitFor(() => expect(text()).toHaveValue(GREET.text));
     first.unmount();
-    render(<BehaviorEditor language={language} autoPlay={false} />);
+    render(<BehaviorEditor language={language} />);
     expect(await screen.findByRole("button", { name: /^greet\.bt/ })).toBeTruthy();
   });
 
-  it("shows nothing a step on a runtime switched away from reads after the switch", async () => {
-    const first = new MockArora({ store: ORDER.store });
-    const second = new MockArora({ store: ORDER.store });
-    let release: () => void = () => {};
-    const held = new Promise<void>((resolve) => (release = resolve));
-    const { read } = first;
-    let holding = false;
-    first.read = async (key) => {
-      if (holding) await held;
-      return read.call(first, key);
-    };
-    const diff = (a: Graph, b: Graph) =>
-      JSON.stringify(a) === JSON.stringify(b) ? {} : { remove: [] };
-    const { result, rerender } = renderHook(
-      ({ runtime }) => usePlayback(runtime, ORDER.loaded, false, diff),
-      { initialProps: { runtime: first } },
-    );
-    await waitFor(() => expect(result.current.store.size).toBeGreaterThan(0));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    act(() => result.current.write("written", { f64: 9 }));
-    await waitFor(() => expect(result.current.pending.has("written")).toBe(true));
-    holding = true;
-    act(() => result.current.step());
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    rerender({ runtime: second });
-    await waitFor(() => expect(result.current.pending.size).toBe(0));
-    act(() => result.current.write("mine", { f64: 1 }));
-    await waitFor(() => expect(result.current.pending.has("mine")).toBe(true));
-    release();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(result.current.pending.has("mine")).toBe(true);
-    expect(result.current.store.has("written")).toBe(false);
-  });
-
-  it("disposes an example's runtime only once it answered for its functions", async () => {
-    const order: string[] = [];
-    const runtime = new MockArora({ store: ORDER.store });
-    let answer: () => void = () => {};
-    const { functions } = runtime;
-    runtime.functions = async () => {
-      await new Promise<void>((resolve) => (answer = resolve));
-      order.push("functions");
-      return functions.call(runtime);
-    };
-    const { user } = setup({
-      examples: [
-        {
-          title: "Order",
-          fileName: ORDER.file,
-          text: ORDER.text,
-          runtime: () => ({ runtime, dispose: () => order.push("dispose") }),
-        },
-      ],
-    });
-    await user.click(screen.getByRole("button", { name: /^Order/ }));
-    await user.click(await screen.findByRole("button", { name: "File" }));
-    await user.click(screen.getByRole("menuitem", { name: "Close" }));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(order).toEqual([]);
-    answer();
-    await waitFor(() => expect(order).toEqual(["functions", "dispose"]));
-  });
-
   it("opens on a controlled text that arrives after it mounted, and stays closed once closed", async () => {
-    const props = { language, autoPlay: false, fileName: ORDER.file, onTextChange: () => {} };
+    const props = { language, fileName: ORDER.file, onTextChange: () => {} };
     const user = userEvent.setup();
     const { rerender } = render(<BehaviorEditor {...props} />);
     expect(screen.getByRole("region", { name: "Open a behavior" })).toBeTruthy();
@@ -489,7 +342,6 @@ describe("the start screen", () => {
     const texts: string[] = [];
     const props = {
       language,
-      autoPlay: false,
       fileName: ORDER.file,
       onTextChange: (t: string) => texts.push(t),
     };
@@ -501,36 +353,6 @@ describe("the start screen", () => {
     pick([handle("greet.bt", GREET.text).handle]);
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(texts).toEqual([]);
-  });
-
-  it("shows no failure of a step from before the host switched away and back", async () => {
-    const first = new MockArora({ store: ORDER.store });
-    const second = new MockArora({ store: ORDER.store });
-    let fail: () => void = () => {};
-    const held = new Promise<void>((resolve) => (fail = resolve));
-    const { step } = first;
-    let steps = 0;
-    first.step = async (dt) => {
-      if (steps++ > 0) return step.call(first, dt);
-      await held;
-      throw new Error("a step from before");
-    };
-    const diff = (a: Graph, b: Graph) =>
-      JSON.stringify(a) === JSON.stringify(b) ? {} : { remove: [] };
-    const { result, rerender } = renderHook(
-      ({ runtime }) => usePlayback(runtime, ORDER.loaded, true, diff),
-      { initialProps: { runtime: first } },
-    );
-    await waitFor(() => expect(result.current.store.size).toBeGreaterThan(0));
-    act(() => result.current.step());
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    rerender({ runtime: second });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    rerender({ runtime: first });
-    fail();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(result.current.error).toBeNull();
-    expect(result.current.playing).toBe(true);
   });
 
   it("says why a recent file did not open", async () => {

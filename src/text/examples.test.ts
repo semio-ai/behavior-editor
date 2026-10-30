@@ -1,23 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { EXAMPLES } from "../../fixtures/examples";
-import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import { loadLanguage } from "../../fixtures/language";
+import { DATAFLOW_FUNCTIONS } from "../../fixtures/local-arora";
 
 describe("the examples' text", () => {
   it.each(EXAMPLES.map((e) => [e.file, e] as const))(
-    "%s parses, formats as written, and resolves against the mock device",
+    "%s parses, formats as written, and resolves against @arora/dataflow's functions",
     async (_, example) => {
       const language = await loadLanguage();
       const parsed = language.parse(example.text);
       expect(parsed.diagnostics).toEqual([]);
-      expect(language.format(parsed, MATH_FUNCTIONS)).toBe(example.text);
-      const loaded = language.resolve(parsed.document, MATH_FUNCTIONS);
+      expect(language.format(parsed, DATAFLOW_FUNCTIONS)).toBe(example.text);
+      const loaded = language.resolve(parsed.document, DATAFLOW_FUNCTIONS);
       expect(loaded.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
-      expect(loaded.nodes.map((n) => [n.name, n.path, n.attached])).toEqual(
-        example.loaded.nodes.map((n) => [n.name, n.path, n.attached]),
-      );
     },
   );
-
 });
 
 describe("a 64-bit literal", () => {
@@ -25,7 +22,7 @@ describe("a 64-bit literal", () => {
     const language = await loadLanguage();
     const resolve = (text: string) =>
       language
-        .resolve(language.parse(text).document, MATH_FUNCTIONS)
+        .resolve(language.parse(text).document, DATAFLOW_FUNCTIONS)
         .diagnostics.filter((d) => d.severity === "error");
     const literals = [
       "9007199254740993u64",
@@ -34,11 +31,11 @@ describe("a 64-bit literal", () => {
       "u64[1, 9007199254740993][1]",
     ];
     for (const literal of literals) {
-      const errors = resolve(`running\n\nx: identity(x: ${literal})\n`);
+      const errors = resolve(`running\n\nx: add(operand_0: ${literal})\n`);
       expect(errors.map((d) => [d.span.line, d.message])).toEqual([
         [3, expect.stringContaining("cannot hold exactly")],
       ]);
     }
-    expect(resolve("running\n\nx: identity(x: 9007199254740991u64)\n")).toEqual([]);
+    expect(resolve("running\n\nx: add(operand_0: 9007199254740991u64)\n")).toEqual([]);
   });
 });

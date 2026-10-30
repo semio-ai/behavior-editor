@@ -6,7 +6,6 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mathModule } from "../src/runtime/math-module";
 import type { BehaviorText } from "../src/text/language";
 import { createBehaviorText } from "../src/text/wasm-language";
 import initBehaviorText, * as behaviorText from "../wasm/pkg/behavior_text.js";
@@ -23,6 +22,3 @@ export function loadLanguage(): Promise<BehaviorText> {
   });
   return loading;
 }
-
-/** The mock device's functions, as its `functions()` lists them. */
-export const MATH_FUNCTIONS = mathModule().functions.map((f) => f.signature);

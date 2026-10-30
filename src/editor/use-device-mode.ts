@@ -10,7 +10,7 @@ import type {
 } from "../session/device-session";
 import { useSessionState } from "../session/use-device-session";
 import type { Loaded } from "../text/language";
-import { withTick } from "./use-playback";
+import { withTick } from "./use-functions";
 
 /**
  * How the file open stands to the behavior the device runs:
@@ -59,6 +59,10 @@ export interface DeviceMode {
 const NO_STATUS: DeviceStatus = { tick: null, time: null, rate: null, revision: null };
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** The keys `session`'s last step listed, by key. */
+const keyMap = (session: DeviceSession | null): ReadonlyMap<string, KeyInfo> =>
+  new Map((session?.snapshot.keys ?? []).map((info) => [info.key, info]));
 
 /** The number of changes `diff` makes: nodes removed and set, ports unbound and bound, the root. */
 export function changeCount(diff: GraphDiff): number {
@@ -111,13 +115,17 @@ export function useDeviceMode(
     report: TickReport | null;
     previous: TickReport | null;
   }>({ report: null, previous: null });
-  const [storeState, setStoreState] = useState<ReadonlyMap<string, Value>>(new Map());
+  // Taken up, the session shows the store and keys its last step left, until
+  // its next: a paused local Arora takes none until asked.
+  const [storeState, setStoreState] = useState<ReadonlyMap<string, Value>>(
+    () => session?.snapshot.store ?? new Map(),
+  );
   const storeRef = useRef(storeState);
   const setStore = (next: ReadonlyMap<string, Value>) => {
     storeRef.current = next;
     setStoreState(next);
   };
-  const [keys, setKeys] = useState<ReadonlyMap<string, KeyInfo>>(new Map());
+  const [keys, setKeys] = useState<ReadonlyMap<string, KeyInfo>>(() => keyMap(session));
   const [pendingState, setPendingState] = useState<ReadonlySet<string>>(new Set());
   const pendingRef = useRef(pendingState);
   const setPending = (next: ReadonlySet<string>) => {
@@ -174,8 +182,8 @@ export function useDeviceMode(
     setError(null);
     setStatus(session?.status ?? NO_STATUS);
     setReports({ report: null, previous: null });
-    setStore(new Map());
-    setKeys(new Map());
+    setStore(session?.snapshot.store ?? new Map());
+    setKeys(keyMap(session));
     setPending(new Set());
     setHistory(new Map());
   }
@@ -281,6 +289,22 @@ export function useDeviceMode(
       setBehavior((b) => (b ? { ...b, graph: next.graph } : b));
     });
   }, [session, enqueue, setRunningGraph, markChanged]);
+
+  // An Arora the page steps is the page's own: a file opened on it runs there
+  // at once, as soon as it runs at all. A device stepping itself, and an
+  // Arora the editor switches to with the file open, run it only when asked:
+  // what they run is not the editor's to replace unasked.
+  const runsAtOnce = useRef(session?.clock === "driven");
+  useEffect(() => {
+    if (!runsAtOnce.current || !session || !connected || !loaded) return;
+    if (session.clock !== "driven" || running !== null || changed || behavior === undefined) return;
+    runsAtOnce.current = false;
+    // The Arora runs the file already: it is followed as it runs, not loaded afresh.
+    if (behavior && isEmptyDiff(diff(behavior.graph, loaded.graph))) return;
+    run();
+  }, [session, connected, loaded, running, changed, behavior, diff, run]);
+  // Switched to another Arora, the file is that one's to run when asked.
+  if (known !== session) runsAtOnce.current = false;
 
   const stop = useCallback(() => {
     if (!session) return;

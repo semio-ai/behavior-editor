@@ -1,80 +1,38 @@
-import { StrictMode } from "react";
+import { StrictMode, useCallback } from "react";
 import { createRoot } from "react-dom/client";
-import { EXAMPLES } from "../fixtures/examples";
-import { DATAFLOW_INPUTS } from "../fixtures/devices/dataflow";
-import dataflow from "../fixtures/devices/dataflow.bt?raw";
-import { PageBridge } from "../fixtures/page-bridge";
+import { EXAMPLES, INPUTS, VALUES } from "../fixtures/examples";
 import {
   BehaviorEditor,
   type BehaviorExample,
   type BehaviorText,
-  DeviceRuntime,
-  MATH_MODULE_ID,
-  MockArora,
   createBehaviorText,
   useDeviceSession,
 } from "../src";
+import { DATAFLOW_MODULE_ID, createLocalArora } from "../src/local-arora";
 import { WebSocketConnectionBar } from "../src/websocket";
 import "../src/styles.css";
-import initDataflowDevice, { DataflowDevice } from "../device/pkg/dataflow_device.js";
+import initDevice, * as device from "../device/pkg/dataflow_device.js";
 import initBehaviorText, * as behaviorText from "../wasm/pkg/behavior_text.js";
 
-const DEVICE = "D";
-const PAGE_DEVICE = "P";
+const EXAMPLE_FILES: BehaviorExample[] = EXAMPLES.map((e) => ({
+  title: e.title,
+  fileName: e.file,
+  text: e.text,
+  plotKeys: e.plot,
+}));
 
 /**
- * The NGBT spectrum's examples, which call the mock's math module, each on a
- * mock device seeded as the spectrum seeds it; and a behavior calling
- * `@arora/dataflow`, on an Arora device in the page (`device/`), its inputs
- * seeded. Connected to a device, every example works on that device: the
- * dataflow one runs on a device carrying `@arora/dataflow`.
+ * The editor on a local Arora, started with the page and seeded with every
+ * example's inputs, so the examples run at once; or on a device the person
+ * connects to over its open local bridge. Disconnected, the editor is back on
+ * the local Arora, as it was left.
  */
-function examples(language: BehaviorText): BehaviorExample[] {
-  const mocked: BehaviorExample[] = EXAMPLES.map((e) => ({
-    title: e.title,
-    fileName: e.file,
-    text: e.text,
-    plotKeys: e.plot,
-    runtime: () => ({ runtime: new MockArora({ store: e.store }) }),
-  }));
-  const onDevice: BehaviorExample = {
-    title: "Dataflow (@arora/dataflow)",
-    fileName: "dataflow.bt",
-    text: dataflow,
-    plotKeys: ["face/level", "rig/sway", "face/smile"],
-    runtime: () => {
-      const device = new DataflowDevice(DEVICE, JSON.stringify(DATAFLOW_INPUTS));
-      device.update(
-        JSON.stringify({ "sensor/distance": { f32: 0.3 }, "face/smile_target": { f32: 1 } }),
-      );
-      const runtime = new DeviceRuntime({
-        device,
-        deviceId: DEVICE,
-        loadCall: (graph) => language.loadCall(graph),
-        editCall: (diff) => language.editCall(diff),
-        trace: language,
-      });
-      return { runtime, dispose: () => device.free() };
-    },
-  };
-  return [...mocked, onDevice];
-}
-
-/**
- * The editor, on the mock until the person connects it to a device: over a
- * device's open local bridge, by URL, or to an Arora device in the page, a
- * bridge the host makes itself. Every file, examples included, then works on
- * that device.
- */
-function Demo({ language, offered }: { language: BehaviorText; offered: BehaviorExample[] }) {
+function Demo({ language }: { language: BehaviorText }) {
   const connection = useDeviceSession({ language });
-  const inPage = () => {
-    const device = new DataflowDevice(PAGE_DEVICE, JSON.stringify(DATAFLOW_INPUTS));
-    const bridge = new PageBridge(device, { namespace: PAGE_DEVICE });
-    // The device goes with its connection.
-    void bridge.closed.then(() => device.free());
-    connection.connect(bridge, "the Arora device in this page");
-  };
+  const localArora = useCallback(
+    () => createLocalArora(device, language, { inputs: INPUTS, values: VALUES }),
+    [language],
+  );
   return (
     <div style={{ maxWidth: 1600, margin: "0 auto" }}>
       <div
@@ -82,26 +40,23 @@ function Demo({ language, offered }: { language: BehaviorText; offered: Behavior
         style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}
       >
         <WebSocketConnectionBar connection={connection} />
-        {connection.state?.status !== "connected" && (
-          <button type="button" onClick={inPage}>
-            Use an Arora device in this page
-          </button>
-        )}
       </div>
       <BehaviorEditor
         language={language}
         session={connection.session}
-        examples={offered}
-        moduleNames={{ [MATH_MODULE_ID]: "math" }}
+        localArora={localArora}
+        startLocalArora
+        examples={EXAMPLE_FILES}
+        moduleNames={{ [DATAFLOW_MODULE_ID]: "dataflow" }}
       />
     </div>
   );
 }
 
-await Promise.all([initBehaviorText(), initDataflowDevice()]);
+await Promise.all([initBehaviorText(), initDevice()]);
 const language = createBehaviorText(behaviorText);
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Demo language={language} offered={examples(language)} />
+    <Demo language={language} />
   </StrictMode>,
 );

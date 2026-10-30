@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { GREET, SMILE } from "../../fixtures/examples";
-import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import { loadLanguage } from "../../fixtures/language";
+import { DATAFLOW_FUNCTIONS } from "../../fixtures/local-arora";
 import type { BehaviorText } from "../text/language";
 import { functionIndex } from "./functions";
 import { behaviorKeys } from "./store-keys";
@@ -11,8 +12,8 @@ beforeAll(async () => {
 });
 
 const keysOf = (text: string) => {
-  const loaded = language.resolve(language.parse(text).document, MATH_FUNCTIONS);
-  return behaviorKeys(loaded, functionIndex(language.natives(), MATH_FUNCTIONS));
+  const loaded = language.resolve(language.parse(text).document, DATAFLOW_FUNCTIONS);
+  return behaviorKeys(loaded, functionIndex(language.natives(), DATAFLOW_FUNCTIONS));
 };
 
 describe("the keys a behavior reads and writes", () => {
@@ -22,7 +23,7 @@ describe("the keys a behavior reads and writes", () => {
       "rig/mouth_corner": "sink",
       "rig/cheek_raise": "sink",
     });
-    expect([...reads]).toEqual(["face/smile"]);
+    expect([...reads].sort()).toEqual(["arora/dt", "face/smile"]);
   });
 
   it("tell a key a tree node writes when it ticks", () => {
@@ -45,7 +46,7 @@ describe("the keys a behavior reads and writes", () => {
   });
 
   it("count a key read through a selection", () => {
-    const { reads } = keysOf("running\n\nx: add(a: {pose}[x], b: 1)\n");
+    const { reads } = keysOf("running\n\nx: add(operand_0: {pose}[x], operand_1: 1f32)\n");
     expect([...reads]).toEqual(["pose"]);
   });
 });

@@ -8,7 +8,8 @@ import {
   SMILE,
   idOf,
 } from "../../fixtures/examples";
-import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import { loadLanguage } from "../../fixtures/language";
+import { DATAFLOW_FUNCTIONS } from "../../fixtures/local-arora";
 import type { BehaviorText } from "../text/language";
 import { dropAt } from "./Diagram";
 import { PAD, layoutDiagram, outputY } from "./diagram-layout";
@@ -20,15 +21,15 @@ beforeAll(async () => {
   language = await loadLanguage();
 });
 
-/** The example's text, parsed and resolved against the mock device's functions. */
+/** The example's text, parsed and resolved against `@arora/dataflow`'s functions. */
 function resolved(example: Example) {
   const { document } = language.parse(example.text);
-  return { document, loaded: language.resolve(document, MATH_FUNCTIONS) };
+  return { document, loaded: language.resolve(document, DATAFLOW_FUNCTIONS) };
 }
 
 function rowsOf(example: Example) {
   const { document, loaded } = resolved(example);
-  const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+  const index = functionIndex(language.natives(), DATAFLOW_FUNCTIONS);
   return diagramRows(document, index, loaded.nodes);
 }
 
@@ -38,17 +39,21 @@ describe("the diagram's rows", () => {
     expect(rows.map((r) => [r.key, r.title])).toEqual([
       ["0", "fallback"],
       ["0.0", "sequence"],
-      ["0.0.0", "truthy"],
-      ["0.0.1", "truthy"],
+      ["0.0.0", "equal"],
+      ["0.0.1", "equal"],
       ["0.0.2", "parallel"],
-      ["0.0.2.0", "{rig/arm_raise} = damp"],
-      ["0.0.2.1", "{rig/arm_wave} = mul"],
-      ["0.0.2.2", "wait"],
-      ["0.0.3", "{social/greeted} = identity"],
+      ["0.0.2.0", "damp"],
+      ["0.0.2.1", "{rig/arm_wave} = multiply"],
+      ["0.0.2.2", "fallback"],
+      ["0.0.2.2.0", "equal"],
+      ["0.0.2.2.1", "running"],
+      ["0.0.3", "{social/greeted} = not"],
       ["0.1", "parallel"],
-      ["0.1.0", "{rig/arm_raise} = damp"],
-      ["0.1.1", "{rig/arm_wave} = damp"],
+      ["0.1.0", "damp"],
+      ["0.1.1", "damp"],
+      ["0.1.2", "{social/rested_at} = time"],
       ["1", "fresh: not"],
+      ["2", "waved: greaterthan"],
     ]);
     const { loaded } = resolved(GREET);
     expect(rows.find((r) => r.key === "1")?.graphId).toBe(idOf(loaded, "fresh"));
@@ -62,43 +67,47 @@ describe("the diagram's rows", () => {
     expect(shapes["0.0.2"]).toEqual(["control", "⇉"]);
     // A condition returns a status from what it reads, and writes nothing.
     expect(shapes["0.0.0"]).toEqual(["condition", ""]);
-    // `wait` writes its state; `identity` returns a value.
-    expect(shapes["0.0.2.2"]).toEqual(["action", ""]);
+    // A damp writes its state back; a leaf binding its return value to a key writes it.
+    expect(shapes["0.0.2.0"]).toEqual(["action", ""]);
     expect(shapes["0.0.3"]).toEqual(["action", ""]);
+    expect(shapes["0.0.2.2.1"]).toEqual(["action", ""]);
     expect(shapes["1"]).toEqual(["data", ""]);
   });
 
-  it("give one port per parameter, wired to the nodes it reads, nested calls included", () => {
+  it("give one port per argument, wired to the nodes it reads, nested calls included", () => {
     const rows = rowsOf(GREET);
     const raise = rows.find((r) => r.key === "0.0.2.0")!;
     expect(raise.ports).toEqual([
-      { name: "target", text: "1", sources: [] },
-      { name: "half_life", text: "0.12", sources: [] },
-      { name: "state", text: "none", sources: [] },
-      { name: "initial", text: "{rig/arm_raise}", sources: [] },
+      { name: "in", text: "1f32", sources: [] },
+      { name: "param.half_life", text: "0.12f32", sources: [] },
+      { name: "dt", text: "{arora/dt}", sources: [] },
+      { name: "state", text: "{rig/arm_raise}", sources: [] },
     ]);
     const wave = rows.find((r) => r.key === "0.0.2.1")!;
     expect(wave.ports[0]).toEqual({
-      name: "a",
-      text: "oscillator(t: {arora/time}, frequency: 1.6)",
+      name: "operand_0",
+      text: "oscillator(frequency: 1.6f32, t: {arora/time})",
       sources: [],
     });
     expect(rows.find((r) => r.key === "0.0.1")?.ports).toEqual([
-      { name: "x", text: "@fresh._ret", sources: [{ key: "1", output: "_ret" }] },
+      { name: "a", text: "@fresh._ret", sources: [{ key: "1", output: "_ret" }] },
+      { name: "b", text: "true", sources: [] },
     ]);
     expect(rows.find((r) => r.key === "0.0.2")?.descendantKeys).toEqual([
       "0.0.2.0",
       "0.0.2.1",
       "0.0.2.2",
+      "0.0.2.2.0",
+      "0.0.2.2.1",
     ]);
   });
 });
 
-/** The layout of `text`, resolved against the mock device's functions. */
+/** The layout of `text`, resolved against `@arora/dataflow`'s functions. */
 function layoutOf(text: string) {
   const { document } = language.parse(text);
-  const loaded = language.resolve(document, MATH_FUNCTIONS);
-  const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+  const loaded = language.resolve(document, DATAFLOW_FUNCTIONS);
+  const index = functionIndex(language.natives(), DATAFLOW_FUNCTIONS);
   return layoutDiagram(diagramRows(document, index, loaded.nodes), new Set());
 }
 
@@ -106,14 +115,24 @@ describe("the diagram's outputs", () => {
   it("names each output: _ret where it is written, then the parameters a function writes back", () => {
     const rows = rowsOf(RETURN_VALUES);
     const outputs = (key: string) => rows.find((r) => r.key === key)!.outputs;
-    // A named node's return value, read by others, written nowhere.
-    expect(outputs("1")).toEqual([{ name: "_ret", text: "" }]);
+    // A named node's return value, read by others, written nowhere; a
+    // function of `@arora/dataflow` writes its state back, listed after it.
+    expect(outputs("1")).toEqual([
+      { name: "_ret", text: "" },
+      { name: "state", text: "" },
+    ]);
     // A node binding its return value to a store key.
-    expect(outputs("3")).toEqual([{ name: "_ret", text: "{face/level}" }]);
+    expect(outputs("3")).toEqual([
+      { name: "_ret", text: "{face/level}" },
+      { name: "state", text: "" },
+    ]);
     // A tree leaf binding its return value; a condition's status is its pill, not an output.
-    expect(outputs("0.0.1")).toEqual([{ name: "_ret", text: "{face/look}" }]);
+    expect(outputs("0.0.1")).toEqual([
+      { name: "_ret", text: "{face/look}" },
+      { name: "state", text: "" },
+    ]);
     expect(outputs("0.0.0")).toEqual([]);
-    // A function writing a parameter back lists it after _ret.
+    // The parameter a function writes back.
     const mouth = rowsOf(SMILE).find((r) => r.node.name?.text === "mouth")!;
     expect(mouth.outputs).toEqual([
       { name: "_ret", text: "{rig/mouth_corner}" },
@@ -122,12 +141,12 @@ describe("the diagram's outputs", () => {
   });
 
   it("reads an output a reference names by its parameter's id", () => {
-    const damp = MATH_FUNCTIONS.find((f) => f.name === "damp")!.function;
+    const damp = DATAFLOW_FUNCTIONS.find((f) => f.name === "damp")!.function;
     const state = Object.entries(damp.parameters).find(([, p]) => p.name === "state")![0];
-    const text = `${SMILE.text}watch: identity(x: @mouth.${state})\n`;
+    const text = `${SMILE.text}watch: add(operand_0: @mouth.${state})\n`;
     const { document } = language.parse(text);
-    const loaded = language.resolve(document, MATH_FUNCTIONS);
-    const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+    const loaded = language.resolve(document, DATAFLOW_FUNCTIONS);
+    const index = functionIndex(language.natives(), DATAFLOW_FUNCTIONS);
     const rows = diagramRows(document, index, loaded.nodes);
     const mouth = rows.find((r) => r.node.name?.text === "mouth")!;
     const watch = rows.find((r) => r.node.name?.text === "watch")!;
@@ -139,10 +158,10 @@ describe("the diagram's outputs", () => {
   });
 
   it("tells apart the wires of one argument reading two outputs of a node", () => {
-    const text = `${SMILE.text}watch: identity(x: f64[@mouth._ret, @mouth.state])\n`;
+    const text = `${SMILE.text}watch: add(operand_0: f32[@mouth._ret, @mouth.state])\n`;
     const { document } = language.parse(text);
-    const loaded = language.resolve(document, MATH_FUNCTIONS);
-    const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+    const loaded = language.resolve(document, DATAFLOW_FUNCTIONS);
+    const index = functionIndex(language.natives(), DATAFLOW_FUNCTIONS);
     const layout = layoutDiagram(diagramRows(document, index, loaded.nodes), new Set());
     const ids = layout.wires.map((w) => w.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -151,10 +170,10 @@ describe("the diagram's outputs", () => {
 
   it("routes a wire back to a reader on its left over both nodes", () => {
     const text =
-      "sequence\n  identity(x: @m.state)\n  m: damp(target: 1, half_life: 0.1, state: none)\n";
+      "sequence\n  add(operand_0: @m.state)\n  m: damp(in: 1f32, param.half_life: 0.1f32, state: ())\n";
     const { document } = language.parse(text);
-    const loaded = language.resolve(document, MATH_FUNCTIONS);
-    const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+    const loaded = language.resolve(document, DATAFLOW_FUNCTIONS);
+    const index = functionIndex(language.natives(), DATAFLOW_FUNCTIONS);
     const layout = layoutDiagram(diagramRows(document, index, loaded.nodes), new Set());
     const [reader, producer] = [layout.boxes.get("0.0")!, layout.boxes.get("0.1")!];
     expect(reader.x + reader.w).toBeLessThan(producer.x);
@@ -165,7 +184,7 @@ describe("the diagram's outputs", () => {
   });
 
   it("routes a wire to a reader under its producer across the gap between them", () => {
-    const layout = layoutOf("p: sequence\n  succeed\n  identity(x: @p._ret)\n");
+    const layout = layoutOf("p: sequence\n  succeed\n  add(operand_0: @p._ret)\n");
     const [producer, reader] = [layout.boxes.get("0")!, layout.boxes.get("0.1")!];
     const wire = layout.wires.find((w) => w.from === "0" && w.to === "0.1")!;
     const across = Number(/V(-?[\d.]+)/.exec(wire.d)![1]);
@@ -175,7 +194,7 @@ describe("the diagram's outputs", () => {
 
   it("routes a wire to a reader rows under its producer clear of the nodes between", () => {
     const layout = layoutOf(
-      "sequence\n  a: identity(x: 1)\n  succeed\n  succeed\n  succeed\n  identity(x: @a._ret)\n",
+      "sequence\n  a: add(operand_0: 1f32)\n  succeed\n  succeed\n  succeed\n  add(operand_0: @a._ret)\n",
     );
     const wire = layout.wires.find((w) => w.from === "0.0" && w.to === "0.4")!;
     const between = ["0.1", "0.2", "0.3"].map((k) => layout.boxes.get(k)!);
@@ -191,19 +210,19 @@ describe("the diagram's outputs", () => {
   it.each([
     [
       "a reader in a nested sequence",
-      "sequence\n  sequence\n    identity(x: @a._ret)\n  a: identity(x: 1)\n",
+      "sequence\n  sequence\n    add(operand_0: @a._ret)\n  a: add(operand_0: 1f32)\n",
     ],
     [
       "a reader under its producer beside a sibling",
-      "sequence\n  p: sequence\n    identity(x: @p._ret)\n  damp(target: 1, half_life: 0.1, state: none)\n",
+      "sequence\n  p: sequence\n    add(operand_0: @p._ret)\n  damp(in: 1f32, param.half_life: 0.1f32, state: ())\n",
     ],
     [
       "a parent reading its child beside a sibling",
-      "sequence_star(index: @a._ret)\n  a: identity(x: 1u16)\n  damp(target: 1, half_life: 0.1, state: none)\n",
+      "sequence_star(index: @a._ret)\n  a: add(operand_0: 1u16)\n  damp(in: 1f32, param.half_life: 0.1f32, state: ())\n",
     ],
     [
       "a reader on the producer's left",
-      "sequence\n  identity(x: @m.state)\n  m: damp(target: 1, half_life: 0.1, state: none)\n",
+      "sequence\n  add(operand_0: @m.state)\n  m: damp(in: 1f32, param.half_life: 0.1f32, state: ())\n",
     ],
   ])("routes a wire back clear of every node: %s", (_, text) => {
     const layout = layoutOf(text);
@@ -230,7 +249,7 @@ describe("the diagram's outputs", () => {
   });
 
   it("curves a wire to the sibling on its right within the gap between them", () => {
-    const layout = layoutOf("sequence\n  a: identity(x: 1)\n  identity(x: @a._ret)\n");
+    const layout = layoutOf("sequence\n  a: add(operand_0: 1f32)\n  add(operand_0: @a._ret)\n");
     const [producer, reader] = [layout.boxes.get("0.0")!, layout.boxes.get("0.1")!];
     const wire = layout.wires.find((w) => w.from === "0.0" && w.to === "0.1")!;
     const xs = /C(-?[\d.]+),[^ ]+ (-?[\d.]+),/.exec(wire.d)!.slice(1).map(Number);
@@ -315,7 +334,7 @@ describe("the diagram's layout", () => {
   });
 
   it("lays out detached nodes that read each other in a cycle", () => {
-    const text = "running\n\na: add(a: @b, b: 1)\nb: add(a: @a, b: 1)\n";
+    const text = "running\n\na: add(operand_0: @b, operand_1: 1f32)\nb: add(operand_0: @a, operand_1: 1f32)\n";
     const layout = layoutDiagram(rowsOf({ ...READERS_PARALLEL, text }), new Set());
     expect(layout.boxes.has("1") && layout.boxes.has("2")).toBe(true);
   });
@@ -331,6 +350,7 @@ describe("the diagram's layout", () => {
     );
     expect(layout.wires.filter((w) => w.to === "0.0").map((w) => [w.from, w.port])).toEqual([
       ["1", null],
+      ["2", null],
     ]);
   });
 

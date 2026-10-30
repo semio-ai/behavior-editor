@@ -1,4 +1,5 @@
 export { BehaviorEditor, type BehaviorEditorProps } from "./editor/BehaviorEditor";
+export { whenIdle } from "./editor/use-playback";
 export type { BehaviorExample } from "./editor/StartScreen";
 
 export type {
@@ -50,5 +51,12 @@ export { MATH_MODULE_ID } from "./runtime/math-module";
 export {
   DeviceRuntime,
   type AroraDevice,
+  type DeviceAnswer,
   type DeviceRuntimeOptions,
 } from "./runtime/device-runtime";
+export {
+  LOCAL_BRIDGE_URL,
+  WebSocketDevice,
+  type WebSocketDeviceOptions,
+  type WebSocketLike,
+} from "./runtime/websocket-device";

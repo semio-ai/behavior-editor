@@ -117,14 +117,25 @@ describe("DeviceRuntime", () => {
       store.set("v", { f64: 1 });
       store.delete("gone");
     };
-    const report = await runtime.step(33);
+    // The first step after a start states the whole store: what a read of it
+    // in between saw may be gone already.
+    let report = await runtime.step(33);
     expect(report.tick).toBe(1);
     expect(report.root).toBeUndefined();
     expect(report.statuses).toBeUndefined();
+    expect(report).toMatchObject({ whole: true, changes: [{ key: "v", value: { f64: 1 } }] });
+    device.onStep = (store) => {
+      store.set("v", { f64: 2 });
+      store.set("gone", { bool: true });
+    };
+    report = await runtime.step(33);
+    expect(report.whole).toBeUndefined();
     expect(report.changes).toEqual([
-      { key: "v", value: { f64: 1 } },
-      { key: "gone", value: null },
+      { key: "gone", value: { bool: true } },
+      { key: "v", value: { f64: 2 } },
     ]);
+    device.onStep = (store) => store.delete("gone");
+    expect((await runtime.step(33)).changes).toEqual([{ key: "gone", value: null }]);
     device.onStep = () => {};
     expect((await runtime.step(33)).changes).toEqual([]);
   });

@@ -1,0 +1,85 @@
+{
+  "name": "@semio/behavior-editor",
+  "description": "An editor for Arora behavior trees and their detached nodes: a diagram and the text language side by side, run against a device or a mock.",
+  "version": "0.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/semio-ai/behavior-editor.git"
+  },
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "source": "./src/index.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./styles.css": {
+      "source": "./src/styles.css",
+      "default": "./dist/styles.css"
+    },
+    "./wasm": {
+      "types": "./wasm/pkg/behavior_text.d.ts",
+      "default": "./wasm/pkg/behavior_text.js"
+    }
+  },
+  "sideEffects": [
+    "*.css"
+  ],
+  "license": "Apache-2.0",
+  "files": [
+    "dist/**",
+    "wasm/pkg/behavior_text.js",
+    "wasm/pkg/behavior_text.d.ts",
+    "wasm/pkg/behavior_text_bg.wasm",
+    "wasm/pkg/behavior_text_bg.wasm.d.ts",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:wasm": "wasm-pack build wasm --target web --release --no-pack --out-dir pkg --out-name behavior_text -- --locked && rm -f wasm/pkg/.gitignore",
+    "build:device": "wasm-pack build device --target web --dev --no-pack --out-dir pkg --out-name dataflow_device -- --locked && rm -f device/pkg/.gitignore",
+    "build": "tsup src/index.ts src/styles.css --format esm,cjs --dts src/index.ts --external react",
+    "dev": "tsup src/index.ts src/styles.css --format esm,cjs --watch --dts src/index.ts --external react",
+    "demo": "vite --config demo/vite.config.ts",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint:rust": "cd wasm && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check && cd ../device && cargo clippy --locked --all-targets -- -D warnings && cargo clippy --locked --all-targets --target wasm32-unknown-unknown -- -D warnings && cargo fmt --check",
+    "test:rust": "cd wasm && cargo test --locked --release && cd ../device && cargo test --locked",
+    "clean": "rm -rf node_modules dist wasm/pkg wasm/target device/pkg device/target"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.0.1",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.19.15",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "globals": "^17.11.0",
+    "jsdom": "^25.0.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "typescript-eslint": "^8.59.3",
+    "vite": "^7.3.2",
+    "vitest": "^5.0.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

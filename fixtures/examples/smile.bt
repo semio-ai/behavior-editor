@@ -1,0 +1,7 @@
+# Smile mapping: a pure mapping, sinks beside a tree that does nothing.
+running
+
+amount: clamp(x: {face/smile}, min: 0, max: 1)
+corner: remap(x: @amount, in_min: 0, in_max: 1, out_min: -0.2, out_max: 1)
+mouth: {rig/mouth_corner} = damp(target: @corner, half_life: 0.12, state: none)
+cheeks: {rig/cheek_raise} = mul(a: @amount, b: 0.6)

@@ -1,0 +1,8 @@
+# Breathing, driven by time: the wave runs every tick, the amplitude and the
+# flush only when face/energy changes.
+running
+
+wave: oscillator(t: {arora/time}, frequency: {face/breath_rate})
+amplitude: remap(x: {face/energy}, in_min: 0, in_max: 1, out_min: 0.03, out_max: 0.2)
+chest: {rig/chest} = add(a: mul(a: @wave, b: @amplitude), b: 0.5)
+flush: {face/flush} = remap(x: {face/energy}, in_min: 0, in_max: 1, out_min: 0.15, out_max: 0.85)

@@ -1,0 +1,32 @@
+[package]
+name = "behavior-text"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+repository = "https://github.com/semio-ai/behavior-editor"
+description = "The behavior text language of arora-behavior-tree in the browser: parse, format and resolve a behavior file, and the call that loads it on an Arora device."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The language: its parser, formatter, resolver and natives (`text`, 9.7).
+arora-behavior-tree = "9.7"
+# The shared Graph, the function index, and the interpreter's call conventions.
+arora-behavior = "9.6"
+# Call and CallResult, the JSON a device's `call` takes and answers.
+arora-types = "3.10"
+serde = { version = "1", features = ["derive"] }
+# `unbounded_depth`: a document's JSON nests deeper than serde_json's default
+# limit; the language's own nesting limit bounds it.
+serde_json = { version = "1", features = ["unbounded_depth"] }
+uuid = { version = "1", features = ["serde"] }
+wasm-bindgen = "0.2"
+# Browser RNG backend for the uuid v4 the arora crates enable: the `wasm_js`
+# feature plus the getrandom_backend cfg in .cargo/config.toml select WebCrypto
+# on wasm32-unknown-unknown.
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
+[profile.release]
+opt-level = "s"

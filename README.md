@@ -300,6 +300,14 @@ followed by its trace, clock and store.
 - **The header says where the behavior runs:** **Simulated**, on the editor's
   or the example's runtime in the page, or **Device** and what the session is
   connected to.
+- **The device's behavior opens from the header and the start screen.**
+  While a device is attached, **Device's behavior** beside where the
+  behavior runs, and **Open the device's behavior** beside Open… on the start
+  screen, read what the device runs now and open it: as the file the editor
+  ran there, with its names, when one has its graph; otherwise as a file
+  whose nodes are named by their ids. The header's button asks before
+  discarding unsaved changes, and is disabled, saying why, on a device that
+  does not report its behavior.
 - **Attaching is read-only.** The editor reads what the device runs. The
   device steps itself, so its tick, step rate, clock and revision show where
   Play, Step and the rate would.
@@ -312,9 +320,8 @@ followed by its trace, clock and store.
   device's node states, and each change of it goes to the device as an edit
   (**Live edits**, on by default). Turned off, the changes wait for **Apply**,
   which counts them. **Stop on device** loads the empty behavior.
-- **A device running another behavior** offers to **view** it, opened as a
-  file whose nodes are named by their ids (or as the file the editor ran on
-  it, with its names, when one has its graph); to **run this file** on it; or
+- **A device running another behavior** offers to **view** it, opened as
+  the header's button opens it; to **run this file** on it; or
   to **compare**: the nodes only in the file, only on the device, changed, or
   rebound, each selecting its node.
 - **Another client's change** of the behavior the file ran as stops the
@@ -405,6 +412,8 @@ The suite covers:
   tick; a live edit that keeps a `damp`'s state; Apply counting the changes
   held with live edits off;
 - another client's change, told, and the device's behavior reloaded;
+- the device's behavior opened from the start screen, and from the header as
+  the file the editor ran there, with its names;
 - disconnecting, which leaves the device running its behavior at the same
   revision, and the editor back on its simulated runtime;
 - with no device: the start screen, an example simulated with its outputs and

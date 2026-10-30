@@ -83,6 +83,10 @@ async function setup(example: Example, running: Graph, prepare?: (device: FakeDe
 const loads = (device: FakeDevice) => device.calls.filter((c) => c.id === "load");
 const edits = (device: FakeDevice) => device.calls.filter((c) => c.id === "edit");
 const banner = () => screen.queryByRole("region", { name: "Device's behavior" });
+/** The file's text, from the text field, which stays mounted while another tab shows. */
+const textValue = () =>
+  (screen.getByRole("textbox", { name: "Behavior text", hidden: true }) as HTMLTextAreaElement)
+    .value;
 
 describe("BehaviorEditor on a device", () => {
   it("attaches without changing what the device runs, and shows its tick and nodes", async () => {
@@ -139,6 +143,47 @@ describe("BehaviorEditor on a device", () => {
     expect(banner()).toBeNull();
     const text = (screen.getByRole("textbox", { name: "Behavior text", hidden: true }) as HTMLTextAreaElement).value;
     expect(same(graphOf(text), graphOf(ORDER.text))).toBe(true);
+  });
+
+  it("opens the device's behavior from the header: a file run there with its names, else its graph", async () => {
+    const { device, user } = await setup(GREET, graphOf(ORDER.text));
+    const offer = await screen.findByRole("region", { name: "Device's behavior" });
+    await user.click(within(offer).getByRole("button", { name: "Run this file on the device" }));
+    await waitFor(() => expect(banner()).toBeNull());
+    const header = () => screen.getByRole("button", { name: "Device's behavior" });
+    expect(header()).toHaveAccessibleDescription(
+      "Open the behavior the device runs, in place of this file.",
+    );
+
+    // A behavior the editor did not run opens as its graph, its nodes named by their ids.
+    device.loadedByAnother(graphOf(ORDER.text));
+    await screen.findByText(/Another client changed/);
+    await user.click(header());
+    await waitFor(() => expect(screen.getByText("device.bt")).toBeTruthy());
+    expect(same(graphOf(textValue()), graphOf(ORDER.text))).toBe(true);
+    expect(await screen.findByRole("switch", { name: "Live edits" })).toBeChecked();
+
+    // The file the editor ran opens as it ran, with its names.
+    device.loadedByAnother(graphOf(GREET.text));
+    await screen.findByText(/Another client changed/);
+    await user.click(header());
+    await waitFor(() => expect(screen.getByText(GREET.file)).toBeTruthy());
+    expect(textValue()).toBe(GREET.text);
+  });
+
+  it("asks before the header's button discards unsaved changes", async () => {
+    const { user, type } = await setup(GREET, graphOf(ORDER.text));
+    await screen.findByRole("region", { name: "Device's behavior" });
+    type(`${GREET.text}# a comment\n`);
+    await user.click(screen.getByRole("button", { name: "Device's behavior" }));
+    expect(screen.getByRole("button", { name: "Discard" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(textValue()).toBe(`${GREET.text}# a comment\n`);
+
+    await user.click(screen.getByRole("button", { name: "Device's behavior" }));
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.getByText("device.bt")).toBeTruthy());
+    expect(same(graphOf(textValue()), graphOf(ORDER.text))).toBe(true);
   });
 
   it("sends each change as an edit, or keeps it for Apply with live edits off", async () => {
@@ -232,9 +277,13 @@ describe("BehaviorEditor on a device", () => {
     expect(within(offer).getByRole("status").textContent).toBe(
       "This device doesn't report its behavior: the editor cannot show what it runs.",
     );
+    const header = screen.getByRole("button", { name: "Device's behavior" });
+    expect(header).toBeDisabled();
+    expect(header).toHaveAccessibleDescription("This device doesn't report its behavior.");
     await user.click(within(offer).getByRole("button", { name: "Run this file on the device" }));
     await waitFor(() => expect(banner()).toBeNull());
     expect(same(device.graph, graphOf(ORDER.text))).toBe(true);
+    expect(header).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Stop on device" }));
     await waitFor(() => expect(device.graph).toEqual({}));
   });
@@ -316,6 +365,26 @@ async function startOn(running: Graph, lacks: readonly string[] = []) {
 const runsOn = () => screen.getByRole("status", { name: "Runs on" }).textContent;
 
 describe("BehaviorEditor on a device, opening an example", () => {
+  it("opens the device's behavior from the start screen", async () => {
+    const { user } = await startOn(graphOf(GREET.text));
+    const start = screen.getByRole("region", { name: "Open a behavior" });
+    await user.click(within(start).getByRole("button", { name: "Open the device's behavior" }));
+    await waitFor(() => expect(screen.getByText("device.bt")).toBeTruthy());
+    expect(same(graphOf(textValue()), graphOf(GREET.text))).toBe(true);
+    // The file opened is the one the device runs: its changes go to it.
+    expect(await screen.findByRole("switch", { name: "Live edits" })).toBeChecked();
+    expect(banner()).toBeNull();
+  });
+
+  it("says so when the device does not say what it runs, staying on the start screen", async () => {
+    const { device, user } = await startOn(graphOf(GREET.text));
+    device.reads = false;
+    await user.click(screen.getByRole("button", { name: "Open the device's behavior" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The device does not say what it runs");
+    expect(screen.getByRole("region", { name: "Open a behavior" })).toBeTruthy();
+  });
+
+
   it("marks the examples the device cannot run on the start screen", async () => {
     await startOn(graphOf(ORDER.text), ["oscillator", "wait"]);
     const greet = await screen.findByRole("button", { name: /^Greet/ });

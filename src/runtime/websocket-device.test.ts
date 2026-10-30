@@ -130,6 +130,25 @@ describe("WebSocketDevice", () => {
     ]);
   });
 
+  it("keeps a value pushed right behind the store's first read", async () => {
+    const bridge = new FakeBridge();
+    bridges.push(bridge);
+    bridge.answer = (m) => {
+      const answer = bridge.answerAsBridge(m);
+      if (m.type !== "read_values") return answer;
+      // The answer and a newer push, back to back.
+      bridge.socket!.send(JSON.stringify(answer));
+      bridge.socket!.send(
+        JSON.stringify({ type: "values_changed", values: { "sensor/distance": { f32: 0.9 } } }),
+      );
+      return null;
+    };
+    const device = await WebSocketDevice.connect(await bridge.url());
+    devices.push(device);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(JSON.parse(await device.read("sensor/distance"))).toEqual({ f32: 0.9 });
+  });
+
   it("describes the device's methods, under a prefix", async () => {
     const { bridge, device } = await connect();
     const methods = JSON.parse(await device.describeMethods("ad")) as {
@@ -255,10 +274,15 @@ describe("WebSocketDevice", () => {
     const report = runtime.step(5_000);
     await new Promise((resolve) => setTimeout(resolve, 20));
     bridge.step({ v: { f64: 1 } });
-    expect((await report).changes).toEqual([
-      { key: "arora/time", value: { u64: 10_000_000 } },
-      { key: "v", value: { f64: 1 } },
-    ]);
+    // The first step after the start states the whole store.
+    expect(await report).toMatchObject({
+      whole: true,
+      changes: [
+        { key: "arora/time", value: { u64: 10_000_000 } },
+        { key: "sensor/distance", value: { f32: 0.5 } },
+        { key: "v", value: { f64: 1 } },
+      ],
+    });
     expect(await runtime.keys()).toContainEqual({
       key: "sensor/distance",
       editable: true,

@@ -32,6 +32,8 @@ export interface TickReport {
   values?: Record<string, Value>;
   /** The store keys the tick changed, each at its value after the tick; `null` unset. */
   changes: { key: string; value: Value | null }[];
+  /** Whether `changes` states every key of the store: a key it leaves out is unset. */
+  whole?: boolean;
 }
 
 /** A store key as its runtime describes it. */

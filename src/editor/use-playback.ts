@@ -260,7 +260,8 @@ export function usePlayback(
       const tick = await runtime.step(1000 / rate);
       if (!live()) return;
       setReports((last) => ({ report: tick, previous: last.report }));
-      const next = new Map(storeRef.current);
+      // A tick stating the whole store replaces what is shown.
+      const next = new Map(tick.whole ? [] : storeRef.current);
       for (const { key, value } of tick.changes) {
         if (value === null) next.delete(key);
         else next.set(key, value);

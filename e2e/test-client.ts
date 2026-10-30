@@ -5,11 +5,16 @@ import { REVISION_KEY, type DeviceSession } from "../src/session/device-session"
 import type { BehaviorText, Loaded } from "../src/text/language";
 import { createBehaviorText } from "../src/text/wasm-language";
 import { connectWebSocket } from "../src/websocket";
-import initBehaviorText, * as behaviorText from "./behavior-text.mjs";
+import initBehaviorText, * as behaviorText from "../wasm/pkg/behavior_text.js";
 
 let loading: Promise<BehaviorText> | undefined;
 
-/** The language service over the package's wasm build (`npm run build:wasm`), initialized once. */
+/**
+ * The language service over the package's wasm build (`npm run build:wasm`),
+ * initialized once: `fixtures/language.ts`'s, found from this file's
+ * directory, as the runner compiles the suite to CommonJS, which has no
+ * `import.meta`.
+ */
 function loadLanguage(): Promise<BehaviorText> {
   loading ??= readFile(join(__dirname, "..", "wasm", "pkg", "behavior_text_bg.wasm")).then(
     async (wasm) => {

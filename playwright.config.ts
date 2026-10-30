@@ -20,6 +20,9 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   globalSetup: "./e2e/global-setup.ts",
+  // The language's wasm glue is an ES module: Node loads it as one, rather
+  // than the runner compiling it to CommonJS with the suite.
+  build: { external: ["**/wasm/pkg/**"] },
   use: {
     baseURL: `http://localhost:${DEMO_PORT}`,
     trace: "retain-on-failure",

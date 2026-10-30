@@ -227,6 +227,10 @@ export function BehaviorEditor({
       setClosed(true);
     },
     openText: (name, text) => begin(newFile(name), text),
+    ask: () => {
+      const asked = ++requests.current;
+      return () => requests.current === asked;
+    },
     ran: ran.current,
   };
 
@@ -307,6 +311,11 @@ interface FileActions {
   close(): void;
   /** Open `text` as a new file named `name`. */
   openText(name: string, text: string): void;
+  /**
+   * Ask to replace the file, with something read later: whether the ask is
+   * still the last, nothing else having replaced the file since.
+   */
+  ask(): () => boolean;
   /** The files run on a device, newest first, which the workspace adds to. */
   ran: RanFile[];
 }
@@ -418,6 +427,11 @@ function Workspace({
     [language],
   );
   const device = useDeviceMode(session, runnable ? resolved : null, diff);
+  /** The session attached now, which a read finishing late checks it still is. */
+  const attachedRef = useRef(session);
+  useEffect(() => {
+    attachedRef.current = session;
+  }, [session]);
   const local = usePlayback(active, runnable && !session ? resolved : null, autoPlay, diff);
   // On a device, the device's steps are what shows.
   const playback = session ? device : local;
@@ -712,10 +726,20 @@ function Workspace({
           dirty={text !== saved}
           onView={openDevice}
           onReload={() => {
+            // The read opens nothing once another file or device replaced this one.
+            const current = files.ask();
+            const from = session;
+            const still = () => current() && attachedRef.current === from;
             session
               .deviceBehavior()
-              .then((read) => (read ? openDevice(read.graph) : setEditError("The device no longer says what it runs")))
-              .catch((e: unknown) => setEditError(e instanceof Error ? e.message : String(e)));
+              .then((read) => {
+                if (!still()) return;
+                if (read) openDevice(read.graph);
+                else setEditError("The device no longer says what it runs");
+              })
+              .catch((e: unknown) => {
+                if (still()) setEditError(e instanceof Error ? e.message : String(e));
+              });
           }}
           onSelect={(id) => {
             const row = rows.find((r) => r.graphId === id);

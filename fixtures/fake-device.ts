@@ -68,6 +68,8 @@ export class FakeDevice {
   revises = true;
   /** Whether a connection can be opened to it now. */
   reachable = true;
+  /** How long its interpreter takes to answer a read, in milliseconds. */
+  readDelayMs = 0;
   /** Why it refuses to list its keys, while it does. */
   refusesKeys: string | null = null;
   /** Each node's status, as the next trace report states it. */
@@ -221,7 +223,8 @@ export class FakeBridgeClient implements BridgeClient {
   }
 
   call(call: Call): Promise<CallResult> {
-    return this.#answer(() => this.#device.call(call as Call & Record<string, unknown>));
+    const delay = call.id === "read" ? this.#device.readDelayMs : 0;
+    return this.#answer(() => this.#device.call(call as Call & Record<string, unknown>), delay);
   }
 
   readValues(keys: readonly string[]): Promise<Record<string, Value>> {
@@ -261,7 +264,7 @@ export class FakeBridgeClient implements BridgeClient {
   }
 
   /** Answer as a transport does, a task later; refused once the connection ended. */
-  #answer<T>(answer: () => T): Promise<T> {
+  #answer<T>(answer: () => T, delayMs = 0): Promise<T> {
     return new Promise<T>((resolve, reject) =>
       setTimeout(() => {
         if (this.#over !== null) reject(new Error(this.#over));
@@ -272,7 +275,7 @@ export class FakeBridgeClient implements BridgeClient {
             reject(error instanceof Error ? error : new Error(String(error)));
           }
         }
-      }, 0),
+      }, delayMs),
     );
   }
 }

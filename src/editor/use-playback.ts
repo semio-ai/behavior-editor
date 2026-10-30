@@ -284,10 +284,15 @@ export function usePlayback(
   };
 }
 
-/** The module functions `runtime` offers, once it has said; and why it could not. */
+/**
+ * The module functions `runtime` offers, once it has said; and why it could
+ * not. `said` records functions the runtime said when asked again, so what
+ * the editor resolves against is what it last said.
+ */
 export function useRuntimeFunctions(runtime: BehaviorRuntime): {
   functions: MethodSignature[];
   error: string | null;
+  said(functions: MethodSignature[]): void;
 } {
   const [state, setState] = useState<{ functions: MethodSignature[]; error: string | null }>({
     functions: [],
@@ -303,5 +308,6 @@ export function useRuntimeFunctions(runtime: BehaviorRuntime): {
       current = false;
     };
   }, [runtime]);
-  return state;
+  const said = useCallback((functions: MethodSignature[]) => setState({ functions, error: null }), []);
+  return { ...state, said };
 }

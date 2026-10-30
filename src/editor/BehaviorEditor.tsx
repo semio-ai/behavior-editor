@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Graph } from "../model/graph";
 import { type NodePath, deleteNode, moveNode, reparent, siblingPath, walk } from "../model/edit";
 import { MockArora } from "../runtime/mock-arora";
@@ -79,6 +79,11 @@ export function BehaviorEditor({
   autoPlay = true,
 }: BehaviorEditorProps) {
   const active = useMemo(() => runtime ?? new MockArora(), [runtime]);
+  // The runtime shown, which an open finishing late checks it still is.
+  const shown = useRef(active);
+  useEffect(() => {
+    shown.current = active;
+  }, [active]);
   const [own, setOwn] = useState(defaultText);
   const text = controlled ?? own;
   const [file, setFile] = useState<BehaviorFile>(() => ({
@@ -261,7 +266,13 @@ export function BehaviorEditor({
     if (opened.format !== "bt") {
       // The runtime's functions as it says them now, which it may not have
       // said yet when the picker opened.
-      const now = await active.functions();
+      const from = active;
+      const now = await from.functions();
+      // Opened with another runtime's functions, the file would name functions
+      // the runtime shown may not have: it opens nothing.
+      if (shown.current !== from) {
+        throw new Error(`${opened.name} was not opened: the runtime changed while it was`);
+      }
       // The text then resolves against the same functions the file opened with.
       said(now);
       const out = language.openFile(opened.text, opened.format, now);

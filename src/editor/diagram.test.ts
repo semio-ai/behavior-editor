@@ -51,8 +51,9 @@ describe("the diagram's rows", () => {
       ["0.1", "parallel"],
       ["0.1.0", "damp"],
       ["0.1.1", "damp"],
+      ["0.1.2", "{social/rested_at} = time"],
       ["1", "fresh: not"],
-      ["2", "waved: slew"],
+      ["2", "waved: greaterthan"],
     ]);
     const { loaded } = resolved(GREET);
     expect(rows.find((r) => r.key === "1")?.graphId).toBe(idOf(loaded, "fresh"));

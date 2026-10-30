@@ -163,6 +163,11 @@ async function shut(client: BridgeClient) {
   await client.closed;
 }
 
+/** Throw unless `rate` is a finite positive number of steps a second: a period of zero would never yield. */
+function validRate(rate: number) {
+  if (!Number.isFinite(rate) || rate <= 0) throw new Error(`invalid rate: ${rate}`);
+}
+
 const FIRST_MS = 500;
 const MAX_MS = 10_000;
 
@@ -253,8 +258,10 @@ export class DeviceSession {
           maxMs: (reconnect === true ? undefined : reconnect.maxMs) ?? MAX_MS,
         }
       : null;
+    const rate = options.rate ?? 30;
+    validRate(rate);
     this.#state = { status: "connecting" };
-    this.#clock = { playing: options.playing ?? true, rate: options.rate ?? 30 };
+    this.#clock = { playing: options.playing ?? true, rate };
     this.#ended = this.#run();
   }
 
@@ -298,8 +305,7 @@ export class DeviceSession {
 
   /** How many steps a second the session takes, and how long each step of a device it drives is. */
   setRate(rate: number) {
-    // A rate of no period would step a driven device without ever yielding.
-    if (!Number.isFinite(rate) || rate <= 0) throw new Error(`invalid rate: ${rate}`);
+    validRate(rate);
     this.#setClock({ ...this.#clock, rate });
   }
 
@@ -617,8 +623,10 @@ export class DeviceSession {
         if (this.#connection !== connection) break;
         this.#emit("error", error instanceof Error ? error : new Error(String(error)));
       }
-      const rest = period - (Date.now() - started);
-      if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest));
+      // A step that took its whole period still yields, so the page renders
+      // and takes input between steps.
+      const rest = Math.max(0, period - (Date.now() - started));
+      await new Promise((resolve) => setTimeout(resolve, rest));
     }
     // Let go of: the closure, when it comes, is the one the race takes.
     return new Promise<BridgeClosure>(() => {});

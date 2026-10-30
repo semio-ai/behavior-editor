@@ -95,7 +95,7 @@ describe("BehaviorEditor", () => {
     await setup(GREET);
     const tree = await screen.findByRole("tree", { name: "Behavior diagram" });
     const items = within(tree).getAllByRole("treeitem");
-    expect(items).toHaveLength(16);
+    expect(items).toHaveLength(17);
     expect(items[0]).toHaveAttribute("aria-level", "1");
     expect(item(/^sequence/)).toHaveAttribute("aria-level", "2");
     expect(item(/^fresh: not, detached/)).toBeTruthy();

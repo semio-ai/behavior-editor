@@ -83,7 +83,7 @@ describe("a behavior file in another form than the text", () => {
     const outcome = language.writeFile(resolved(GREET.text), "groot", DATAFLOW_FUNCTIONS);
     expect("problems" in outcome && outcome.problems.map((p) => p.message)).toEqual([
       // A call in an argument is a node of its own, which reads into its caller.
-      "Groot holds no node outside the tree: `root.0.2.1.operand_0`, `fresh`, `waved`",
+      "Groot holds no node outside the tree: `root.0.2.1.operand_0`, `fresh`, `waved`, `detached.1.lhs`, `detached.1.lhs.lhs`",
       "Groot has no form for a port reading another node, as `root.0.1`'s `a` does",
       "Groot has no form for a port reading another node, as `root.0.2.1`'s `operand_0` does",
       "Groot has no form for a port reading another node, as `root.0.2.2.0`'s `a` does",

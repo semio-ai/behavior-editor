@@ -461,10 +461,10 @@ describe("BehaviorEditor on a device, opening an example", () => {
 
 
   it("marks the examples the device cannot run on the start screen", async () => {
-    await startOn(graphOf(ORDER.text), { lacks: ["oscillator", "slew"] });
+    await startOn(graphOf(ORDER.text), { lacks: ["oscillator", "greaterthan"] });
     const greet = await screen.findByRole("button", { name: /^Greet/ });
     await waitFor(() =>
-      expect(greet).toHaveTextContent("Not on this device: calls oscillator, slew"),
+      expect(greet).toHaveTextContent("Not on this device: calls oscillator, greaterthan"),
     );
     expect(greet).toHaveClass("be-start-foreign");
     const order = screen.getByRole("button", { name: /^Order/ });
@@ -489,21 +489,21 @@ describe("BehaviorEditor on a device, opening an example", () => {
   });
 
   it("says which functions the device lacks, and does not run the file", async () => {
-    const { user } = await startOn(graphOf(ORDER.text), { lacks: ["oscillator", "slew"] });
+    const { user } = await startOn(graphOf(ORDER.text), { lacks: ["oscillator", "greaterthan"] });
     await user.click(await screen.findByRole("button", { name: /^Greet/ }));
     const reason = await screen.findByText(
-      "This file calls functions this device doesn't have: oscillator, slew.",
+      "This file calls functions this device doesn't have: oscillator, greaterthan.",
     );
     const offer = screen.getByRole("region", { name: "Device's behavior" });
     expect(offer).toContainElement(reason);
     const run = within(offer).getByRole("button", { name: "Run this file on the device" });
     expect(run).toBeDisabled();
     expect(run).toHaveAccessibleDescription(
-      "This file calls functions this device doesn't have: oscillator, slew.",
+      "This file calls functions this device doesn't have: oscillator, greaterthan.",
     );
     // The diagnostics point at the calls.
     const diagnostics = screen.getByRole("list", { name: "Diagnostics", hidden: true });
-    expect(within(diagnostics).getByText(/no function is named `slew`/, { exact: false })).toBeTruthy();
+    expect(within(diagnostics).getByText(/no function is named `greaterthan`/, { exact: false })).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Playback" })).toBeNull();
   });
 

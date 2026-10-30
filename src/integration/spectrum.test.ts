@@ -150,17 +150,16 @@ describe("the spectrum's examples on the local Arora", () => {
         waved: "called",
       });
 
-      // The timer's slew climbs to two at one a second: a hundred ticks of 20 ms,
-      // and one more where its f32 sum falls short of two by a rounding.
+      // Two seconds after the last rest: a hundred ticks of 20 ms.
       let ticks = 1;
       while (report.root === "R" && ticks < 200) {
         report = await tick();
         ticks++;
       }
       expect(ticks).toBeGreaterThanOrEqual(100);
-      expect(ticks).toBeLessThanOrEqual(101);
+      expect(ticks).toBeLessThanOrEqual(102);
       expect(report.root).toBe("S");
-      expect(valueNumber(report.values?.[id("waved")])).toBe(2);
+      expect(report.values?.[id("waved")]).toEqual({ bool: true });
       expect(valueBoolean(await session.read("social/greeted"))).toBe(true);
       const raised = await number("rig/arm_raise");
       expect(raised).toBeCloseTo(1, 3);
@@ -171,6 +170,18 @@ describe("the spectrum's examples on the local Arora", () => {
       const resting = await number("rig/arm_raise");
       expect(resting).toBeLessThan(raised);
       expect(resting).toBeGreaterThan(0.5);
+
+      // Greeted again, it waves two seconds again, timed from its last rest.
+      await write("social/greeted", { bool: false });
+      report = await tick();
+      expect(report.root).toBe("R");
+      ticks = 1;
+      while (report.root === "R" && ticks < 200) {
+        report = await tick();
+        ticks++;
+      }
+      expect(ticks).toBeGreaterThanOrEqual(100);
+      expect(ticks).toBeLessThanOrEqual(102);
     });
   });
 

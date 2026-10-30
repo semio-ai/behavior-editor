@@ -389,8 +389,8 @@ mapping, breathing on the clock, a greeting around dataflow, three readers
 under a parallel and under a fallback, the order of writes and reads within a
 tick, return values) and a dataflow example on a distance. Truthiness is the
 native `equal(a: …, b: true)`, a wait is a fallback of a condition and
-`running`, a timer a `slew` climbing at one a second, and the value a leaf
-writes is an `add` of one operand. `src/integration/spectrum.test.ts` runs
+`running`, a timer the seconds since a time the tree wrote (`time`,
+`subtract`), and the value a leaf writes is an `add` of one operand. `src/integration/spectrum.test.ts` runs
 each on the local Arora through its session and pins what it shows of the
 interpreter: a detached node called when its arguments changed and answered
 from its cache otherwise, readers under a parallel all asked and under a

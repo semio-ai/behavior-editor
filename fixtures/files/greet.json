@@ -135,7 +135,7 @@
         },
         "b": {
           "value": {
-            "f32": 2.0
+            "bool": true
           }
         }
       }
@@ -163,7 +163,8 @@
       "function": "parallel",
       "children": [
         "root.1.0",
-        "root.1.1"
+        "root.1.1",
+        "root.1.2"
       ]
     },
     {
@@ -211,6 +212,18 @@
       }
     },
     {
+      "id": "root.1.2",
+      "function": "time",
+      "bind": {
+        "_ret": {
+          "key": "social/rested_at"
+        },
+        "t": {
+          "key": "arora/time"
+        }
+      }
+    },
+    {
       "id": "fresh",
       "function": "not",
       "bind": {
@@ -221,25 +234,42 @@
     },
     {
       "id": "waved",
-      "function": "slew",
+      "function": "greaterthan",
       "bind": {
-        "dt": {
-          "key": "arora/dt"
+        "lhs": {
+          "port": {
+            "node": "detached.1.lhs",
+            "port": "_ret"
+          }
         },
-        "in": {
+        "rhs": {
           "value": {
             "f32": 2.0
           }
-        },
-        "param.max_rate": {
-          "value": {
-            "f32": 1.0
+        }
+      }
+    },
+    {
+      "id": "detached.1.lhs",
+      "function": "subtract",
+      "bind": {
+        "lhs": {
+          "port": {
+            "node": "detached.1.lhs.lhs",
+            "port": "_ret"
           }
         },
-        "state": {
-          "value": {
-            "f32": 0.0
-          }
+        "rhs": {
+          "key": "social/rested_at"
+        }
+      }
+    },
+    {
+      "id": "detached.1.lhs.lhs",
+      "function": "time",
+      "bind": {
+        "t": {
+          "key": "arora/time"
         }
       }
     }

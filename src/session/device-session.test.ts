@@ -208,6 +208,23 @@ describe("DeviceSession", () => {
     expect(session.state).toMatchObject({ refused: false });
   });
 
+  it("closes once an attempt to connect under way has ended, its connection closed", async () => {
+    const device = new FakeDevice({ graph: GRAPH });
+    let open: (() => void) | null = null;
+    const session = new DeviceSession(
+      () => new Promise((resolve) => (open = () => resolve(device.connect()))),
+      { language: FAKE_CALLS },
+    );
+    sessions.push(session);
+    let closed = false;
+    const closing = session.close().then(() => (closed = true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(closed).toBe(false);
+    open!();
+    await closing;
+    expect(device.clients.size).toBe(0);
+  });
+
   it("closes without stopping the behavior, its trace halted", async () => {
     const { device, session } = setup();
     await until(() => status(session) === "connected");

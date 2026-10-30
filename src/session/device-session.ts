@@ -136,6 +136,12 @@ function deviceFollowed(read: DeviceBehavior | null): FollowedBehavior {
   };
 }
 
+/** Close `client`, settling once it is closed. */
+async function shut(client: BridgeClient) {
+  client.close();
+  await client.closed;
+}
+
 const FIRST_MS = 500;
 const MAX_MS = 10_000;
 
@@ -177,6 +183,8 @@ export class DeviceSession {
   /** Whether the client closed the session. */
   #closing = false;
   #closed: Promise<void> | null = null;
+  /** Settles once the session connects no more: an attempt under way has ended, its connection closed. */
+  #ended: Promise<void>;
   /** Wakes a wait for the next attempt to connect, when the session closes. */
   #wake: (() => void) | null = null;
   #revision: number | null = null;
@@ -216,7 +224,7 @@ export class DeviceSession {
         }
       : null;
     this.#state = { status: "connecting" };
-    void this.#run();
+    this.#ended = this.#run();
   }
 
   get state(): SessionState {
@@ -328,7 +336,9 @@ export class DeviceSession {
 
   /**
    * End the session: its trace halted, the connection closed. The device goes
-   * on running its behavior. Settles once the connection is closed.
+   * on running its behavior. Settles once the connection is closed, and an
+   * attempt to connect under way has ended and closed its own: a bridge
+   * serving one client would otherwise give it the next session's place.
    */
   close(): Promise<void> {
     if (this.#closed) return this.#closed;
@@ -337,12 +347,13 @@ export class DeviceSession {
     const connection = this.#connection;
     this.#connection = null;
     this.#setState({ status: "closed", reason: null, refused: false });
-    this.#closed = connection
+    const released = connection
       ? this.#queue
           .then(() => connection.runtime.release())
           .catch(() => undefined)
-          .then(() => connection.client.close())
+          .then(() => shut(connection.client))
       : Promise.resolve();
+    this.#closed = Promise.all([released, this.#ended]).then(() => undefined);
     return this.#closed;
   }
 
@@ -365,7 +376,7 @@ export class DeviceSession {
         continue;
       }
       if (this.#closing) {
-        client.close();
+        await shut(client);
         return;
       }
       let connection: Connection;
@@ -383,7 +394,7 @@ export class DeviceSession {
         };
         await this.#attach(connection);
       } catch (error) {
-        client.close();
+        await shut(client);
         if (this.#closing) return;
         if (!this.#backoff) {
           this.#setState({ status: "closed", reason: message(error), refused: false });
@@ -395,7 +406,7 @@ export class DeviceSession {
       }
       if (this.#closing) {
         await connection.runtime.release().catch(() => undefined);
-        client.close();
+        await shut(client);
         return;
       }
       connectedOnce = true;

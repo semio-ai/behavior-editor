@@ -284,6 +284,21 @@ describe("DeviceRuntime", () => {
       expect((await runtime.step(10)).root).toBeUndefined();
     });
 
+    it("watches the nodes an empty diff names anew, sending the device no edit", async () => {
+      const { device, runtime, traceCalls } = traced();
+      await runtime.start(ORDER.loaded);
+      const calls = device.calls.length;
+      const renamed = {
+        ...ORDER.loaded,
+        nodes: ORDER.loaded.nodes.map((n) =>
+          n.attached ? { ...n, name: n.name ?? `n${n.path}` } : n,
+        ),
+      };
+      await runtime.edit({}, renamed);
+      expect(traceCalls()).toHaveLength(2);
+      expect(device.calls.slice(calls).some((c) => c.includes('"edit"'))).toBe(false);
+    });
+
     it("halts the trace when the behavior stops", async () => {
       const { device, runtime } = traced();
       await runtime.start(ORDER.loaded);

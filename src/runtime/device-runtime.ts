@@ -1,4 +1,4 @@
-import { EMPTY_GRAPH, type Graph, type GraphDiff } from "../model/graph";
+import { EMPTY_GRAPH, type Graph, type GraphDiff, isEmptyDiff } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import { type Value, valueEquals } from "../model/value";
 import type { BehaviorText, Loaded } from "../text/language";
@@ -142,7 +142,8 @@ export class DeviceRuntime implements BehaviorRuntime {
 
   async edit(diff: GraphDiff, next?: Loaded): Promise<void> {
     if (!this.#running) throw new Error("no behavior runs on the device: start one to edit it");
-    await this.#options.device.call(this.#options.editCall(diff));
+    // An empty diff changes nothing on the device: only what `next` says of the nodes.
+    if (!isEmptyDiff(diff)) await this.#options.device.call(this.#options.editCall(diff));
     if (next) {
       this.#root = next.graph.root;
       this.#nodes = new Set(next.nodes.map((n) => n.id));

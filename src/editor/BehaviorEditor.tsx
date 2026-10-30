@@ -129,11 +129,13 @@ export function BehaviorEditor({
     sessionState?.status === "connected" || sessionState?.status === "lost" ? session : null;
   /** The files the editor ran on a device, newest first: the device's behavior opens as one of them when it is. */
   const ran = useRef<RanFile[]>([]);
-  // The editor's runtime, which an open finishing late checks it still is.
-  const shownHost = useRef(host);
+  // Where a file opens: the device attached, or the editor's runtime. An
+  // open finishing late checks it still is.
+  const opensOn: Pick<BehaviorRuntime, "functions"> = attached ?? host;
+  const shownHost = useRef(opensOn);
   useEffect(() => {
-    shownHost.current = host;
-  }, [host]);
+    shownHost.current = opensOn;
+  }, [opensOn]);
   const recent = useRecentFiles();
   const serial = useRef(0);
   const [openFile, setOpenFile] = useState<OpenFile | null>(() => {
@@ -179,7 +181,7 @@ export function BehaviorEditor({
   const openAsText = async (asked: number, opened: BehaviorFile & { text: string }) => {
     let next = opened.text;
     if (opened.format !== "bt") {
-      const from = host;
+      const from = opensOn;
       const functions = await askFunctions(from);
       // Opened with another runtime's functions, the file would name functions
       // the runtime it opens on may not have: it opens nothing.

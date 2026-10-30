@@ -363,6 +363,51 @@ describe("DeviceRuntime", () => {
       expect(decoded.at(-1)).toContain("18446744073709551615");
     });
 
+    it("shows nothing of the behavior before when one is started afresh", async () => {
+      const { runtime, write } = traced();
+      await runtime.start(ORDER.loaded);
+      write(1, { tick: 1, status: [[root, "running"]] });
+      expect((await runtime.step(10)).root).toBe("R");
+      await runtime.stop();
+      await runtime.start(ORDER.loaded);
+      const report = await runtime.step(10);
+      expect(report.root).toBeUndefined();
+      expect(report.statuses).toEqual({});
+    });
+
+    it("takes no report of a new trace before its first, whatever the old trace's last tick", async () => {
+      const { runtime, write, traceCalls } = traced();
+      await runtime.start(ORDER.loaded);
+      write(1, { tick: 4, status: [[root, "running"]] });
+      await runtime.step(10);
+      // An edit watching other nodes starts a new trace, whose first report is lost.
+      await runtime.edit({ remove: ["n"] }, GREET.loaded);
+      expect(traceCalls()).toHaveLength(2);
+      write(2, { tick: 5, since: 4, status: [[root, "success"]] });
+      const report = await runtime.step(10);
+      expect(traceCalls()).toHaveLength(3);
+      expect(report.root).toBe("R");
+    });
+
+    it("states the store as the trace started over leaves it", async () => {
+      const { device, runtime, write } = traced();
+      await runtime.start(ORDER.loaded);
+      write(1, { tick: 1, status: [[root, "running"]] });
+      await runtime.step(10);
+      // A report missed: the trace starts over, and the device's call ticks.
+      write(1, { tick: 9, since: 8 });
+      const call = device.call.bind(device);
+      device.call = (json: string) => {
+        if (json.includes('"trace"')) device.store.set("ticked at the restart", { bool: true });
+        return call(json);
+      };
+      const report = await runtime.step(10);
+      expect(report.changes).toContainEqual({
+        key: "ticked at the restart",
+        value: { bool: true },
+      });
+    });
+
     it("halts the trace when the behavior stops", async () => {
       const { device, runtime } = traced();
       await runtime.start(ORDER.loaded);

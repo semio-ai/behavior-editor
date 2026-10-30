@@ -45,6 +45,7 @@ serves as is. Elsewhere, pass the module's bytes:
 |---|---|
 | `language` | The language service: `createBehaviorText(wasm)`, or any `BehaviorText`. |
 | `runtime` | Where the behavior runs. A `MockArora` with the math module by default. |
+| `session` | A `DeviceSession`: while it is connected, or lost and connecting again, the editor is on that device (below). An example that brings its own runtime runs on that runtime. |
 | `text`, `onTextChange` | The file's text, for a controlled editor. |
 | `defaultText` | The text an uncontrolled editor starts from. With neither it nor `text`, the editor opens on its start screen. |
 | `fileName` | The name a new file is saved under; its extension says its format. |
@@ -184,20 +185,132 @@ the next behavior afresh.
   file or as the host switches its `runtime`, through the calls it queues on
   that runtime: a host disposing of the runtime or closing its device waits
   for `whenIdle(runtime)`, which settles once every call queued so far ran.
-- `WebSocketDevice` is an `AroraDevice` on its own clock: an Arora device
-  reached over its open local bridge, `arora-bridge-ws`, on
-  `ws://127.0.0.1:9000` by default (`LOCAL_BRIDGE_URL`).
-  `WebSocketDevice.connect(url)` opens the connection and reads the device's
-  keys and values; then `describe_methods` describes its functions, `call`
-  calls one by ids (the interpreter's `LOAD` and `EDIT` among them),
-  `write_values` writes its inputs, `list_keys` lists its keys with their
-  meta, and every `values_changed` the device pushes keeps the store it reads
-  current; `takeValues` gives every value a key was pushed since it last
-  asked, the last 256 of them. A step waits for
-  the next push carrying `arora/time`, or answers after its `dtMs` when the
-  device does not step. The bridge serves one client
-  at a time: `closed` says why the connection ended, another client taking it
-  among the reasons. The bridge unsets no key, so writing `null` is refused.
+- `BridgeDevice` is an `AroraDevice` on its own clock over any `BridgeClient`
+  (below): it reads the device's keys and values as it is taken up
+  (`BridgeDevice.over(client)`), keeps the store current from what the device
+  pushes, and reads it whole again at each step, as a device pushes what it
+  sets and not what it unsets. A step waits for the next push carrying
+  `arora/time`, or answers after its `dtMs` when the device does not step.
+  `takeValues` gives every value a key was pushed since it last asked, the
+  last 256 of them. A bridge unsets no key, so writing `null` is refused.
+
+## On a device
+
+The editor works on a device through a `DeviceSession`. The library does not
+own the transport: a session runs over a `BridgeClient`, the operations any
+remote client of an Arora device has, named after `arora_bridge`'s
+`BridgeOp`s, and the values the device pushes as it steps. A host implements
+it over whatever reaches its devices, Semio Studio's bridge, a ROS 2 bridge,
+a device in the page, or takes the one for a device's open local bridge from
+`@semio/behavior-editor/websocket`.
+
+```ts
+interface BridgeClient {
+  describeMethods(prefix?: string): Promise<MethodSignature[]>; // BridgeOp::DescribeMethods
+  call(call: Call): Promise<CallResult>;                        // BridgeOp::Call
+  readValues(keys: readonly string[]): Promise<Record<string, Value>>; // BridgeOp::Get
+  writeValues(values: Record<string, Value>): Promise<void>;    // BridgeOp::Update
+  listKeys(prefix?: string): Promise<BridgeKey[]>;              // BridgeOp::ListKeys
+  onValues(listener: (values: Record<string, Value>) => void, prefixes?: readonly string[]): () => void;
+  close(): void;                        // the device goes on running its behavior
+  readonly closed: Promise<BridgeClosure>; // why it ended: closed, refused or lost
+}
+```
+
+A client never steps the device: the device steps itself and pushes what each
+step set. An answer and the pushes keep the order the device sent them in. A
+closure says whether this side closed the connection, the device refused it
+on purpose (a bridge serving one client does when another takes it), or it
+was lost.
+
+A host hands its own client to the editor in a few lines:
+
+```tsx
+import { BehaviorEditor, useDeviceSession, ConnectionStatus } from "@semio/behavior-editor";
+
+function Editor({ openBridge }: { openBridge: () => Promise<BridgeClient> }) {
+  const connection = useDeviceSession({ language });
+  return (
+    <>
+      <button onClick={() => connection.connect(openBridge, "my robot")}>Connect</button>
+      <ConnectionStatus connection={connection} />
+      <BehaviorEditor language={language} session={connection.session} />
+    </>
+  );
+}
+```
+
+Over a device's open local bridge, the WebSocket entry point gives the
+client, and a bar that asks for the bridge's URL:
+
+```tsx
+import { WebSocketConnectionBar } from "@semio/behavior-editor/websocket";
+
+const connection = useDeviceSession({ language });
+<WebSocketConnectionBar connection={connection} />      // ws://127.0.0.1:9000 by default
+<BehaviorEditor language={language} session={connection.session} />
+```
+
+Without React, `connectWebSocket(url, { language })` gives a session, and
+`new DeviceSession(bridge, { language })` makes one over any client.
+
+### The session
+
+`new DeviceSession(bridge, options)` takes a connection, or a function that
+opens one. Given a function, the session connects again after a loss, waiting
+0.5 s, then twice as long each attempt up to 10 s (`reconnect`); a device that
+refuses the connection is not connected to again. Reconnecting is the
+session's: a transport opens one connection at a time and says how it ended,
+and the session re-attaches the same way whether it connects for the first
+time or the tenth.
+
+| | |
+|---|---|
+| `state` | `connecting`, `connected`, `lost` (with why, and when it tries again), or `closed` (with why, and whether the device refused it) |
+| `on("state" \| "behaviorChanged" \| "tick" \| "error", listener)` | each change of state; each change of the device's behavior, and whether another client made it; each step followed, with the report, the device's status and its keys |
+| `status` | the device's tick, clock, step rate and behavior revision |
+| `deviceBehavior()` | the graph the device runs and its revision; `null` when the device does not say |
+| `follow(behavior)` | the nodes the trace follows: a resolved file, or `null` for whatever the device runs |
+| `run(loaded)`, `edit(diff, next)`, `stop()` | load a behavior, apply a diff to it, load the empty one |
+| `functions()`, `read(key)`, `write(key, value)` | the device's functions and store |
+| `close()` | halt the trace and close the connection; the behavior goes on running |
+
+Connecting attaches without changing what the device runs. The session reads
+the behavior with the interpreter's `READ` and follows it with a trace: each
+step reports the nodes' states, the interpreter's tick (the trace's last
+report, counted on with each of the device's steps since), the clock
+`arora/time`, the step rate from `arora/dt`, and the revision
+`arora/behavior/revision`, which the interpreter increases at each load and
+each accepted edit. A revision this session did not cause is another
+client's change; one that moved while the connection was lost is too.
+
+`READ` and the revision come with arora-behavior 10.1; the language reads a
+device's behavior where its build has `readCall`. This package's wasm is
+built on arora-behavior 10.0, which has no `READ`: until it moves to 10.1,
+every device is one that does not say what it runs, followed by its trace,
+clock and store, its revision still telling another client's change.
+
+### The editor on a device
+
+- **Attaching is read-only.** The editor reads what the device runs. The
+  device steps itself, so its tick, step rate, clock and revision show where
+  Play, Step and the rate would.
+- **The file the device runs** — one whose graph is the device's — shows the
+  device's node states, and each change of it goes to the device as an edit
+  (**Live edits**, on by default). Turned off, the changes wait for **Apply**,
+  which counts them. **Stop on device** loads the empty behavior.
+- **A device running another behavior** offers to **view** it, opened as a
+  file whose nodes are named by their ids (or as the file the editor ran on
+  it, with its names, when one has its graph); to **run this file** on it; or
+  to **compare**: the nodes only in the file, only on the device, changed, or
+  rebound, each selecting its node.
+- **Another client's change** of the behavior the file ran as stops the
+  editor sending changes, and offers to **reload** the device's behavior or
+  **overwrite** it with the file.
+- **A device that does not report its behavior** offers to run the file or to
+  stop the device.
+- **Closing the session, or losing it, leaves the device running.** Stopping
+  is only ever explicit.
 
 ## Develop
 
@@ -226,15 +339,23 @@ restarting when an edit binds it. Traced, the same device shows each node's
 status, the detached nodes' activity and the named nodes' values through an
 edit, and the trace ends with the behavior.
 
+`src/session/device-session.test.ts` and `src/editor/device-mode.test.tsx`
+drive a session and the editor on `fixtures/fake-device.ts`, a device reached
+through bridge clients held in memory, whose interpreter loads, edits, reads
+and traces its behavior and keeps its revision. `src/integration/device-session.test.ts`
+runs a session on the Arora device above, in the page, through
+`fixtures/page-bridge.ts`.
+
 `src/text/files.test.ts` reads every example back through each graph format,
 and a tree back through Groot, as the same graph; `fixtures/files` holds one
 file per format, and a Groot tree with an unconnected port (`res=""`).
 
 The demo offers the NGBT spectrum's examples on its start screen, each on a
-mock device seeded for it, and `dataflow.bt` on that Arora device. **Connect to
-a device…** connects it to a running Arora device's open local bridge
-(`ws://127.0.0.1:9000` by default), on which every file but an example then
-runs.
+mock device seeded for it, and `dataflow.bt` on that Arora device. Its bar
+connects to a running Arora device's open local bridge (`ws://127.0.0.1:9000`
+by default), or to that Arora device in the page through a bridge client of
+its own (`fixtures/page-bridge.ts`); every file but an example then works on
+that device.
 
 `npm run lint:rust` and `npm run test:rust` check both crates. The language's
 tests run in release, as its wasm is built: its nesting limit is set for a

@@ -373,14 +373,47 @@ on that device. A device carrying `@arora/dataflow` runs `dataflow.bt`; the
 spectrum's examples call the mock's math module, and are marked as not
 running there.
 
-`npm run lint:rust` and `npm run test:rust` check both crates. The language's
+`npm run lint:rust` and `npm run test:rust` check the crates. The language's
 tests run in release, as its wasm is built: its nesting limit is set for a
 release build's stack use. The device's run natively, where the runtime runs
 without a guest module, which the device has none of.
 
-Both crates take their dependencies from crates.io and run every cargo command
+The crates take their dependencies from crates.io and run every cargo command
 with `--locked`, so a change to a `Cargo.toml` without its `Cargo.lock` fails
 rather than resolving anew.
+
+### End to end
+
+`npm run test:e2e` runs the demo in Chromium with Playwright (`e2e/`,
+`playwright.config.ts`). It needs both wasm builds and Chromium
+(`npx playwright install chromium`); it builds `e2e/device` and serves the demo
+itself, on port 5287.
+
+`e2e/device` is a native Arora device carrying `@arora/dataflow` (the in-page
+device's host module), its inputs seeded as the demo's dataflow example
+expects. The suite starts it on two free loopback ports, each serving the open
+local bridge: the editor connects to the first, and the test's own client
+(`e2e/test-client.ts`) to the second, since a bridge serves one client at a
+time. Through that client a test sets the device up, changes its behavior as
+another client would, and reads what it runs and holds.
+
+The suite covers:
+
+- an example calling functions the device lacks: the banner names them, Run is
+  disabled, and nothing ticks in the page;
+- the dataflow example run on the device, its node states and the device's
+  tick; a live edit that keeps a `damp`'s state; Apply counting the changes
+  held with live edits off;
+- another client's change, told, and the device's behavior reloaded;
+- disconnecting, which leaves the device running its behavior at the same
+  revision, and the editor back on its simulated runtime;
+- with no device: the start screen, an example simulated with its outputs and
+  values, the Text tab, and saving as JSON, YAML and Groot, then opening the
+  download again.
+
+Each step waits on what the page or the device states, never on a fixed delay.
+A failing run keeps its trace (`npx playwright show-trace`); CI uploads the
+report and the traces.
 
 ## License
 

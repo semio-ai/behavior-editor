@@ -5,3 +5,7 @@ dist/
 /wasm/target
 /device/pkg
 /device/target
+/e2e/device/target
+# The end-to-end suite's results and report.
+/test-results
+/playwright-report

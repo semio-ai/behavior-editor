@@ -20,7 +20,7 @@ use arora::Arora;
 use arora_simple_data_store::{NamespacedStore, SimpleDataStore};
 use arora_types::data::{DataStore, Key, KeyMeta};
 
-mod dataflow;
+pub mod dataflow;
 #[cfg(target_arch = "wasm32")]
 mod web;
 

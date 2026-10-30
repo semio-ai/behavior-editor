@@ -96,6 +96,10 @@ describe("a device session on an Arora device in the page", () => {
     await session.edit(language.diff(loaded.graph, edited.graph), edited);
     await until(() => level(32));
 
+    // A key the device keeps closed to clients is refused, as the device checks it.
+    await expect(session.write("face/level", { f32: 1 })).rejects.toThrow();
+    await session.write("sensor/distance", { f32: 0.2 });
+
     await session.close();
     // Closed, the device runs the behavior still: a step moves its level with its input.
     device.update(JSON.stringify({ "sensor/distance": { f32: 0.1 } }));

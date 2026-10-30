@@ -75,8 +75,16 @@ export class PageBridge implements BridgeClient {
     });
   }
 
+  /**
+   * The device checks a write at the step that applies it: the write is
+   * applied by a step at a zero dt, as a call is, so a refused one rejects.
+   */
   writeValues(values: Record<string, Value>): Promise<void> {
-    return this.#answer(() => this.#device.update(JSON.stringify(values)));
+    return this.#answer(() => {
+      this.#device.update(JSON.stringify(values));
+      this.#device.step(0);
+      this.#publish();
+    });
   }
 
   listKeys(prefix?: string): Promise<BridgeKey[]> {

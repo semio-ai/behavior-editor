@@ -68,7 +68,14 @@ export function useDeviceSession(options: Omit<DeviceSessionOptions, "label">): 
     setSession(null);
   }, [release]);
 
-  useEffect(() => () => release(), [release]);
+  // Unmounted, a connection still waiting for the one before to close is not made.
+  useEffect(
+    () => () => {
+      asked.current += 1;
+      release();
+    },
+    [release],
+  );
 
   const state = useSessionState(session);
   return { session, state, connect, disconnect };
@@ -80,5 +87,10 @@ export function useSessionState(session: DeviceSession | null): SessionState | n
     (changed: () => void) => (session ? session.on("state", changed) : () => {}),
     [session],
   );
-  return useSyncExternalStore(subscribe, () => session?.state ?? null);
+  // A server renders no connection: one exists in the browser alone.
+  return useSyncExternalStore(
+    subscribe,
+    () => session?.state ?? null,
+    () => null,
+  );
 }

@@ -167,6 +167,19 @@ the next behavior afresh.
   reports what changed since the last step the editor saw, which may span
   several of the device's. Such a device runs its behavior whether the editor
   follows it or not: pausing stops following, not the device.
+
+  Given the language as `trace`, it shows the behavior's nodes as the mock
+  does, through a trace (arora-behavior's `docs/trace.md`): `start` calls the
+  interpreter's `TRACE` (`language.traceCall`), watching the outputs of the
+  nodes the text names and of the detached nodes, and every step folds the
+  reports the trace wrote since (`language.traceReport`) into each node's
+  status, each detached node's activity and each watched node's return
+  value. A report that follows one not read, or an edit that changes the
+  nodes watched, starts the trace over, its first report stating every node
+  anew; `stop` halts it. A device whose interpreter does not trace shows its
+  store alone. A device on its own clock may write several reports between
+  two of the editor's steps, so it gives every value the feedback key took
+  (`takeValues`), and the runtime reads them all.
 - `WebSocketDevice` is an `AroraDevice` on its own clock: an Arora device
   reached over its open local bridge, `arora-bridge-ws`, on
   `ws://127.0.0.1:9000` by default (`LOCAL_BRIDGE_URL`).
@@ -175,7 +188,7 @@ the next behavior afresh.
   calls one by ids (the interpreter's `LOAD` and `EDIT` among them),
   `write_values` writes its inputs, `list_keys` lists its keys with their
   meta, and every `values_changed` the device pushes keeps the store it reads
-  current. A step waits for the next push carrying `arora/time`, or answers
+  current; `takeValues` gives every value a key was pushed. A step waits for the next push carrying `arora/time`, or answers
   after its `dtMs` when the device does not step. The bridge serves one client
   at a time: `closed` says why the connection ended, another client taking it
   among the reasons. The bridge unsets no key, so writing `null` is refused.
@@ -203,7 +216,9 @@ arora-web's browser device over arora's runtime, with the dataflow vocabulary of
 drives it through `DeviceRuntime`: a fallback that flips on a distance, a clamped
 and offset output, an oscillator on the device's clock, a `damp` converging, a
 stop, and edits: the `damp` easing on across an edit of another node, and
-restarting when an edit binds it.
+restarting when an edit binds it. Traced, the same device shows each node's
+status, the detached nodes' activity and the named nodes' values through an
+edit, and the trace ends with the behavior.
 
 `src/text/files.test.ts` reads every example back through each graph format,
 and a tree back through Groot, as the same graph; `fixtures/files` holds one

@@ -182,7 +182,7 @@ export function usePlayback(
         // A refused edit leaves the behavior running as it was, which the
         // next edit is the diff from.
         refused.current = true;
-        await runtime.edit(change);
+        await runtime.edit(change, behavior);
         refused.current = false;
         running.current = behavior.graph;
         setError(null);

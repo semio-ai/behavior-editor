@@ -51,7 +51,9 @@ const OPEN = 1;
  * next push carrying the device's clock, `arora/time`, or answers after
  * `dtMs` when none comes. The store is read from what the device pushed,
  * which starts as what it held when the connection opened: a read is as
- * current as the device's last step.
+ * current as the device's last step. `takeValues` gives every value a key was
+ * pushed, for a key that changes at each of the device's steps, as a trace's
+ * reports do.
  *
  * A request is answered in the order it was sent, as the bridge answers its
  * messages one at a time; a request with no answer within the timeout, or
@@ -68,6 +70,8 @@ export class WebSocketDevice implements AroraDevice {
   readonly #timeoutMs: number;
   readonly #waiting: Waiting[] = [];
   readonly #values = new Map<string, unknown>();
+  /** The values each key `takeValues` follows was pushed since its last call. */
+  readonly #taken = new Map<string, unknown[]>();
   #stepped: (() => void)[] = [];
   #closedWith: string | null = null;
   #requests = 0;
@@ -158,6 +162,15 @@ export class WebSocketDevice implements AroraDevice {
     return Promise.resolve(JSON.stringify(this.#values.get(key) ?? null));
   }
 
+  takeValues(key: string): Promise<string> {
+    this.#check();
+    const taken = this.#taken.get(key);
+    this.#taken.set(key, []);
+    if (taken) return Promise.resolve(JSON.stringify(taken));
+    const now = this.#values.get(key);
+    return Promise.resolve(JSON.stringify(now === undefined ? [] : [now]));
+  }
+
   async listKeys(prefix?: string): Promise<string> {
     const answer = await this.#request({ type: "list_keys", path: prefix }, "list_keys_resp");
     const keys = (answer.keys ?? []) as { path: string; __meta?: unknown }[];
@@ -223,7 +236,10 @@ export class WebSocketDevice implements AroraDevice {
     }
     if (message.type === "values_changed") {
       const values = (message.values ?? {}) as Record<string, unknown>;
-      for (const [key, value] of Object.entries(values)) this.#values.set(key, value);
+      for (const [key, value] of Object.entries(values)) {
+        this.#values.set(key, value);
+        this.#taken.get(key)?.push(value);
+      }
       if (TIME_KEY in values) for (const stepped of [...this.#stepped]) stepped();
       return;
     }

@@ -4,6 +4,7 @@ import { ORDER } from "../../fixtures/examples";
 import type { Value } from "../model/value";
 import { DeviceRuntime } from "./device-runtime";
 import { MATH, mathModule } from "./math-module";
+import type { TraceReport } from "./trace";
 import { WebSocketDevice } from "./websocket-device";
 
 type Message = Record<string, unknown> & { type: string };
@@ -252,5 +253,46 @@ describe("WebSocketDevice", () => {
     });
     await runtime.write("sensor/distance", { f32: 1.5 });
     expect(bridge.received.at(-1)).toMatchObject({ type: "write_values" });
+  });
+
+  it("keeps every value a key was pushed since it last took them", async () => {
+    const { bridge, device } = await connect();
+    expect(JSON.parse(await device.takeValues("sensor/distance"))).toEqual([{ f32: 0.5 }]);
+    bridge.push({ "sensor/distance": { f32: 0.6 } });
+    bridge.step({ "sensor/distance": { f32: 0.7 } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(JSON.parse(await device.takeValues("sensor/distance"))).toEqual([
+      { f32: 0.6 },
+      { f32: 0.7 },
+    ]);
+    expect(JSON.parse(await device.takeValues("sensor/distance"))).toEqual([]);
+  });
+
+  it("follows every report a trace writes between two of the editor's steps", async () => {
+    const { bridge, device } = await connect();
+    bridge.callResult = { success: true, ret: { u64: 1 }, mutated: [] };
+    const root = ORDER.loaded.graph.root!;
+    const runtime = new DeviceRuntime({
+      device,
+      loadCall: () => JSON.stringify({ module_id: "interpreter", id: "load", args: [] }),
+      editCall: () => JSON.stringify({ module_id: "interpreter", id: "edit", args: [] }),
+      trace: {
+        traceCall: () => JSON.stringify({ module_id: "interpreter", id: "trace", args: [] }),
+        traceHandle: () => ({ id: "t", stop: {}, status: "t/status", feedback: ["t/feedback"] }),
+        traceReport: (json) => JSON.parse(json) as TraceReport,
+      },
+    });
+    await runtime.start(ORDER.loaded);
+    // The device ticks twice before the editor looks: two reports, each a change of the one before.
+    bridge.step({ "t/feedback": { tick: 1, status: [[root, "running"]] } as unknown as Value });
+    bridge.step({
+      "t/feedback": { tick: 2, since: 1, status: [[root, "success"]] } as unknown as Value,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const report = runtime.step(5_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    bridge.step();
+    expect((await report).root).toBe("S");
+    expect(bridge.received.filter((m) => m.id === "trace")).toHaveLength(1);
   });
 });

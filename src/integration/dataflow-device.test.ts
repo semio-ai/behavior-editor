@@ -198,4 +198,82 @@ describe("a behavior file on an Arora device carrying @arora/dataflow", () => {
     await step();
     expect(await number("face/smile")).toBeCloseTo(0.2, 3);
   });
+
+  it("shows its nodes through a trace: statuses, detached activity and the named nodes' values", async () => {
+    const traced = new DeviceRuntime({
+      device,
+      deviceId: NAMESPACE,
+      loadCall: (graph) => language.loadCall(graph),
+      editCall: (diff) => language.editCall(diff),
+      trace: language,
+    });
+    const { loaded } = await resolved();
+    const id = (name: string) => loaded.nodes.find((n) => n.name === name)!.id;
+    const path = (at: string) => loaded.nodes.find((n) => n.path === at)!.id;
+    await traced.write("sensor/distance", f32(0.3));
+    await traced.write("face/smile_target", f32(1));
+    await traced.start(loaded);
+
+    // Near: the sequence's branch holds, and the root runs on. The clock's
+    // readers are called at each tick; the distance's, unchanged since the
+    // load, answer from their cache.
+    let report = await traced.step(DT_MS);
+    expect(report.root).toBe("R");
+    expect(report.statuses).toEqual({
+      [path("root")]: "R",
+      [path("root.0")]: "S",
+      [path("root.0.0")]: "S",
+      [path("root.0.0.0")]: "S",
+      [path("root.0.0.1")]: "S",
+      [path("root.1")]: "R",
+    });
+    expect(report.detached).toMatchObject({
+      [id("sway")]: "called",
+      [id("smile")]: "called",
+      [id("near")]: "cached",
+      [id("level")]: "cached",
+    });
+    expect(valueNumber(report.values?.[id("level")])).toBeCloseTo(31, 4);
+    expect(report.values?.[id("near")]).toEqual({ bool: true });
+
+    // Far: the sequence fails, the fallback's second branch succeeds, and the
+    // distance's readers are called again.
+    await traced.write("sensor/distance", f32(0.8));
+    report = await traced.step(DT_MS);
+    expect(report.statuses).toMatchObject({
+      [path("root.0")]: "S",
+      [path("root.0.0")]: "F",
+      [path("root.0.0.0")]: "F",
+      [path("root.0.1")]: "S",
+    });
+    expect(report.statuses).not.toHaveProperty(path("root.0.0.1"));
+    expect(report.detached?.[id("near")]).toBe("called");
+    expect(report.values?.[id("near")]).toEqual({ bool: false });
+    expect(valueNumber(report.values?.[id("level")])).toBeCloseTo(51, 4);
+    report = await traced.step(DT_MS);
+    expect(report.detached?.[id("level")]).toBe("cached");
+
+    // An edit of `level` restarts it, and the trace states it anew: the step
+    // applying the edit called it, and the next answers from its cache.
+    const edited = (await resolved(text.replace("operand_1: 1f32)", "operand_1: 2f32)"))).loaded;
+    await traced.edit(language.diff(loaded.graph, edited.graph), edited);
+    report = await traced.step(DT_MS);
+    expect(valueNumber(report.values?.[id("level")])).toBeCloseTo(52, 4);
+    expect(report.detached?.[id("level")]).toBe("cached");
+
+    // Stopping halts the trace: its status leaves Running at the next tick,
+    // and changes no more.
+    const statusKeys = await runtime
+      .keys()
+      .then((keys) => keys.map((k) => k.key).filter((k) => k.endsWith("/status")));
+    expect((await traced.keys()).filter((k) => k.key.startsWith("arora/tasks/"))).toEqual([]);
+    expect(statusKeys).toHaveLength(1);
+    const running = await traced.read(statusKeys[0]!);
+    await traced.stop();
+    await traced.step(DT_MS);
+    const ended = await traced.read(statusKeys[0]!);
+    expect(ended).not.toEqual(running);
+    await traced.step(DT_MS);
+    expect(await traced.read(statusKeys[0]!)).toEqual(ended);
+  });
 });

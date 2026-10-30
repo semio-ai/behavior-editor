@@ -62,6 +62,11 @@ const queues = new WeakMap<BehaviorRuntime, Promise<unknown>>();
  * Settles once every call queued on `runtime` so far has: what lets go of a
  * runtime waits for, the stop of the editor that let go of it among them.
  */
+/** The functions `runtime` offers, asked in the queue of its calls. */
+export function askFunctions(runtime: BehaviorRuntime): Promise<MethodSignature[]> {
+  return queued(runtime, () => runtime.functions());
+}
+
 /** Run `task` on `runtime` once every call queued on it before has run. */
 function queued<T>(runtime: BehaviorRuntime, task: () => Promise<T>): Promise<T> {
   const next = (queues.get(runtime) ?? Promise.resolve()).then(task);
@@ -136,11 +141,19 @@ export function usePlayback(
   const at = on;
   // The runtime the hook shows. A runtime let go of finishes the calls queued
   // on it, its stop among them, but what they answer is no longer shown.
-  const active = useRef(runtime);
+  // Each time the hook takes a runtime is an activation of its own: what a
+  // runtime answers for an activation the host has switched away from stays
+  // unshown, even once it switches back to that runtime.
+  const activations = useRef<{ runtime: BehaviorRuntime; count: number }>({ runtime, count: 0 });
+  if (activations.current.runtime !== runtime) {
+    activations.current = { runtime, count: activations.current.count + 1 };
+  }
+  const activation = activations.current.count;
+  const active = useRef(activation);
   useEffect(() => {
-    active.current = runtime;
-  }, [runtime]);
-  const live = useCallback(() => active.current === runtime, [runtime]);
+    active.current = activation;
+  }, [activation]);
+  const live = useCallback(() => active.current === activation, [activation]);
   /** Show why an operation other than an edit failed: the error is no edit's refusal. */
   const fail = useCallback(
     (e: unknown) => {
@@ -378,7 +391,7 @@ export function useRuntimeFunctions(runtime: BehaviorRuntime): {
   useEffect(() => {
     let current = true;
     // Asked in the runtime's queue: what lets go of the runtime waits for it.
-    queued(runtime, () => runtime.functions())
+    askFunctions(runtime)
       .then((functions) => current && setState({ runtime, functions, error: null }))
       .catch((e: unknown) => current && setState({ runtime, functions: [], error: message(e) }));
     return () => {

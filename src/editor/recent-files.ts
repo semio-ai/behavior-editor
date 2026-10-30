@@ -306,7 +306,14 @@ export function useRecentFiles(store: () => Promise<RecentStore> = pageStore): R
     const following = followers.get(held) ?? new Set();
     followers.set(held, following);
     following.add(follow);
-    held.then(listRecent).then(follow);
+    // Read in the queue of changes: a list read before another editor's change
+    // and shown after it would hide that change.
+    const read = (changes.get(held) ?? Promise.resolve()).then(() => held).then(listRecent);
+    changes.set(
+      held,
+      read.catch(() => undefined),
+    );
+    read.then(follow);
     return () => {
       current = false;
       following.delete(follow);

@@ -122,13 +122,20 @@ export function usePlayback(
     states.current.set(runtime, on);
   }
   const at = on;
+  // The runtime the hook shows. A runtime let go of finishes the calls queued
+  // on it, its stop among them, but what they answer is no longer shown.
+  const active = useRef(runtime);
+  useEffect(() => {
+    active.current = runtime;
+  }, [runtime]);
+  const live = useCallback(() => active.current === runtime, [runtime]);
   /** Show why an operation other than an edit failed: the error is no edit's refusal. */
   const fail = useCallback(
     (e: unknown) => {
       at.refused = false;
-      setError(message(e));
+      if (live()) setError(message(e));
     },
-    [at],
+    [at, live],
   );
   /** Whether there is a behavior to tick: `loaded` is not `null`. */
   const runnable = useRef(loaded !== null);
@@ -152,9 +159,9 @@ export function usePlayback(
 
   const readKeys = useCallback(async () => {
     const infos = await runtime.keys();
-    setKeys(new Map(infos.map((info) => [info.key, info])));
+    if (live()) setKeys(new Map(infos.map((info) => [info.key, info])));
     return infos;
-  }, [runtime]);
+  }, [runtime, live]);
 
   // A key written since the last tick keeps showing the write.
   const readStore = useCallback(async () => {
@@ -170,17 +177,17 @@ export function usePlayback(
       if (shown === undefined) next.delete(key);
       else next.set(key, shown);
     }
-    setStore(next);
+    if (live()) setStore(next);
     return next;
-  }, [runtime, readKeys, setStore]);
+  }, [runtime, live, readKeys, setStore]);
 
   // A runtime's store starts with no write of a person's pending: those were another's.
   useEffect(() => {
     enqueue(async () => {
-      setPending(new Set());
+      if (live()) setPending(new Set());
       await readStore();
     }).catch(fail);
-  }, [enqueue, readStore, setPending, fail]);
+  }, [enqueue, live, readStore, setPending, fail]);
 
   /** Start `behavior` when none runs, or edit the one running into it. */
   const run = useCallback(
@@ -193,16 +200,18 @@ export function usePlayback(
           at.running = behavior.graph;
           at.started = true;
           at.refused = false;
-          setError(null);
-          setReports({ report: null, previous: null });
-          setHistory(new Map());
+          if (live()) {
+            setError(null);
+            setReports({ report: null, previous: null });
+            setHistory(new Map());
+          }
           await readStore();
           return;
         }
         const change = diff(previous, behavior.graph);
         if (isEmptyDiff(change)) {
           // Back to the behavior running: a refusal of another is moot.
-          if (at.refused) setError(null);
+          if (at.refused && live()) setError(null);
           at.refused = false;
           return;
         }
@@ -212,11 +221,13 @@ export function usePlayback(
         await runtime.edit(change);
         at.refused = false;
         at.running = behavior.graph;
-        setError(null);
+        if (live()) setError(null);
         // An edit may write the store: a device applies a call with a step.
         await readStore();
-      }).catch((e: unknown) => setError(message(e))),
-    [runtime, at, enqueue, readStore, diff],
+      }).catch((e: unknown) => {
+        if (live()) setError(message(e));
+      }),
+    [runtime, at, live, enqueue, readStore, diff],
   );
 
   useEffect(() => {
@@ -244,6 +255,7 @@ export function usePlayback(
       // A stop, or a text that does not run, may have come while this waited.
       if (!at.started || !runnable.current) return;
       const tick = await runtime.step(1000 / rate);
+      if (!live()) return;
       setReports((last) => ({ report: tick, previous: last.report }));
       const next = new Map(storeRef.current);
       for (const { key, value } of tick.changes) {
@@ -269,13 +281,14 @@ export function usePlayback(
       });
     })
       .catch((e: unknown) => {
+        if (!live()) return;
         fail(e);
         setPlaying(false);
       })
       .finally(() => {
         at.stepping = false;
       });
-  }, [runtime, at, rate, enqueue, setStore, setPending, readKeys, fail]);
+  }, [runtime, at, live, rate, enqueue, setStore, setPending, readKeys, fail]);
 
   const ticking = playing && loaded !== null;
   useEffect(() => {
@@ -295,6 +308,7 @@ export function usePlayback(
     (key: string, value: Value | null) => {
       enqueue(async () => {
         await runtime.write(key, value);
+        if (!live()) return;
         const next = new Map(storeRef.current);
         if (value === null) next.delete(key);
         else next.set(key, value);
@@ -302,7 +316,7 @@ export function usePlayback(
         setPending(new Set([...pendingRef.current, key]));
       }).catch(fail);
     },
-    [runtime, enqueue, setStore, setPending, fail],
+    [runtime, live, enqueue, setStore, setPending, fail],
   );
 
   return {

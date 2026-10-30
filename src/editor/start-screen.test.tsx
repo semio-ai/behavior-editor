@@ -324,6 +324,28 @@ describe("the start screen", () => {
     await waitFor(async () => expect(await second.read("v")).toEqual({ f64: 1 }));
   });
 
+  it("shows nothing a runtime the host switched away from answers late", async () => {
+    const first = new MockArora({ store: ORDER.store });
+    const second = new MockArora({ store: ORDER.store });
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    first.step = async () => {
+      await held;
+      throw new Error("the first runtime's step failed");
+    };
+    const user = userEvent.setup();
+    const props = { language, autoPlay: false, defaultText: ORDER.text, fileName: ORDER.file };
+    const { rerender } = render(<BehaviorEditor {...props} runtime={first} />);
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    rerender(<BehaviorEditor {...props} runtime={second} />);
+    await user.click(screen.getByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText("the first runtime's step failed")).toBeNull();
+    expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1");
+  });
+
   it("says why a recent file did not open", async () => {
     const gone = handle("gone.bt", "succeed");
     vi.stubGlobal("showOpenFilePicker", () => Promise.resolve([gone.handle]));

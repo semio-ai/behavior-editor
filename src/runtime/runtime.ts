@@ -3,6 +3,9 @@ import type { MethodSignature } from "../model/signature";
 import type { Value } from "../model/value";
 import type { Loaded } from "../text/language";
 
+/** The key a device publishes its clock to before each tick. */
+export const TIME_KEY = "arora/time";
+
 /** A node's status after a tick: Success, Failure or Running. */
 export type Status = "S" | "F" | "R";
 
@@ -40,8 +43,8 @@ export interface TickReport {
 export interface KeyInfo {
   key: string;
   /**
-   * Whether a person may write it: a device's meta opens it, or the mock
-   * takes it as an input. A key the runtime writes itself, its clock, is not.
+   * Whether a person may write it: the device's meta opens it. A key the
+   * device writes itself, its clock, is not.
    */
   editable: boolean;
   /** The value tag its values take (`f64`, `bool`, `str`…), when the runtime says. */
@@ -50,7 +53,7 @@ export interface KeyInfo {
   max?: number;
 }
 
-/** Where a behavior runs: a device, or a mock of one. */
+/** A behavior on an Arora device: `DeviceRuntime`'s operations. */
 export interface BehaviorRuntime {
   /** The modules' functions; the natives come from the language service. */
   functions(): Promise<MethodSignature[]>;

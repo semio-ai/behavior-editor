@@ -193,6 +193,17 @@ describe("BehaviorEditor on a device", () => {
     expect(textValue()).toBe(`${GREET.text}# typed while it read\n`);
   });
 
+  it("opens the device's behavior over changes made before the discard was confirmed", async () => {
+    const { user, type } = await setup(GREET, graphOf(ORDER.text));
+    const offer = await screen.findByRole("region", { name: "Device's behavior" });
+    type(`${GREET.text}# first\n`);
+    await user.click(within(offer).getByRole("button", { name: "View the device's behavior" }));
+    type(`${GREET.text}# second\n`);
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.getByText("device.bt")).toBeTruthy());
+    expect(same(graphOf(textValue()), graphOf(ORDER.text))).toBe(true);
+  });
+
   it("asks before the header's button discards unsaved changes", async () => {
     const { user, type } = await setup(GREET, graphOf(ORDER.text));
     await screen.findByRole("region", { name: "Device's behavior" });

@@ -680,9 +680,11 @@ function Workspace({
   /** The text now, which a read of the device's behavior checks is still the one it replaces. */
   const textNow = useRef(text);
   textNow.current = text;
-  /** Open what the device runs now, read again, in place of the file as it is now. */
+  /** Open what the device runs now, read again, in place of the file as it is when asked. */
   const openDeviceBehavior = () => {
-    const asked = text;
+    // Read when the open is asked for, which may be later than this render,
+    // once the person confirmed discarding their changes.
+    const asked = textNow.current;
     return files.openDevice(() => textNow.current === asked).catch((e: unknown) => {
       setEditError(e instanceof Error ? e.message : String(e));
     });

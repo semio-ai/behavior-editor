@@ -60,6 +60,16 @@ const queues = new WeakMap<BehaviorRuntime, Promise<unknown>>();
  * Settles once every call queued on `runtime` so far has: what lets go of a
  * runtime waits for, the stop of the editor that let go of it among them.
  */
+/** Run `task` on `runtime` once every call queued on it before has run. */
+function queued<T>(runtime: BehaviorRuntime, task: () => Promise<T>): Promise<T> {
+  const next = (queues.get(runtime) ?? Promise.resolve()).then(task);
+  queues.set(
+    runtime,
+    next.catch(() => undefined),
+  );
+  return next;
+}
+
 export function whenIdle(runtime: BehaviorRuntime): Promise<void> {
   return (queues.get(runtime) ?? Promise.resolve()).then(() => undefined);
 }
@@ -140,17 +150,7 @@ export function usePlayback(
   /** Whether there is a behavior to tick: `loaded` is not `null`. */
   const runnable = useRef(loaded !== null);
 
-  const enqueue = useCallback(
-    <T>(task: () => Promise<T>) => {
-      const next = (queues.get(runtime) ?? Promise.resolve()).then(task);
-      queues.set(
-        runtime,
-        next.catch(() => undefined),
-      );
-      return next;
-    },
-    [runtime],
-  );
+  const enqueue = useCallback(<T>(task: () => Promise<T>) => queued(runtime, task), [runtime]);
 
   const [keys, setKeys] = useState<ReadonlyMap<string, KeyInfo>>(new Map());
   const [pendingState, setPendingState] = useState<ReadonlySet<string>>(new Set());
@@ -361,8 +361,8 @@ export function useRuntimeFunctions(runtime: BehaviorRuntime): {
   }>({ runtime: null, functions: [], error: null });
   useEffect(() => {
     let current = true;
-    runtime
-      .functions()
+    // Asked in the runtime's queue: what lets go of the runtime waits for it.
+    queued(runtime, () => runtime.functions())
       .then((functions) => current && setState({ runtime, functions, error: null }))
       .catch((e: unknown) => current && setState({ runtime, functions: [], error: message(e) }));
     return () => {

@@ -619,6 +619,41 @@ describe("BehaviorEditor", () => {
     expect(screen.getByRole("button", { name: "Step" })).toBeEnabled();
   });
 
+  it("opens no graph file whose functions came from a runtime switched away from", async () => {
+    const greet = language.resolve(language.parse(GREET.text).document, MATH_FUNCTIONS);
+    const json = language.writeFile(greet, "json", MATH_FUNCTIONS);
+    if ("problems" in json) throw new Error("greet writes as JSON");
+    const first = new MockArora({ store: GREET.store });
+    let said: (functions: MethodSignature[]) => void = () => {};
+    let asked = 0;
+    first.functions = () =>
+      asked++ === 0 ? Promise.resolve(MATH_FUNCTIONS) : new Promise((resolve) => (said = resolve));
+    vi.stubGlobal("showOpenFilePicker", () =>
+      Promise.resolve([
+        {
+          name: "greet.json",
+          getFile: () =>
+            Promise.resolve({ name: "greet.json", text: () => Promise.resolve(json.text) }),
+        },
+      ]),
+    );
+    const texts: string[] = [];
+    const props = {
+      language,
+      defaultText: SMILE.text,
+      fileName: SMILE.file,
+      autoPlay: false,
+      onTextChange: (t: string) => texts.push(t),
+    };
+    const user = userEvent.setup();
+    const { rerender } = render(<BehaviorEditor {...props} runtime={first} />);
+    await fileMenu(user, "Open…");
+    rerender(<BehaviorEditor {...props} runtime={new MockArora({ store: GREET.store })} />);
+    said(MATH_FUNCTIONS);
+    expect(await screen.findByRole("alert")).toHaveTextContent("the runtime changed");
+    expect(texts).toEqual([]);
+  });
+
   it("writes no file whose name says another format than the one saved", async () => {
     const written: string[] = [];
     const offered: unknown[] = [];

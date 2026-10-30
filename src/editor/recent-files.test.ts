@@ -153,6 +153,10 @@ describe("recent files", () => {
     const list = await listRecent(await store);
     expect(list).toHaveLength(RECENT_LIMIT);
     expect(new Set(list.map((e) => e.name)).size).toBe(RECENT_LIMIT);
+    // Each editor is shown the list the other's changes left.
+    expect(one.result.current.files[0]?.name).toBe("last.bt");
+    act(() => one.result.current.forget(one.result.current.files[0]!.id));
+    await waitFor(() => expect(two.result.current.files[0]?.name).not.toBe("last.bt"));
   });
 
   it("lists nothing it did not write", async () => {

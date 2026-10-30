@@ -86,6 +86,8 @@ export class FakeDevice {
   readonly calls: Call[] = [];
   readonly traces = new Map<string, Trace>();
   readonly clients = new Set<FakeBridgeClient>();
+  /** Called with each connection as it opens. */
+  connected?: (client: FakeBridgeClient) => void;
   #runs = 0;
   #shown: number | null = null;
   #reported: Record<string, TraceStatus> = {};
@@ -102,6 +104,7 @@ export class FakeDevice {
     if (!this.reachable) throw new Error("no device answers at fake://device");
     const client = new FakeBridgeClient(this);
     this.clients.add(client);
+    this.connected?.(client);
     return client;
   }
 

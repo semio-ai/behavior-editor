@@ -175,6 +175,20 @@ describe("DeviceSession", () => {
     expect(device.clients.size).toBe(0);
   });
 
+  it("is refused as it takes the device up again, and does not connect again", async () => {
+    const { device, session } = setup();
+    await until(() => status(session) === "connected");
+    // Another client takes the bridge as the session reads the device's keys.
+    device.connected = (taken) => taken.end("refused", "Another client connected");
+    client(device).end("lost");
+    await until(() => status(session) === "closed");
+    expect(session.state).toEqual({
+      status: "closed",
+      reason: "Another client connected",
+      refused: true,
+    });
+  });
+
   it("does not connect where no device answers", async () => {
     const device = new FakeDevice();
     device.reachable = false;

@@ -393,8 +393,18 @@ export class DeviceSession {
         };
         await this.#attach(connection);
       } catch (error) {
+        // A device that refused the connection as it was taken up, as when
+        // another client took it, is not connected to again.
+        const ended = await Promise.race([
+          client.closed,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 0)),
+        ]);
         await shut(client);
         if (this.#closing) return;
+        if (ended?.cause === "refused") {
+          this.#setState({ status: "closed", reason: ended.reason, refused: true });
+          return;
+        }
         if (!this.#backoff) {
           this.#setState({ status: "closed", reason: message(error), refused: false });
           return;

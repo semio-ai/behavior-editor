@@ -113,7 +113,7 @@ describe("the start screen", () => {
     await user.click(screen.getByRole("button", { name: "File" }));
     await user.click(screen.getByRole("menuitem", { name: "Close" }));
     expect(screen.getByRole("heading", { name: "Open a behavior" })).toHaveFocus();
-    expect(made.every((m) => m.disposed)).toBe(true);
+    await waitFor(() => expect(made.every((m) => m.disposed)).toBe(true));
   });
 
   it("starts a new behavior on the editor's runtime", async () => {
@@ -254,6 +254,74 @@ describe("the start screen", () => {
     expect(calls).toEqual(["start", "step"]);
     release();
     await waitFor(() => expect(calls).toEqual(["start", "step", "stop", "start"]));
+  });
+
+  it("disposes an example's runtime once the behavior on it stopped", async () => {
+    const order: string[] = [];
+    const runtime = new MockArora({ store: ORDER.store });
+    const { stop } = runtime;
+    runtime.stop = () => {
+      order.push("stop");
+      return stop.call(runtime);
+    };
+    const { user } = setup({
+      examples: [
+        {
+          title: "Order",
+          fileName: ORDER.file,
+          text: ORDER.text,
+          runtime: () => ({ runtime, dispose: () => order.push("dispose") }),
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: /^Order/ }));
+    await screen.findByRole("tree", { name: "Behavior diagram" });
+    order.length = 0;
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close" }));
+    await waitFor(() => expect(order).toContain("dispose"));
+    expect(order.indexOf("stop")).toBeLessThan(order.indexOf("dispose"));
+  });
+
+  it("opens nothing from a picker answered after another file replaced the one open", async () => {
+    let pick: (handles: unknown[]) => void = () => {};
+    vi.stubGlobal("showOpenFilePicker", () => new Promise((resolve) => (pick = resolve)));
+    const { user } = setup();
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await user.click(screen.getByRole("button", { name: "New behavior" }));
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    await user.type(text(), "succeed\n");
+    pick([handle("greet.bt", GREET.text).handle]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(text()).toHaveValue("succeed\n");
+  });
+
+  it("starts the behavior on a runtime the host switches to, a step of the previous still pending", async () => {
+    const first = new MockArora({ store: ORDER.store });
+    const second = new MockArora({ store: ORDER.store });
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { step } = first;
+    first.step = async (dt) => {
+      await held;
+      return step.call(first, dt);
+    };
+    const started: string[] = [];
+    const { start } = second;
+    second.start = (loaded) => {
+      started.push("second");
+      return start.call(second, loaded);
+    };
+    const user = userEvent.setup();
+    const props = { language, autoPlay: false, defaultText: ORDER.text, fileName: ORDER.file };
+    const { rerender } = render(<BehaviorEditor {...props} runtime={first} />);
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    rerender(<BehaviorEditor {...props} runtime={second} />);
+    await waitFor(() => expect(started).toEqual(["second"]));
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await user.click(screen.getByRole("button", { name: "Step" }));
+    await waitFor(async () => expect(await second.read("v")).toEqual({ f64: 1 }));
   });
 
   it("says why a recent file did not open", async () => {

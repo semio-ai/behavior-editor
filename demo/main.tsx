@@ -1,4 +1,4 @@
-import { type FormEvent, StrictMode, useEffect, useState } from "react";
+import { type FormEvent, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { EXAMPLES } from "../fixtures/examples";
 import { DATAFLOW_INPUTS } from "../fixtures/devices/dataflow";
@@ -13,6 +13,7 @@ import {
   MockArora,
   WebSocketDevice,
   createBehaviorText,
+  whenIdle,
 } from "../src";
 import "../src/styles.css";
 import initDataflowDevice, { DataflowDevice } from "../device/pkg/dataflow_device.js";
@@ -71,6 +72,16 @@ function Demo({ language, offered }: { language: BehaviorText; offered: Behavior
   const [url, setUrl] = useState(LOCAL_BRIDGE_URL);
   const [connecting, setConnecting] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  /** Counts the connections asked for: one cancelled, or asked again, is let go as it opens. */
+  const attempts = useRef(0);
+  /** A connection the person let go of, closed once the editor stopped the behavior on it. */
+  const [releasing, setReleasing] = useState<Connected | null>(null);
+  // This runs after the editor queued the stop of the behavior on the device,
+  // in the same commit: the connection closes once that ran.
+  useEffect(() => {
+    if (!releasing) return;
+    whenIdle(releasing.runtime).then(() => releasing.device.close());
+  }, [releasing]);
 
   // A connection the device closes, or that another client takes, says why.
   useEffect(() => {
@@ -88,10 +99,15 @@ function Demo({ language, offered }: { language: BehaviorText; offered: Behavior
 
   const connect = (event: FormEvent) => {
     event.preventDefault();
+    const attempt = ++attempts.current;
     setConnecting(true);
     setProblem(null);
     WebSocketDevice.connect(url)
       .then((device) => {
+        if (attempts.current !== attempt) {
+          device.close();
+          return;
+        }
         const runtime = new DeviceRuntime({
           device,
           loadCall: (graph) => language.loadCall(graph),
@@ -100,11 +116,20 @@ function Demo({ language, offered }: { language: BehaviorText; offered: Behavior
         setConnected({ device, runtime });
         setAsking(false);
       })
-      .catch((e: unknown) => setProblem(e instanceof Error ? e.message : String(e)))
-      .finally(() => setConnecting(false));
+      .catch((e: unknown) => {
+        if (attempts.current === attempt) setProblem(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (attempts.current === attempt) setConnecting(false);
+      });
+  };
+  const cancel = () => {
+    attempts.current += 1;
+    setConnecting(false);
+    setAsking(false);
   };
   const disconnect = () => {
-    connected?.device.close();
+    setReleasing(connected);
     setConnected(null);
   };
 
@@ -136,7 +161,7 @@ function Demo({ language, offered }: { language: BehaviorText; offered: Behavior
             <button type="submit" className="be-primary" disabled={connecting}>
               {connecting ? "Connecting…" : "Connect"}
             </button>
-            <button type="button" onClick={() => setAsking(false)}>
+            <button type="button" onClick={cancel}>
               Cancel
             </button>
           </form>

@@ -167,6 +167,10 @@ the next behavior afresh.
   reports what changed since the last step the editor saw, which may span
   several of the device's. Such a device runs its behavior whether the editor
   follows it or not: pausing stops following, not the device.
+- The editor stops the behavior on a runtime it lets go of, as it closes a
+  file or as the host switches its `runtime`, through the calls it queues on
+  that runtime: a host disposing of the runtime or closing its device waits
+  for `whenIdle(runtime)`, which settles once every call queued so far ran.
 - `WebSocketDevice` is an `AroraDevice` on its own clock: an Arora device
   reached over its open local bridge, `arora-bridge-ws`, on
   `ws://127.0.0.1:9000` by default (`LOCAL_BRIDGE_URL`).

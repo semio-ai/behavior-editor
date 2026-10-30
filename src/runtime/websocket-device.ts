@@ -89,7 +89,13 @@ export class WebSocketDevice implements AroraDevice {
         reject(new Error(`no device answers at ${url}${event.reason ? `: ${event.reason}` : ""}`));
     });
     const device = new WebSocketDevice(url, socket, options.timeoutMs ?? 10_000);
-    await device.#seed();
+    try {
+      await device.#seed();
+    } catch (error) {
+      // The bridge serves one client: a device not handed back lets it go.
+      device.close();
+      throw error;
+    }
     return device;
   }
 

@@ -438,6 +438,35 @@ describe("the start screen", () => {
     expect(result.current.store.has("written")).toBe(false);
   });
 
+  it("disposes an example's runtime only once it answered for its functions", async () => {
+    const order: string[] = [];
+    const runtime = new MockArora({ store: ORDER.store });
+    let answer: () => void = () => {};
+    const { functions } = runtime;
+    runtime.functions = async () => {
+      await new Promise<void>((resolve) => (answer = resolve));
+      order.push("functions");
+      return functions.call(runtime);
+    };
+    const { user } = setup({
+      examples: [
+        {
+          title: "Order",
+          fileName: ORDER.file,
+          text: ORDER.text,
+          runtime: () => ({ runtime, dispose: () => order.push("dispose") }),
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: /^Order/ }));
+    await user.click(await screen.findByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close" }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(order).toEqual([]);
+    answer();
+    await waitFor(() => expect(order).toEqual(["functions", "dispose"]));
+  });
+
   it("says why a recent file did not open", async () => {
     const gone = handle("gone.bt", "succeed");
     vi.stubGlobal("showOpenFilePicker", () => Promise.resolve([gone.handle]));

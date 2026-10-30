@@ -44,6 +44,13 @@ interface Waiting {
 const OPEN = 1;
 
 /**
+ * How many values of a key `takeValues` keeps between two calls: past it,
+ * the oldest go. A trace reading them then sees a report missing and starts
+ * over, so a long pause costs one restart rather than memory.
+ */
+export const TAKEN_LIMIT = 256;
+
+/**
  * An Arora device behind its open local bridge.
  *
  * The device runs on its own clock (`ownClock`): it steps whether the editor
@@ -52,7 +59,7 @@ const OPEN = 1;
  * `dtMs` when none comes. The store is read from what the device pushed,
  * which starts as what it held when the connection opened: a read is as
  * current as the device's last step. `takeValues` gives every value a key was
- * pushed, for a key that changes at each of the device's steps, as a trace's
+ * pushed, the last `TAKEN_LIMIT` of them, for a key that changes at each of the device's steps, as a trace's
  * reports do.
  *
  * A request is answered in the order it was sent, as the bridge answers its
@@ -244,7 +251,11 @@ export class WebSocketDevice implements AroraDevice {
       const values = (message.values ?? {}) as Record<string, unknown>;
       for (const [key, value] of Object.entries(values)) {
         this.#values.set(key, value);
-        this.#taken.get(key)?.push(value);
+        const taken = this.#taken.get(key);
+        if (taken) {
+          taken.push(value);
+          if (taken.length > TAKEN_LIMIT) taken.shift();
+        }
       }
       if (TIME_KEY in values) for (const stepped of [...this.#stepped]) stepped();
       return;

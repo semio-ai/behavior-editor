@@ -146,6 +146,12 @@ export class DeviceRuntime implements BehaviorRuntime {
     if (next) {
       this.#root = next.graph.root;
       this.#nodes = new Set(next.nodes.map((n) => n.id));
+    } else {
+      // The behavior as the diff makes it, as far as it says.
+      if (diff.root !== undefined) this.#root = diff.root;
+      for (const id of diff.remove ?? []) this.#nodes.delete(id);
+      for (const node of diff.set ?? []) this.#nodes.add(node.id);
+      if (this.#root !== undefined && !this.#nodes.has(this.#root)) this.#root = undefined;
     }
     const watched = next && watchedNodes(next);
     if (this.#trace && watched && !sameNodes(watched, this.#trace.watched)) {

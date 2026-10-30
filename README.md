@@ -192,7 +192,8 @@ the next behavior afresh.
   calls one by ids (the interpreter's `LOAD` and `EDIT` among them),
   `write_values` writes its inputs, `list_keys` lists its keys with their
   meta, and every `values_changed` the device pushes keeps the store it reads
-  current; `takeValues` gives every value a key was pushed. A step waits for
+  current; `takeValues` gives every value a key was pushed since it last
+  asked, the last 256 of them. A step waits for
   the next push carrying `arora/time`, or answers after its `dtMs` when the
   device does not step. The bridge serves one client
   at a time: `closed` says why the connection ended, another client taking it

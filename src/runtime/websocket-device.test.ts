@@ -5,7 +5,7 @@ import type { Value } from "../model/value";
 import { DeviceRuntime } from "./device-runtime";
 import { MATH, mathModule } from "./math-module";
 import type { TraceReport } from "./trace";
-import { WebSocketDevice } from "./websocket-device";
+import { TAKEN_LIMIT, WebSocketDevice } from "./websocket-device";
 
 type Message = Record<string, unknown> & { type: string };
 
@@ -282,6 +282,17 @@ describe("WebSocketDevice", () => {
       { f32: 0.7 },
     ]);
     expect(JSON.parse(await device.takeValues("sensor/distance"))).toEqual([]);
+  });
+
+  it("keeps the last values of a key, however long it was not asked", async () => {
+    const { bridge, device } = await connect();
+    await device.takeValues("k");
+    for (let i = 0; i < TAKEN_LIMIT + 10; i += 1) bridge.push({ k: { u64: i } });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const taken = JSON.parse(await device.takeValues("k")) as { u64: number }[];
+    expect(taken).toHaveLength(TAKEN_LIMIT);
+    expect(taken[0]).toEqual({ u64: 10 });
+    expect(taken.at(-1)).toEqual({ u64: TAKEN_LIMIT + 9 });
   });
 
   it("follows every report a trace writes between two of the editor's steps", async () => {

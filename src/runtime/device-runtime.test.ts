@@ -262,6 +262,28 @@ describe("DeviceRuntime", () => {
       expect(traceCalls()).toHaveLength(2);
     });
 
+    it("follows the root and the nodes a diff sets when it is given no behavior", async () => {
+      const { runtime, write } = traced();
+      await runtime.start(ORDER.loaded);
+      await runtime.edit({
+        set: [{ id: "added", function: "f" }],
+        root: "added",
+      });
+      write(1, {
+        tick: 1,
+        status: [
+          ["added", "failure"],
+          [root, "running"],
+        ],
+      });
+      const report = await runtime.step(10);
+      expect(report.root).toBe("F");
+      expect(report.statuses).toMatchObject({ added: "F", [root]: "R" });
+      await runtime.edit({ remove: ["added"] });
+      write(1, { tick: 2, since: 1 });
+      expect((await runtime.step(10)).root).toBeUndefined();
+    });
+
     it("halts the trace when the behavior stops", async () => {
       const { device, runtime } = traced();
       await runtime.start(ORDER.loaded);

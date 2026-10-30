@@ -78,7 +78,7 @@ class FakeBridge {
           type: "read_values_resp",
           values: Object.fromEntries(
             (message.keys as string[])
-              .filter((k) => k in this.values)
+              .filter((k) => Object.hasOwn(this.values, k))
               .map((k) => [k, this.values[k]]),
           ),
         };
@@ -210,6 +210,18 @@ describe("WebSocketDevice", () => {
     bridge.step();
     await step;
     expect(JSON.parse(await device.read("sensor/distance"))).toBeNull();
+  });
+
+  it("lets go of an unset key whatever its name", async () => {
+    const { bridge, device } = await connect();
+    bridge.push({ constructor: { f64: 1 } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    Reflect.deleteProperty(bridge.values, "constructor");
+    const step = device.step(5_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    bridge.step();
+    await step;
+    expect(JSON.parse(await device.read("constructor"))).toBeNull();
   });
 
   it("answers a step after its time when the device does not step", async () => {

@@ -190,6 +190,10 @@ export class WebSocketDevice implements AroraDevice {
   keepValues(prefix: string): Promise<void> {
     this.#check();
     this.#kept.add(prefix);
+    // Kept keys are given by `takeValues` alone: the store read and read
+    // again at each step holds none, a retired trace's among them.
+    for (const key of [...this.#values.keys()])
+      if (key.startsWith(prefix)) this.#values.delete(key);
     return Promise.resolve();
   }
 
@@ -304,9 +308,10 @@ export class WebSocketDevice implements AroraDevice {
       // A kept value goes on to Rust: its integers keep their digits.
       let exact: Record<string, unknown> | null = null;
       for (const [key, value] of Object.entries(values)) {
-        this.#values.set(key, value);
+        const kept = this.#isKept(key);
+        if (!kept) this.#values.set(key, value);
         let taken = this.#taken.get(key);
-        if (!taken && this.#isKept(key)) {
+        if (!taken && kept) {
           taken = [];
           this.#taken.set(key, taken);
           // The key kept longest goes: Map keeps keys in the order they came.

@@ -436,4 +436,20 @@ describe("WebSocketDevice", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(await device.takeValues("p/k")).toBe('[{"u64":18446744073709551615}]');
   });
+
+  it("reads no kept key again at a step, a retired trace's least of all", async () => {
+    const { bridge, device } = await connect();
+    bridge.push({ "p/old/feedback": { u64: 1 } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await device.keepValues("p/");
+    bridge.push({ "p/new/feedback": { u64: 2 } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const step = device.step(5_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    bridge.step();
+    await step;
+    const read = bridge.received.filter((m) => m.type === "read_values").at(-1)!;
+    expect((read.keys as string[]).filter((k) => k.startsWith("p/"))).toEqual([]);
+    expect(JSON.parse(await device.takeValues("p/new/feedback"))).toEqual([{ u64: 2 }]);
+  });
 });

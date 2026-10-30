@@ -4,6 +4,7 @@
  * by default. See the bridge's README, "Messages" and "Who may do what".
  */
 import type { AroraDevice } from "./device-runtime";
+import { parseExact } from "./exact-json";
 import { TIME_KEY } from "./mock-arora";
 
 /** The bridge's address on a device that serves it with its defaults. */
@@ -300,6 +301,8 @@ export class WebSocketDevice implements AroraDevice {
     }
     if (message.type === "values_changed") {
       const values = (message.values ?? {}) as Record<string, unknown>;
+      // A kept value goes on to Rust: its integers keep their digits.
+      let exact: Record<string, unknown> | null = null;
       for (const [key, value] of Object.entries(values)) {
         this.#values.set(key, value);
         let taken = this.#taken.get(key);
@@ -310,7 +313,8 @@ export class WebSocketDevice implements AroraDevice {
           if (this.#taken.size > TAKEN_KEYS) this.#taken.delete(this.#taken.keys().next().value!);
         }
         if (taken) {
-          taken.push(value);
+          exact ??= ((parseExact(String(data)) as Message).values ?? {}) as Record<string, unknown>;
+          taken.push(exact[key]);
           if (taken.length > TAKEN_LIMIT) taken.shift();
         }
       }

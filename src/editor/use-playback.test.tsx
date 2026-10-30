@@ -35,6 +35,35 @@ describe("usePlayback", () => {
     await waitFor(() => expect(edits).toEqual([[{}, renamed]]));
   });
 
+  it("tells the runtime again of nodes named anew when it refused, and clears the refusal once back", async () => {
+    const runtime = new MockArora({ store: ORDER.store });
+    const told: (Loaded | undefined)[] = [];
+    let refuse = true;
+    const { edit } = runtime;
+    const spy: BehaviorRuntime["edit"] = (change, next) => {
+      told.push(next);
+      return refuse ? Promise.reject(new Error("refused")) : edit.call(runtime, change);
+    };
+    Object.assign(runtime, { edit: spy });
+    const renamed: Loaded = {
+      ...ORDER.loaded,
+      nodes: ORDER.loaded.nodes.map((n) => ({ ...n, name: n.name ?? `n${n.path}` })),
+    };
+    const { result, rerender } = renderHook(
+      ({ loaded }) => usePlayback(runtime, loaded, false, diff),
+      { initialProps: { loaded: ORDER.loaded } },
+    );
+    rerender({ loaded: renamed });
+    await waitFor(() => expect(result.current.error).toBe("refused"));
+    // Back to the names the runtime knows: the refusal is moot.
+    rerender({ loaded: { ...ORDER.loaded } });
+    await waitFor(() => expect(result.current.error).toBeNull());
+    refuse = false;
+    rerender({ loaded: { ...renamed } });
+    await waitFor(() => expect(told).toHaveLength(2));
+    expect(told[1]).toEqual(renamed);
+  });
+
   it("shows the store anew after telling the runtime of nodes named anew", async () => {
     const runtime = new MockArora({ store: ORDER.store });
     const renamed: Loaded = {

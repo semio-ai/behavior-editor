@@ -416,4 +416,12 @@ describe("WebSocketDevice", () => {
     expect(JSON.parse(await device.takeValues(`p/${TAKEN_KEYS}`))).toEqual([{ u64: TAKEN_KEYS }]);
     expect(JSON.parse(await device.takeValues(`p/${TAKEN_KEYS}`))).toEqual([]);
   });
+
+  it("gives a kept value's integers as the device wrote them", async () => {
+    const { bridge, device } = await connect();
+    await device.keepValues("p/");
+    bridge.socket!.send('{"type":"values_changed","values":{"p/k":{"u64":18446744073709551615}}}');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await device.takeValues("p/k")).toBe('[{"u64":18446744073709551615}]');
+  });
 });

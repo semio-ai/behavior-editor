@@ -3,6 +3,7 @@ import type { MethodSignature } from "../model/signature";
 import { type Value, valueEquals } from "../model/value";
 import type { BehaviorText, Loaded } from "../text/language";
 import type { BehaviorRuntime, KeyInfo, TickReport } from "./runtime";
+import { parseExact } from "./exact-json";
 import { type TraceHandle, TraceView, watchedNodes } from "./trace";
 
 /** What a device says of a key: `arora_types::data::KeyMeta`'s JSON, as far as the editor reads it. */
@@ -284,11 +285,18 @@ export class DeviceRuntime implements BehaviorRuntime {
       await this.#follow(running.watched);
       return;
     }
-    const values = device.takeValues
-      ? (JSON.parse(await device.takeValues(feedback)) as unknown[])
-      : [JSON.parse(await this.#rawRead(feedback)) as unknown].filter((v) => v !== null);
-    for (const value of values) {
-      if (!this.#view.read(trace!.traceReport(JSON.stringify(value)))) {
+    // Each report as JSON, its integers' digits as the device wrote them: the
+    // Rust decoder refuses a rounded 64-bit value.
+    let reports: string[];
+    if (device.takeValues) {
+      const taken = parseExact(await device.takeValues(feedback)) as unknown[];
+      reports = taken.map((value) => JSON.stringify(value));
+    } else {
+      const latest = await this.#rawRead(feedback);
+      reports = latest === "null" ? [] : [latest];
+    }
+    for (const report of reports) {
+      if (!this.#view.read(trace!.traceReport(report))) {
         if (restart) await this.#follow(running.watched);
         else this.#missed = true;
         return;

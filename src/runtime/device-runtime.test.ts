@@ -190,6 +190,8 @@ describe("DeviceRuntime", () => {
     function traced(refuse = false) {
       const { device, runtime: _, ...rest } = setup();
       let traces = 0;
+      /** Each report the language was handed to decode, as JSON. */
+      const decoded: string[] = [];
       const call = device.call.bind(device);
       device.call = (json: string) => {
         const parsed = JSON.parse(json) as { trace?: { values: string[] } };
@@ -215,7 +217,10 @@ describe("DeviceRuntime", () => {
               feedback: [`t${n}/feedback`],
             };
           },
-          traceReport: (json) => JSON.parse(json) as TraceReport,
+          traceReport: (json) => {
+            decoded.push(json);
+            return JSON.parse(json) as TraceReport;
+          },
         },
       });
       /** The device writes `report` as trace `n`'s latest. */
@@ -226,7 +231,7 @@ describe("DeviceRuntime", () => {
           .map((c) => JSON.parse(c) as Record<string, unknown>)
           .filter((c) => "trace" in c);
       const halts = () => device.calls.filter((c) => c.includes('"halt"'));
-      return { device, runtime, write, traceCalls, halts, ...rest };
+      return { device, runtime, write, traceCalls, halts, decoded, ...rest };
     }
 
     const root = ORDER.loaded.graph.root!;
@@ -338,6 +343,24 @@ describe("DeviceRuntime", () => {
       const report = await runtime.step(10);
       expect(report.root).toBeUndefined();
       expect(report.statuses).toMatchObject({ [root]: "F" });
+    });
+
+    it("hands the language a report's integers as the device wrote them", async () => {
+      const { device, runtime, write, decoded } = traced();
+      const big =
+        '{"tick":1,"values":[{"node":"n","port":"p","value":{"u64":18446744073709551615}}]}';
+      // A device that gives every value it kept.
+      Object.assign(device, { takeValues: () => `[${big}]` });
+      await runtime.start(ORDER.loaded);
+      expect(decoded).toEqual([big]);
+      // A device read for its latest: the report is handed on as it is read.
+      Object.assign(device, { takeValues: undefined });
+      write(1, { tick: 2, since: 1 });
+      const read = device.read.bind(device);
+      device.read = (key: string) =>
+        key.endsWith("t1/feedback") ? big.replace('"tick":1', '"tick":2,"since":1') : read(key);
+      await runtime.step(10);
+      expect(decoded.at(-1)).toContain("18446744073709551615");
     });
 
     it("halts the trace when the behavior stops", async () => {

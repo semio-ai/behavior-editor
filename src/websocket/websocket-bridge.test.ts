@@ -1,125 +1,31 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { type WebSocket as Socket, WebSocketServer } from "ws";
 import { ORDER } from "../../fixtures/examples";
+import { FakeBridge } from "../../fixtures/fake-bridge";
+import { BridgeDevice, TAKEN_KEYS, TAKEN_LIMIT } from "../bridge/bridge-device";
 import type { Value } from "../model/value";
-import { DeviceRuntime } from "./device-runtime";
-import { MATH, mathModule } from "./math-module";
-import type { TraceReport } from "./trace";
-import { TAKEN_KEYS, TAKEN_LIMIT, WebSocketDevice } from "./websocket-device";
-
-type Message = Record<string, unknown> & { type: string };
-
-/**
- * A device's open local bridge, as `arora-bridge-ws` serves it: the device's
- * keys with their meta and values, its methods, the calls and writes it is
- * sent, and its steps, each pushing what it changed with the clock.
- */
-class FakeBridge {
-  readonly server: WebSocketServer;
-  socket: Socket | null = null;
-  keys: { path: string; __meta: Record<string, unknown> }[] = [
-    { path: "arora/time", __meta: { ty: "u64" } },
-    { path: "sensor/distance", __meta: { ty: "f32", editable: true, min: 0, max: 2 } },
-  ];
-  values: Record<string, Value> = { "arora/time": { u64: 0 }, "sensor/distance": { f32: 0.5 } };
-  received: Message[] = [];
-  /** How the device answers a message: as the bridge does, unless a test says otherwise. */
-  answer: (message: Message) => Message | null = (message) => this.#answer(message);
-  /** The answer the bridge itself gives. */
-  answerAsBridge = (message: Message) => this.#answer(message);
-  /** What a call answers. */
-  callResult: Record<string, unknown> = { success: true, ret: { str: "run" }, mutated: [] };
-  /** What a write answers. */
-  writeResult: Record<string, unknown> = { success: true };
-  #time = 0;
-
-  constructor() {
-    this.server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
-    this.server.on("connection", (socket) => {
-      this.socket = socket;
-      socket.on("message", (data: Buffer) => {
-        const message = JSON.parse(data.toString()) as Message;
-        this.received.push(message);
-        const answer = this.answer(message);
-        if (answer) socket.send(JSON.stringify(answer));
-      });
-    });
-  }
-
-  async url() {
-    await new Promise<void>((resolve) => {
-      if (this.server.address()) resolve();
-      else this.server.once("listening", () => resolve());
-    });
-    const address = this.server.address() as { port: number };
-    return `ws://127.0.0.1:${address.port}`;
-  }
-
-  /** Push `values` as a step's changes, unsolicited. */
-  push(values: Record<string, Value>) {
-    Object.assign(this.values, values);
-    for (const path of Object.keys(values)) {
-      if (!this.keys.some((k) => k.path === path)) this.keys.push({ path, __meta: {} });
-    }
-    this.socket!.send(JSON.stringify({ type: "values_changed", values }));
-  }
-
-  /** A step of the device: its clock moves, and `values` change with it. */
-  step(values: Record<string, Value> = {}) {
-    this.#time += 10_000_000;
-    this.push({ "arora/time": { u64: this.#time }, ...values });
-  }
-
-  #answer(message: Message): Message | null {
-    switch (message.type) {
-      case "list_keys":
-        return { type: "list_keys_resp", keys: this.keys };
-      case "read_values":
-        return {
-          type: "read_values_resp",
-          values: Object.fromEntries(
-            (message.keys as string[])
-              .filter((k) => Object.hasOwn(this.values, k))
-              .map((k) => [k, this.values[k]]),
-          ),
-        };
-      case "describe_methods":
-        return {
-          type: "describe_methods_resp",
-          methods: mathModule()
-            .functions.map((f) => f.signature)
-            .filter((m) => !message.path || m.name.startsWith(message.path as string)),
-        };
-      case "call":
-        return { request_id: message.request_id, ...this.callResult, type: "call_resp" };
-      case "write_values":
-        return { ...this.writeResult, type: "write_values_resp" };
-      default:
-        return { type: "error", message: `unknown message ${message.type}` };
-    }
-  }
-
-  close() {
-    return new Promise((resolve) => this.server.close(resolve));
-  }
-}
+import { DeviceRuntime } from "../runtime/device-runtime";
+import { MATH } from "../runtime/math-module";
+import type { TraceReport } from "../runtime/trace";
+import { WebSocketBridge } from "./websocket-bridge";
 
 const bridges: FakeBridge[] = [];
-const devices: WebSocketDevice[] = [];
+const devices: BridgeDevice[] = [];
 afterEach(async () => {
-  for (const device of devices.splice(0)) device.close();
+  for (const device of devices.splice(0)) device.client.close();
   for (const bridge of bridges.splice(0)) await bridge.close();
 });
 
+/** A device behind a fake bridge, through a `WebSocketBridge` client. */
 async function connect(timeoutMs?: number) {
   const bridge = new FakeBridge();
   bridges.push(bridge);
-  const device = await WebSocketDevice.connect(await bridge.url(), { timeoutMs });
+  const client = await WebSocketBridge.connect(await bridge.url(), { timeoutMs });
+  const device = await BridgeDevice.over(client);
   devices.push(device);
   return { bridge, device };
 }
 
-describe("WebSocketDevice", () => {
+describe("a device over WebSocketBridge", () => {
   it("reads the device's keys and their values as it connects", async () => {
     const { bridge, device } = await connect();
     expect(bridge.received.map((m) => m.type)).toEqual(["list_keys", "read_values"]);
@@ -144,7 +50,7 @@ describe("WebSocketDevice", () => {
       );
       return null;
     };
-    const device = await WebSocketDevice.connect(await bridge.url());
+    const device = await BridgeDevice.over(await WebSocketBridge.connect(await bridge.url()));
     devices.push(device);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(JSON.parse(await device.read("sensor/distance"))).toEqual({ f32: 0.9 });
@@ -250,8 +156,11 @@ describe("WebSocketDevice", () => {
     const answer = bridge.answer;
     bridge.answer = (m) => (m.type === "describe_methods" ? null : answer(m));
     await expect(device.describeMethods()).rejects.toThrow("did not answer describe_methods");
-    expect(await device.closed).toMatch(/closed the connection/);
-    await expect(device.listKeys()).rejects.toThrow(/closed the connection/);
+    expect(await device.client.closed).toEqual({
+      reason: expect.stringMatching(/stopped answering/),
+      cause: "lost",
+    });
+    await expect(device.listKeys()).rejects.toThrow(/stopped answering/);
   });
 
   it("says why the connection closed, rejecting what waits", async () => {
@@ -260,29 +169,52 @@ describe("WebSocketDevice", () => {
     const waiting = device.listKeys();
     bridge.socket!.close(1000, "Another client connected");
     await expect(waiting).rejects.toThrow(/closed the connection: Another client connected/);
-    expect(await device.closed).toMatch(/Another client connected/);
+    expect(await device.client.closed).toEqual({
+      reason: expect.stringMatching(/Another client connected/),
+      cause: "refused",
+    });
     expect(() => device.read("x")).toThrow(/Another client connected/);
   });
 
-  it("closes the connection when the device's store cannot be read as it connects", async () => {
+  it("tells a connection the device dropped from one it closed, and from one closed here", async () => {
+    const dropped = await connect();
+    dropped.bridge.socket!.terminate();
+    expect(await dropped.device.client.closed).toMatchObject({ cause: "lost" });
+    const closed = await connect();
+    closed.device.client.close();
+    expect(await closed.device.client.closed).toMatchObject({ cause: "closed" });
+  });
+
+  it("is not taken up when the device's store cannot be read", async () => {
     const bridge = new FakeBridge();
     bridges.push(bridge);
     bridge.answer = (m) =>
       m.type === "read_values"
         ? { type: "error", message: "store unavailable" }
         : bridge.answerAsBridge(m);
-    const closed = new Promise((resolve) =>
-      bridge.server.once("connection", (socket) => socket.once("close", resolve)),
+    const client = await WebSocketBridge.connect(await bridge.url());
+    await expect(BridgeDevice.over(client)).rejects.toThrow("store unavailable");
+    client.close();
+  });
+
+  it("gives up connecting to a server that never opens the connection", async () => {
+    const { createServer } = await import("node:net");
+    const accepted: import("node:net").Socket[] = [];
+    const server = createServer((socket) => accepted.push(socket));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const url = `ws://127.0.0.1:${(server.address() as { port: number }).port}`;
+    await expect(WebSocketBridge.connect(url, { timeoutMs: 100 })).rejects.toThrow(
+      `no device answers at ${url}`,
     );
-    await expect(WebSocketDevice.connect(await bridge.url())).rejects.toThrow("store unavailable");
-    await closed;
+    for (const socket of accepted) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
   });
 
   it("refuses to connect where no device answers", async () => {
     const bridge = new FakeBridge();
     const url = await bridge.url();
     await bridge.close();
-    await expect(WebSocketDevice.connect(url)).rejects.toThrow(`no device answers at ${url}`);
+    await expect(WebSocketBridge.connect(url)).rejects.toThrow(`no device answers at ${url}`);
   });
 
   it("runs a behavior through DeviceRuntime, on the device's own clock", async () => {

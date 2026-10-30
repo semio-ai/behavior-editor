@@ -7,15 +7,15 @@ import { DATAFLOW_INPUTS } from "../../fixtures/devices/dataflow";
 import { loadLanguage } from "../../fixtures/language";
 import { PageBridge } from "../../fixtures/page-bridge";
 import { type Value, valueNumber } from "../model/value";
-import { DeviceSession, type SessionTick } from "../session/device-session";
+import { type BehaviorChange, DeviceSession, type SessionTick } from "../session/device-session";
 import type { BehaviorText, Loaded } from "../text/language";
 
 /**
  * A session over a real Arora runtime: `device/`'s arora-web device in the
  * page, running itself every 20 ms behind a `PageBridge`, the language from
- * the editor's wasm build. Its interpreter, arora 17.0's, does not answer a
- * read of its behavior: the session says so, and runs, follows and leaves
- * the behavior all the same.
+ * the editor's wasm build: the session reads the behavior the device runs
+ * and its revision, runs, edits and follows it, tells another client's
+ * change, and leaves it running.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -60,17 +60,22 @@ function connect() {
     rate: 50,
   });
   const ticks: SessionTick[] = [];
+  const changes: BehaviorChange[] = [];
   session.on("tick", (tick) => ticks.push(tick));
-  return ticks;
+  session.on("behaviorChanged", (change) => changes.push(change));
+  return { ticks, changes };
 }
 
 describe("a device session on an Arora device in the page", () => {
   it("runs the file, follows the device's nodes and tick, and leaves it running as it closes", async () => {
-    const ticks = connect();
+    const { ticks, changes } = connect();
     await until(() => session.state.status === "connected");
-    expect(await session.deviceBehavior()).toBeNull();
+    expect(await session.deviceBehavior()).toEqual({ graph: {}, revision: 0 });
     const loaded = await resolved();
     await session.run(loaded);
+    const read = (await session.deviceBehavior())!;
+    expect(read.revision).toBe(1);
+    expect(language.diff(read.graph, loaded.graph)).toEqual({});
     await until(() => ticks.at(-1)?.report.root === "R");
     const last = ticks.at(-1)!;
     expect(last.status.rate).toBeCloseTo(50, 0);
@@ -99,6 +104,15 @@ describe("a device session on an Arora device in the page", () => {
     // A key the device keeps closed to clients is refused, as the device checks it.
     await expect(session.write("face/level", { f32: 1 })).rejects.toThrow();
     await session.write("sensor/distance", { f32: 0.2 });
+
+    await until(() => ticks.at(-1)?.status.revision === 2);
+    expect(changes.every((c) => !c.external)).toBe(true);
+
+    // Another client loads the empty behavior: the session tells it was not its own.
+    device.call(language.loadCall({}));
+    await until(() => changes.some((c) => c.external));
+    expect(changes.at(-1)).toEqual({ revision: 3, external: true });
+    await session.run(edited);
 
     await session.close();
     // Closed, the device runs the behavior still: a step moves its level with its input.

@@ -38,6 +38,8 @@ export interface StartScreenProps {
   onOpenRecent(file: RecentFile): void;
   onForget(file: RecentFile): void;
   onExample(example: BehaviorExample): void;
+  /** Open the behavior the device runs; absent while no device is connected. */
+  onOpenDevice?(): void;
   /**
    * How each example stands to the device attached, once it said its
    * functions; `null` with no device. An example that cannot run there is
@@ -62,6 +64,7 @@ export function StartScreen({
   onOpenRecent,
   onForget,
   onExample,
+  onOpenDevice,
   fits,
   error,
   focus,
@@ -83,6 +86,11 @@ export function StartScreen({
         <button type="button" onClick={onOpen}>
           Open…
         </button>
+        {onOpenDevice && (
+          <button type="button" onClick={onOpenDevice}>
+            Open the device&apos;s behavior
+          </button>
+        )}
       </div>
       {error && (
         <p className="be-alert" role="alert">

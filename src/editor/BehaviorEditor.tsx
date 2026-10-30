@@ -235,6 +235,28 @@ export function BehaviorEditor({
       setClosed(true);
     },
     openText: (name, text) => begin(newFile(name), text),
+    openDevice: async () => {
+      const from = attached;
+      if (!from) return;
+      const asked = ++requests.current;
+      await moot(asked, async () => {
+        const read = await from.deviceBehavior();
+        if (!read) throw new Error("The device does not say what it runs");
+        if (requests.current !== asked) return;
+        const held = ran.current.find((f) => isEmptyDiff(language.diff(f.graph, read.graph)));
+        if (held) {
+          begin(newFile(held.name), held.text);
+          return;
+        }
+        const functions = await askFunctions(from);
+        const out = language.openFile(JSON.stringify(read.graph), "json", functions);
+        if ("problems" in out) {
+          throw new Error(`The device's behavior does not open: ${problemsText(out.problems)}`);
+        }
+        if (requests.current !== asked) return;
+        begin(newFile(DEVICE_FILE), out.text);
+      });
+    },
     ask: () => {
       const asked = ++requests.current;
       return () => requests.current === asked;
@@ -276,6 +298,9 @@ export function BehaviorEditor({
           onOpenRecent={(entry) => attempt(() => files.openRecent(entry))()}
           onForget={(entry) => recent.forget(entry.id)}
           onExample={(chosen) => begin(newFile(chosen.fileName), chosen.text, chosen)}
+          onOpenDevice={
+            sessionState?.status === "connected" ? attempt(files.openDevice) : undefined
+          }
           fits={fits}
           error={startError}
           focus={closed}
@@ -374,6 +399,11 @@ interface FileActions {
   close(): void;
   /** Open `text` as a new file named `name`. */
   openText(name: string, text: string): void;
+  /**
+   * Open the behavior the attached device runs: as the file run there whose
+   * graph it is, with its names, or as its graph, each node named by its id.
+   */
+  openDevice(): Promise<void>;
   /**
    * Ask to replace the file, with something read later: whether the ask is
    * still the last, nothing else having replaced the file since.
@@ -652,6 +682,12 @@ function Workspace({
     }
     files.openText(DEVICE_FILE, out.text);
   };
+  /** Open what the device runs now, read again, in place of the file. */
+  const openDeviceBehavior = () => {
+    files.openDevice().catch((e: unknown) => {
+      setEditError(e instanceof Error ? e.message : String(e));
+    });
+  };
   // The file as it runs on the device, to open with its names when the
   // device's behavior is viewed.
   const runsAsIs = device.relation === "running" && device.pendingChanges === 0 && runnable;
@@ -787,6 +823,20 @@ function Workspace({
         />
         <div className="be-header-run">
           <RunsOn session={session} />
+          {session && (
+            <button
+              type="button"
+              onClick={openDeviceBehavior}
+              disabled={device.behavior === null}
+              title={
+                device.behavior === null
+                  ? "This device doesn't report its behavior."
+                  : "Open the behavior the device runs, in place of this file."
+              }
+            >
+              Device&apos;s behavior
+            </button>
+          )}
           {session ? (
             <DeviceBar device={device} />
           ) : (
@@ -812,22 +862,7 @@ function Workspace({
           index={index}
           dirty={text !== saved}
           onView={openDevice}
-          onReload={() => {
-            // The read opens nothing once another file or device replaced this one.
-            const current = files.ask();
-            const from = session;
-            const still = () => current() && attachedRef.current === from;
-            session
-              .deviceBehavior()
-              .then((read) => {
-                if (!still()) return;
-                if (read) openDevice(read.graph);
-                else setEditError("The device no longer says what it runs");
-              })
-              .catch((e: unknown) => {
-                if (still()) setEditError(e instanceof Error ? e.message : String(e));
-              });
-          }}
+          onReload={openDeviceBehavior}
           onSelect={(id) => {
             const row = rows.find((r) => r.graphId === id);
             if (row) setSelected(row.key);

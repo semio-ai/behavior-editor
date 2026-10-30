@@ -35,8 +35,12 @@ test.afterEach(async ({ page }) => {
 
 const runsOn = (page: Page) => page.getByRole("status", { name: "Runs on" });
 const banner = (page: Page) => page.getByRole("region", { name: "Device's behavior" });
-const deviceTick = async (page: Page) =>
-  Number((await page.getByLabel("Device tick").textContent())!.replace(/^tick /, ""));
+/** The device's tick, once the device has stated one. */
+async function deviceTick(page: Page): Promise<number> {
+  const readout = page.getByLabel("Device tick");
+  await expect(readout).toHaveText(/^tick \d+$/);
+  return Number((await readout.textContent())!.replace(/^tick /, ""));
+}
 
 /** Open the demo and connect it to the native device's editor bridge. */
 async function connect(page: Page) {

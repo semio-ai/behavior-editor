@@ -23,9 +23,11 @@ const DEVICE = "D";
 const PAGE_DEVICE = "P";
 
 /**
- * The NGBT spectrum's examples, each on a mock device seeded as the spectrum
- * seeds it, and a behavior calling `@arora/dataflow` on an Arora device
- * (`device/`), its inputs seeded.
+ * The NGBT spectrum's examples, which call the mock's math module, each on a
+ * mock device seeded as the spectrum seeds it; and a behavior calling
+ * `@arora/dataflow`, on an Arora device in the page (`device/`), its inputs
+ * seeded. Connected to a device, every example works on that device: the
+ * dataflow one runs on a device carrying `@arora/dataflow`.
  */
 function examples(language: BehaviorText): BehaviorExample[] {
   const mocked: BehaviorExample[] = EXAMPLES.map((e) => ({
@@ -36,7 +38,7 @@ function examples(language: BehaviorText): BehaviorExample[] {
     runtime: () => ({ runtime: new MockArora({ store: e.store }) }),
   }));
   const onDevice: BehaviorExample = {
-    title: "Dataflow, on an Arora device",
+    title: "Dataflow (@arora/dataflow)",
     fileName: "dataflow.bt",
     text: dataflow,
     plotKeys: ["face/level", "rig/sway", "face/smile"],
@@ -61,7 +63,8 @@ function examples(language: BehaviorText): BehaviorExample[] {
 /**
  * The editor, on the mock until the person connects it to a device: over a
  * device's open local bridge, by URL, or to an Arora device in the page, a
- * bridge the host makes itself. Every file but an example then runs there.
+ * bridge the host makes itself. Every file, examples included, then works on
+ * that device.
  */
 function Demo({ language, offered }: { language: BehaviorText; offered: BehaviorExample[] }) {
   const connection = useDeviceSession({ language });

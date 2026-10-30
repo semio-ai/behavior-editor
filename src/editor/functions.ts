@@ -80,12 +80,19 @@ export function writtenName(name: FunctionName): string {
 /**
  * The functions `document` calls that `index` has none of, as written, each
  * once, in the order the file first calls them: its nodes' calls and the
- * calls nested in their arguments.
+ * calls nested in their arguments. A name two modules have is not missing:
+ * the call is ambiguous, which naming the module resolves.
  */
 export function missingFunctions(document: BehaviorDocument, index: FunctionIndex): string[] {
   const missing = new Set<string>();
+  const has = ({ module, name }: FunctionName) =>
+    index.entries.some(
+      (e) =>
+        e.signature.name === name.text &&
+        (module === null || (!e.native && e.signature.module_id === module.text)),
+    );
   const inCall = (call: Call) => {
-    if (!index.lookup(call.function)) missing.add(writtenName(call.function));
+    if (!has(call.function)) missing.add(writtenName(call.function));
     call.arguments.forEach((a) => inExpression(a.value));
   };
   const inExpression = (expression: Expression) => {

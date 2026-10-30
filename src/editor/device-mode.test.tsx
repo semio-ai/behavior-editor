@@ -162,6 +162,27 @@ describe("BehaviorEditor on a device", () => {
     expect(screen.getByRole("button", { name: "Apply 0 changes" })).toBeDisabled();
   });
 
+  it("sends no change that keeps the file from running, and says why", async () => {
+    const { device, type } = await setup(ORDER, graphOf(ORDER.text));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Live edits" })).toBeTruthy());
+    type(`${ORDER.text}\nextra: nope(x: 1)\n`);
+    const offer = await screen.findByRole("region", { name: "Device's behavior" });
+    expect(offer).toHaveTextContent("This file calls functions this device doesn't have: nope.");
+    expect(within(offer).getByRole("status").textContent).toBe(
+      "The device goes on running this file as it last ran: your changes are not sent.",
+    );
+    // A text the parse cannot read whole does not run either.
+    type(`${ORDER.text}\n)(\n`);
+    await waitFor(() =>
+      expect(banner()).toHaveTextContent(
+        "The text has errors: the file runs on the device once they are fixed.",
+      ),
+    );
+    type(ORDER.text);
+    await waitFor(() => expect(banner()).toBeNull());
+    expect(edits(device)).toEqual([]);
+  });
+
   it("tells a change another client made, and reloads or overwrites it", async () => {
     const { device, user } = await setup(ORDER, graphOf(ORDER.text));
     await waitFor(() => expect(screen.getByRole("switch", { name: "Live edits" })).toBeTruthy());

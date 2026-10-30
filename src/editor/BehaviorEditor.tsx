@@ -484,11 +484,13 @@ function Workspace({
     [language, parsed.document, functions],
   );
   // A behavior runs once resolved against its runtime's own functions: one
-  // resolved against another's would name functions it may not have.
+  // resolved against another's would name functions it may not have. Nor does
+  // one whose text has errors: the parse leaves out the lines it could not
+  // read, and the graph would be part of the file.
   const runnable =
     known &&
     resolved.graph.root !== undefined &&
-    !resolved.diagnostics.some((d) => d.severity === "error");
+    ![...parsed.diagnostics, ...resolved.diagnostics].some((d) => d.severity === "error");
   const diff = useCallback(
     (previous: Graph, next: Graph) => language.diff(previous, next),
     [language],

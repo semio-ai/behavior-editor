@@ -325,8 +325,8 @@
   color: var(--be-muted);
 }
 .be-root .be-start-foreign {
-  opacity: 0.6;
   border-style: dashed;
+  background: var(--be-panel-2);
 }
 .be-root .be-start-forget {
   min-width: 32px;

@@ -113,7 +113,16 @@ export function DeviceBanner({
 
   switch (device.relation) {
     case "running":
-      return null;
+      // A change that keeps the file from running is not sent: the device
+      // goes on running the file as it last ran.
+      return blocked ? (
+        <section className="be-banner be-banner-warn" aria-label="Device's behavior">
+          {reason}
+          <p role="status">
+            The device goes on running this file as it last ran: your changes are not sent.
+          </p>
+        </section>
+      ) : null;
     case "reading":
       return (
         <p className="be-banner" role="status">

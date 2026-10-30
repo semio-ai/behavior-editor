@@ -64,7 +64,11 @@ export interface BehaviorRuntime {
    * behavior runs.
    */
   edit(diff: GraphDiff): Promise<void>;
-  /** Advance one tick of `dtMs` milliseconds. */
+  /**
+   * Advance one tick of `dtMs` milliseconds. A runtime following a device on
+   * its own clock makes no tick: it waits for the device's next step, and
+   * reports what changed since the last tick it reported.
+   */
   step(dtMs: number): Promise<TickReport>;
   /** Write a store key; `null` unsets it. */
   write(key: string, value: Value | null): Promise<void>;

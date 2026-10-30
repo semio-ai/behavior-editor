@@ -477,4 +477,15 @@ describe("WebSocketDevice", () => {
     expect((read.keys as string[]).filter((k) => k.startsWith("p/"))).toEqual([]);
     expect(JSON.parse(await device.takeValues("p/new/feedback"))).toEqual([{ u64: 2 }]);
   });
+
+  it(`keeps the values of ${TAKEN_KEYS} keys at most, kept by prefix or by asking`, async () => {
+    const { bridge, device } = await connect();
+    for (let i = 0; i < TAKEN_KEYS + 1; i += 1) await device.takeValues(`k/${i}`);
+    for (let i = 0; i < TAKEN_KEYS + 1; i += 1) bridge.push({ [`k/${i}`]: { u64: i } });
+    bridge.push({ "k/0": { u64: 100 } });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The key asked first was let go of: it gives its value now, not what it was pushed.
+    expect(JSON.parse(await device.takeValues("k/0"))).toEqual([{ u64: 100 }]);
+    expect(JSON.parse(await device.takeValues(`k/${TAKEN_KEYS}`))).toEqual([{ u64: TAKEN_KEYS }]);
+  });
 });

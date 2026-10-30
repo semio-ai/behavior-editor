@@ -219,10 +219,20 @@ export class WebSocketDevice implements AroraDevice {
       this.#taken.delete(key);
       return Promise.resolve(JSON.stringify(taken ?? []));
     }
-    this.#taken.set(key, []);
+    this.#taken.delete(key);
+    this.#keep(key);
     if (taken) return Promise.resolve(JSON.stringify(taken));
     const now = this.#values.get(key);
     return Promise.resolve(JSON.stringify(now === undefined ? [] : [now]));
+  }
+
+  /** Start keeping `key`'s values, past `TAKEN_KEYS` letting go of the key kept longest. */
+  #keep(key: string): unknown[] {
+    const taken: unknown[] = [];
+    this.#taken.set(key, taken);
+    // Map keeps keys in the order they came: the first is the one kept longest.
+    if (this.#taken.size > TAKEN_KEYS) this.#taken.delete(this.#taken.keys().next().value!);
+    return taken;
   }
 
   #isKept(key: string): boolean {
@@ -326,12 +336,7 @@ export class WebSocketDevice implements AroraDevice {
         const kept = this.#isKept(key);
         if (!kept) this.#values.set(key, value);
         let taken = this.#taken.get(key);
-        if (!taken && kept) {
-          taken = [];
-          this.#taken.set(key, taken);
-          // The key kept longest goes: Map keeps keys in the order they came.
-          if (this.#taken.size > TAKEN_KEYS) this.#taken.delete(this.#taken.keys().next().value!);
-        }
+        if (!taken && kept) taken = this.#keep(key);
         if (taken) {
           exact ??= ((parseExact(String(data)) as Message).values ?? {}) as Record<string, unknown>;
           taken.push(exact[key]);

@@ -109,8 +109,14 @@ export class DeviceRuntime implements BehaviorRuntime {
   readonly #options: DeviceRuntimeOptions;
   #running = false;
   #ticks = 0;
-  /** The store as the last step left it, to report what a step changed. */
-  #seen = new Map<string, Value>();
+  /**
+   * The store as the last step reported it, to report what a step changed;
+   * `null` after a start or an edit, when the next step states every key
+   * (`whole`).
+   * The host may read the store meanwhile, and a device on its own clock
+   * changes it under that read: the next step then states it whole.
+   */
+  #seen: Map<string, Value> | null = new Map();
   /** The trace following the behavior's nodes, and the nodes it watches. */
   #trace: { handle: TraceHandle; watched: string[] } | null = null;
   #view = new TraceView();
@@ -137,7 +143,7 @@ export class DeviceRuntime implements BehaviorRuntime {
     this.#root = loaded.graph.root;
     this.#nodes = new Set(loaded.nodes.map((n) => n.id));
     await this.#follow(watchedNodes(loaded));
-    this.#seen = await this.#snapshot();
+    this.#seen = null;
   }
 
   async edit(diff: GraphDiff, next?: Loaded): Promise<void> {
@@ -161,7 +167,7 @@ export class DeviceRuntime implements BehaviorRuntime {
       await this.#readTrace(true);
     }
     // The device applies a call with a step: a step reports what changed since.
-    this.#seen = await this.#snapshot();
+    this.#seen = null;
   }
 
   async step(dtMs: number): Promise<TickReport> {
@@ -169,15 +175,17 @@ export class DeviceRuntime implements BehaviorRuntime {
     const now = await this.#snapshot();
     const changes: TickReport["changes"] = [];
     for (const [key, value] of now) {
-      if (!valueEquals(this.#seen.get(key), value)) changes.push({ key, value });
+      if (!this.#seen || !valueEquals(this.#seen.get(key), value)) changes.push({ key, value });
     }
-    for (const key of this.#seen.keys()) if (!now.has(key)) changes.push({ key, value: null });
+    for (const key of this.#seen?.keys() ?? [])
+      if (!now.has(key)) changes.push({ key, value: null });
+    const store = this.#seen === null ? { changes, whole: true } : { changes };
     this.#seen = now;
-    if (!this.#running) return { tick: 0, changes };
+    if (!this.#running) return { tick: 0, ...store };
     this.#ticks += 1;
-    if (!this.#trace) return { tick: this.#ticks, changes };
+    if (!this.#trace) return { tick: this.#ticks, ...store };
     await this.#readTrace(true);
-    return { tick: this.#ticks, changes, ...this.#view.report(this.#root, this.#nodes) };
+    return { tick: this.#ticks, ...store, ...this.#view.report(this.#root, this.#nodes) };
   }
 
   async write(key: string, value: Value | null): Promise<void> {

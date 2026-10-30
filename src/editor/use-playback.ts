@@ -145,7 +145,10 @@ export function usePlayback(
   const enqueue = useCallback(
     <T>(task: () => Promise<T>) => {
       const next = (queues.get(runtime) ?? Promise.resolve()).then(task);
-      queues.set(runtime, next.catch(() => undefined));
+      queues.set(
+        runtime,
+        next.catch(() => undefined),
+      );
       return next;
     },
     [runtime],
@@ -266,7 +269,8 @@ export function usePlayback(
       const tick = await runtime.step(1000 / rate);
       if (!live()) return;
       setReports((last) => ({ report: tick, previous: last.report }));
-      const next = new Map(storeRef.current);
+      // A tick stating the whole store replaces what is shown.
+      const next = new Map(tick.whole ? [] : storeRef.current);
       for (const { key, value } of tick.changes) {
         if (value === null) next.delete(key);
         else next.set(key, value);
@@ -346,26 +350,34 @@ export function usePlayback(
   };
 }
 
-/** The module functions `runtime` offers, once it has said; and why it could not. */
+/**
+ * The module functions `runtime` offers, once it has said; and why it could
+ * not. `known` is false until the runtime of this render has said: what
+ * another runtime said is not this one's.
+ */
 export function useRuntimeFunctions(runtime: BehaviorRuntime): {
   functions: MethodSignature[];
   error: string | null;
+  known: boolean;
 } {
-  const [state, setState] = useState<{ functions: MethodSignature[]; error: string | null }>({
-    functions: [],
-    error: null,
-  });
+  const [state, setState] = useState<{
+    runtime: BehaviorRuntime | null;
+    functions: MethodSignature[];
+    error: string | null;
+  }>({ runtime: null, functions: [], error: null });
   useEffect(() => {
     let current = true;
     runtime
       .functions()
-      .then((functions) => current && setState({ functions, error: null }))
-      .catch((e: unknown) => current && setState({ functions: [], error: message(e) }));
+      .then((functions) => current && setState({ runtime, functions, error: null }))
+      .catch((e: unknown) => current && setState({ runtime, functions: [], error: message(e) }));
     return () => {
       current = false;
     };
   }, [runtime]);
-  return state;
+  return state.runtime === runtime
+    ? { functions: state.functions, error: state.error, known: true }
+    : { functions: [], error: null, known: false };
 }
 
 /** Whether `a` and `b` say the same of their nodes: each one's name and whether the tree holds it. */

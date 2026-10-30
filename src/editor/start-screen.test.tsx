@@ -4,7 +4,9 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { GREET, ORDER } from "../../fixtures/examples";
-import { loadLanguage } from "../../fixtures/language";
+import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import type { Graph } from "../model/graph";
+import type { MethodSignature } from "../model/signature";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorText } from "../text/language";
 import { BehaviorEditor, type BehaviorEditorProps } from "./BehaviorEditor";
@@ -344,6 +346,32 @@ describe("the start screen", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByText("the first runtime's step failed")).toBeNull();
     expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1");
+  });
+
+  it("runs a behavior on a runtime switched to only once resolved against its own functions", async () => {
+    const first = new MockArora({ store: ORDER.store });
+    // Another catalogue: the same functions under other ids, said late.
+    const renamed = MATH_FUNCTIONS.map((f) => ({ ...f, id: `${f.id.slice(0, -4)}beef` }));
+    let say: (functions: MethodSignature[]) => void = () => {};
+    const second = new MockArora({ store: ORDER.store });
+    second.functions = () => new Promise((resolve) => (say = resolve));
+    const started: Graph[] = [];
+    second.start = (loaded) => {
+      started.push(loaded.graph);
+      return Promise.resolve();
+    };
+    const props = { language, autoPlay: false, defaultText: ORDER.text, fileName: ORDER.file };
+    const { rerender } = render(<BehaviorEditor {...props} runtime={first} />);
+    await screen.findByRole("tree", { name: "Behavior diagram" });
+    rerender(<BehaviorEditor {...props} runtime={second} />);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(started).toEqual([]);
+    say(renamed);
+    await waitFor(() => expect(started).toHaveLength(1));
+    const ids = new Set(renamed.map((f) => f.id));
+    const calls = (started[0]!.nodes ?? []).map((n) => n.function);
+    expect(calls.some((id) => ids.has(id))).toBe(true);
+    expect(calls.some((id) => MATH_FUNCTIONS.some((f) => f.id === id))).toBe(false);
   });
 
   it("says why a recent file did not open", async () => {

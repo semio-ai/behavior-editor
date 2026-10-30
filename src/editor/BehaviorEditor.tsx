@@ -321,13 +321,17 @@ function Workspace({
 
   const parsed = useMemo(() => language.parse(source), [language, source]);
   const natives = useMemo(() => language.natives(), [language]);
-  const { functions, error: functionsError } = useRuntimeFunctions(active);
+  const { functions, error: functionsError, known } = useRuntimeFunctions(active);
   const resolved = useMemo(
     () => language.resolve(parsed.document, functions),
     [language, parsed.document, functions],
   );
+  // A behavior runs once resolved against its runtime's own functions: one
+  // resolved against another's would name functions it may not have.
   const runnable =
-    resolved.graph.root !== undefined && !resolved.diagnostics.some((d) => d.severity === "error");
+    known &&
+    resolved.graph.root !== undefined &&
+    !resolved.diagnostics.some((d) => d.severity === "error");
   const diff = useCallback(
     (previous: Graph, next: Graph) => language.diff(previous, next),
     [language],

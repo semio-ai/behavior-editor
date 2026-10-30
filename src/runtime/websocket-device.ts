@@ -36,6 +36,8 @@ interface Message {
 /** A request waiting for its answer: the bridge answers each in the order it came. */
 interface Waiting {
   answer: string;
+  /** Run as the answer arrives, before any message after it. */
+  received?(message: Message): void;
   resolve(message: Message): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
@@ -214,17 +216,24 @@ export class WebSocketDevice implements AroraDevice {
     const listed = await this.#request({ type: "list_keys" }, "list_keys_resp");
     const keys = ((listed.keys ?? []) as { path: string }[]).map((info) => info.path);
     if (!keys.length) return;
-    const read = await this.#request({ type: "read_values", keys }, "read_values_resp");
-    for (const [key, value] of Object.entries((read.values ?? {}) as Record<string, unknown>)) {
-      this.#values.set(key, value);
-    }
+    // The values seed the store as the answer arrives: a push right behind it
+    // is newer, and must not be overwritten by them.
+    await this.#request({ type: "read_values", keys }, "read_values_resp", (read) => {
+      for (const [key, value] of Object.entries((read.values ?? {}) as Record<string, unknown>)) {
+        this.#values.set(key, value);
+      }
+    });
   }
 
   #check() {
     if (this.#closedWith !== null) throw new Error(this.#closedWith);
   }
 
-  #request(message: Message, answer: string): Promise<Message> {
+  #request(
+    message: Message,
+    answer: string,
+    received?: (message: Message) => void,
+  ): Promise<Message> {
     return new Promise((resolve, reject) => {
       if (this.#closedWith !== null || this.#socket.readyState !== OPEN) {
         reject(new Error(this.#closedWith ?? `the connection to ${this.url} is not open`));
@@ -235,7 +244,7 @@ export class WebSocketDevice implements AroraDevice {
         this.close();
         reject(new Error(`the device at ${this.url} did not answer ${message.type}`));
       }, this.#timeoutMs);
-      this.#waiting.push({ answer, resolve, reject, timer });
+      this.#waiting.push({ answer, received, resolve, reject, timer });
       this.#socket.send(JSON.stringify(message));
     });
   }
@@ -263,8 +272,10 @@ export class WebSocketDevice implements AroraDevice {
     const waiting = this.#waiting.shift();
     if (!waiting) return;
     clearTimeout(waiting.timer);
-    if (message.type === waiting.answer) waiting.resolve(message);
-    else if (message.type === "error") {
+    if (message.type === waiting.answer) {
+      waiting.received?.(message);
+      waiting.resolve(message);
+    } else if (message.type === "error") {
       waiting.reject(
         new Error(
           typeof message.message === "string" ? message.message : "the device answered an error",

@@ -262,6 +262,9 @@ let thisPage: Promise<RecentStore> | null = null;
  */
 const changes = new WeakMap<Promise<RecentStore>, Promise<unknown>>();
 
+/** The editors following each store's list: every change is shown to all of them. */
+const followers = new WeakMap<Promise<RecentStore>, Set<(files: RecentFile[]) => void>>();
+
 /**
  * This page's store, opened once: every editor on the page shares it, and
  * its memory, the list where storage fails, lasts as long as the page.
@@ -279,14 +282,19 @@ export function reopenPageStore() {
 /**
  * The recent files of this browser, kept in `store` (this browser's by
  * default). Each change waits for the one before on the same store, so each
- * starts from the list the one before left.
+ * starts from the list the one before left, and every editor following the
+ * store is shown the list it leaves.
  */
 export function useRecentFiles(store: () => Promise<RecentStore> = pageStore): RecentFiles {
   const held = useMemo(() => store(), [store]);
   const change = useCallback(
     (run: (s: RecentStore) => Promise<RecentFile[]>) => {
       const next = (changes.get(held) ?? Promise.resolve()).then(() => held).then(run);
-      changes.set(held, next.catch(() => undefined));
+      changes.set(
+        held,
+        next.catch(() => undefined),
+      );
+      next.then((list) => followers.get(held)?.forEach((follow) => follow(list)));
       return next;
     },
     [held],
@@ -294,20 +302,25 @@ export function useRecentFiles(store: () => Promise<RecentStore> = pageStore): R
   const [files, setFiles] = useState<readonly RecentFile[]>([]);
   useEffect(() => {
     let current = true;
-    held.then(listRecent).then((list) => current && setFiles(list));
+    const follow = (list: RecentFile[]) => current && setFiles(list);
+    const following = followers.get(held) ?? new Set();
+    followers.set(held, following);
+    following.add(follow);
+    held.then(listRecent).then(follow);
     return () => {
       current = false;
+      following.delete(follow);
     };
   }, [held]);
   const remember = useCallback(
     (file: BehaviorFile, text: string) => {
-      change((s) => rememberFile(s, file, text)).then(setFiles);
+      change((s) => rememberFile(s, file, text));
     },
     [change],
   );
   const forget = useCallback(
     (id: string) => {
-      change((s) => forgetFile(s, id)).then(setFiles);
+      change((s) => forgetFile(s, id));
     },
     [change],
   );

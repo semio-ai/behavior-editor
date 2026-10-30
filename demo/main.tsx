@@ -83,6 +83,8 @@ function Demo({ language, offered }: { language: BehaviorText; offered: Behavior
    * stopped the behavior on it.
    */
   const released = useRef<Promise<void>>(Promise.resolve());
+  /** Settles once the last attempt to connect has, its connection closed if let go of meanwhile. */
+  const settled = useRef<Promise<unknown>>(Promise.resolve());
   // This runs after the editor queued the stop of the behavior on the device,
   // in the same commit: the connection closes once that ran.
   useEffect(() => {
@@ -109,14 +111,22 @@ function Demo({ language, offered }: { language: BehaviorText; offered: Behavior
     const attempt = ++attempts.current;
     setConnecting(true);
     setProblem(null);
-    released.current
-      .then(() => (attempts.current === attempt ? WebSocketDevice.connect(url) : null))
-      .then((device) => {
-        if (!device) return;
-        if (attempts.current !== attempt) {
+    // One attempt at a time: a cancelled one still opening would otherwise
+    // take the bridge's one client slot from this one.
+    const opening = Promise.all([released.current, settled.current]).then(() =>
+      attempts.current === attempt ? WebSocketDevice.connect(url) : null,
+    );
+    settled.current = opening
+      .then(async (device) => {
+        if (device && attempts.current !== attempt) {
           device.close();
-          return;
+          await device.closed;
         }
+      })
+      .catch(() => undefined);
+    opening
+      .then((device) => {
+        if (!device || attempts.current !== attempt) return;
         const runtime = new DeviceRuntime({
           device,
           loadCall: (graph) => language.loadCall(graph),

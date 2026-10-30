@@ -5,7 +5,7 @@ import type { Value } from "../model/value";
 import { DeviceRuntime } from "./device-runtime";
 import { MATH, mathModule } from "./math-module";
 import type { TraceReport } from "./trace";
-import { TAKEN_KEYS, TAKEN_LIMIT, WebSocketDevice } from "./websocket-device";
+import { TAKEN_KEYS, TAKEN_LIMIT, WebSocketDevice, type WebSocketLike } from "./websocket-device";
 
 type Message = Record<string, unknown> & { type: string };
 
@@ -276,6 +276,31 @@ describe("WebSocketDevice", () => {
     );
     await expect(WebSocketDevice.connect(await bridge.url())).rejects.toThrow("store unavailable");
     await closed;
+  });
+
+  it("takes a browser WebSocket as it is, and lets go of one that does not open in time", async () => {
+    const open = (url: string): WebSocketLike => new WebSocket(url);
+    const bridge = new FakeBridge();
+    bridges.push(bridge);
+    const device = await WebSocketDevice.connect(await bridge.url(), { open });
+    devices.push(device);
+    // A socket that never opens.
+    let closed = false;
+    const silent: WebSocketLike = {
+      readyState: 0,
+      send: () => {},
+      close: () => {
+        closed = true;
+      },
+      onopen: null,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    await expect(
+      WebSocketDevice.connect("ws://nowhere", { open: () => silent, timeoutMs: 50 }),
+    ).rejects.toThrow("no device answered at ws://nowhere within 50 ms");
+    expect(closed).toBe(true);
   });
 
   it("refuses to connect where no device answers", async () => {

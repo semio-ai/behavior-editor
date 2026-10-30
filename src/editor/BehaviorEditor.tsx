@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Graph, isEmptyDiff } from "../model/graph";
 import { type NodePath, deleteNode, moveNode, reparent, siblingPath, walk } from "../model/edit";
+import type { MethodSignature } from "../model/signature";
 import { MockArora } from "../runtime/mock-arora";
 import type { BehaviorRuntime } from "../runtime/runtime";
 import type { DeviceSession } from "../session/device-session";
@@ -23,13 +24,13 @@ import {
   problemsText,
   withExtension,
 } from "./file-formats";
-import { functionIndex } from "./functions";
+import { functionIndex, missingFunctions } from "./functions";
 import { type Edit, Inspector } from "./Inspector";
 import { DeviceBanner } from "./DeviceBanner";
 import { DeviceBar } from "./DeviceBar";
 import { PlaybackBar } from "./PlaybackBar";
 import { type RecentFile, useRecentFiles } from "./recent-files";
-import { type BehaviorExample, StartScreen } from "./StartScreen";
+import { type BehaviorExample, type ExampleFit, StartScreen } from "./StartScreen";
 import { behaviorKeys } from "./store-keys";
 import { StorePanel } from "./StorePanel";
 import { TextView } from "./TextView";
@@ -40,13 +41,16 @@ import { askFunctions, usePlayback, useRuntimeFunctions, whenIdle } from "./use-
 export interface BehaviorEditorProps {
   /** The language: its parser, formatter and resolver. */
   language: BehaviorText;
-  /** Where the behavior runs; a mock device with the math module by default. */
+  /**
+   * Where the behavior runs with no device attached; a mock device with the
+   * math module by default.
+   */
   runtime?: BehaviorRuntime;
   /**
    * A session with a device. While it is connected, or lost and connecting
    * again, the editor shows what the device runs and does, and runs the file
-   * on it only when the person asks: see the README's "On a device". An
-   * example that brings its own runtime runs on that runtime.
+   * on it only when the person asks: see the README's "On a device". Every
+   * file opened works on the device then, an example as any other.
    */
   session?: DeviceSession | null;
   /** The file's text, for a controlled editor; `onTextChange` receives every change. */
@@ -96,6 +100,8 @@ interface OpenFile {
   example: BehaviorExample | null;
 }
 
+const NO_EXAMPLES: readonly BehaviorExample[] = [];
+
 /** A new file named `name`, in the format its extension says. */
 const newFile = (name: string): BehaviorFile => ({
   name,
@@ -118,7 +124,7 @@ export function BehaviorEditor({
   defaultText,
   onTextChange,
   fileName = "behavior.bt",
-  examples = [],
+  examples = NO_EXAMPLES,
   moduleNames,
   plotKeys = [],
   autoPlay = true,
@@ -142,6 +148,8 @@ export function BehaviorEditor({
     const text = controlled ?? defaultText;
     return text === undefined ? null : { serial: 0, file: newFile(fileName), text, example: null };
   });
+  // The examples are weighed against the device only while the start screen shows them.
+  const fits = useExampleFits(language, attached, openFile ? NO_EXAMPLES : examples, moduleNames);
   const [startError, setStartError] = useState<string | null>(null);
   /** Whether the start screen shows because the person closed a file. */
   const [closed, setClosed] = useState(false);
@@ -234,7 +242,9 @@ export function BehaviorEditor({
     ran: ran.current,
   };
 
-  // The runtime an example needs, made when it opens and disposed when it closes.
+  // The runtime an example runs on with no device attached, made when it
+  // opens and disposed when it closes. It is made while a device is attached
+  // too, idle, so that letting go of the device hands the file to it at once.
   const [made, setMade] = useState<{ serial: number; runtime: BehaviorRuntime } | null>(null);
   const example = openFile?.example ?? null;
   const opened = openFile?.serial ?? -1;
@@ -266,6 +276,7 @@ export function BehaviorEditor({
           onOpenRecent={(entry) => attempt(() => files.openRecent(entry))()}
           onForget={(entry) => recent.forget(entry.id)}
           onExample={(chosen) => begin(newFile(chosen.fileName), chosen.text, chosen)}
+          fits={fits}
           error={startError}
           focus={closed}
         />
@@ -294,11 +305,63 @@ export function BehaviorEditor({
       moduleNames={moduleNames}
       plotKeys={openFile.example?.plotKeys ?? plotKeys}
       autoPlay={autoPlay}
-      device={example?.runtime ? null : attached}
+      device={attached}
       tab={tab}
       onTab={setTab}
     />
   );
+}
+
+/**
+ * How each of `examples` stands to the device `session` reaches: the
+ * functions it calls that the device lacks, and whether it resolves against
+ * the device's functions. `null` with no device, and until the device said
+ * its functions; each connection asks them again.
+ */
+function useExampleFits(
+  language: BehaviorText,
+  session: DeviceSession | null,
+  examples: readonly BehaviorExample[],
+  moduleNames: Readonly<Record<string, string>> | undefined,
+): ReadonlyMap<BehaviorExample, ExampleFit> | null {
+  const state = useSessionState(session);
+  const connection = state?.status === "connected" ? state : null;
+  const [said, setSaid] = useState<{
+    session: DeviceSession;
+    functions: MethodSignature[];
+  } | null>(null);
+  useEffect(() => {
+    if (!session || !connection) return undefined;
+    let current = true;
+    askFunctions(session)
+      .then((functions) => current && setSaid({ session, functions }))
+      // The start screen marks nothing it could not learn; the file opened tells why.
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [session, connection]);
+  const functions = said && said.session === session ? said.functions : null;
+  return useMemo(() => {
+    if (!functions) return null;
+    const index = functionIndex(language.natives(), functions, moduleNames);
+    return new Map(
+      examples.map((example) => {
+        const parsed = language.parse(example.text);
+        const resolved = language.resolve(parsed.document, functions);
+        const errors = [...parsed.diagnostics, ...resolved.diagnostics].some(
+          (d) => d.severity === "error",
+        );
+        return [
+          example,
+          {
+            missing: missingFunctions(parsed.document, index),
+            runs: !errors && resolved.graph.root !== undefined,
+          },
+        ];
+      }),
+    );
+  }, [functions, language, examples, moduleNames]);
 }
 
 /** What the workspace asks of the editor holding it: the files it opens and remembers. */
@@ -335,6 +398,7 @@ const DEVICE_FILE = "device.bt";
 
 interface WorkspaceProps {
   language: BehaviorText;
+  /** The runtime the file runs on while no device is attached. */
   runtime: BehaviorRuntime;
   open: OpenFile;
   files: FileActions;
@@ -346,7 +410,10 @@ interface WorkspaceProps {
   autoPlay: boolean;
   tab: Tab;
   onTab(tab: Tab): void;
-  /** The session with the device the file runs on, while one is attached. */
+  /**
+   * The session with the device attached, if one is: the file works on the
+   * device, and nothing runs on `runtime`.
+   */
   device: DeviceSession | null;
 }
 
@@ -417,11 +484,13 @@ function Workspace({
     [language, parsed.document, functions],
   );
   // A behavior runs once resolved against its runtime's own functions: one
-  // resolved against another's would name functions it may not have.
+  // resolved against another's would name functions it may not have. Nor does
+  // one whose text has errors: the parse leaves out the lines it could not
+  // read, and the graph would be part of the file.
   const runnable =
     known &&
     resolved.graph.root !== undefined &&
-    !resolved.diagnostics.some((d) => d.severity === "error");
+    ![...parsed.diagnostics, ...resolved.diagnostics].some((d) => d.severity === "error");
   const diff = useCallback(
     (previous: Graph, next: Graph) => language.diff(previous, next),
     [language],
@@ -452,6 +521,20 @@ function Workspace({
     () => uniqueDiagnostics(parsed.diagnostics, resolved.diagnostics),
     [parsed.diagnostics, resolved.diagnostics],
   );
+  // On a device, the file is the device's to run: what keeps it from running
+  // there is told, the functions it calls that the device lacks first.
+  const missing = useMemo(
+    () =>
+      session && known && !functionsError ? missingFunctions(parsed.document, index) : [],
+    [session, known, functionsError, parsed.document, index],
+  );
+  const blocked = !session || !known || functionsError || runnable
+    ? null
+    : missing.length
+      ? `This file calls functions this device doesn't have: ${missing.join(", ")}.`
+      : diagnostics.some((d) => d.severity === "error")
+        ? "The text has errors: the file runs on the device once they are fixed."
+        : "The file has no behavior tree to run yet.";
 
   // While the text has errors, it is the only whole account of the behavior:
   // the parse left out the lines it could not read, so an edit formatted from
@@ -702,26 +785,30 @@ function Workspace({
           error={fileError}
           notice={fileNotice}
         />
-        {session ? (
-          <DeviceBar device={device} />
-        ) : (
-          <PlaybackBar
-            playing={local.playing}
-            onPlayingChange={local.setPlaying}
-            onStep={local.step}
-            onReset={local.reset}
-            rate={local.rate}
-            onRateChange={local.setRate}
-            tick={local.report?.tick ?? 0}
-            root={local.report?.root}
-            runnable={runnable}
-          />
-        )}
+        <div className="be-header-run">
+          <RunsOn session={session} />
+          {session ? (
+            <DeviceBar device={device} />
+          ) : (
+            <PlaybackBar
+              playing={local.playing}
+              onPlayingChange={local.setPlaying}
+              onStep={local.step}
+              onReset={local.reset}
+              rate={local.rate}
+              onRateChange={local.setRate}
+              tick={local.report?.tick ?? 0}
+              root={local.report?.root}
+              runnable={runnable}
+            />
+          )}
+        </div>
       </header>
       {session && (
         <DeviceBanner
           device={device}
           loaded={runnable ? resolved : null}
+          blocked={blocked}
           index={index}
           dirty={text !== saved}
           onView={openDevice}
@@ -847,6 +934,32 @@ function ViewTabs({
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * Where the behavior runs: on the device attached, the editor only following
+ * it, or simulated in the page, on the editor's runtime or the example's.
+ */
+function RunsOn({ session }: { session: DeviceSession | null }) {
+  const state = useSessionState(session);
+  const lost = state?.status === "lost";
+  return session ? (
+    <output
+      className="be-runs-on be-runs-on-device"
+      aria-label="Runs on"
+      title="The behavior runs on the device: nothing ticks in this page."
+    >
+      {`Device${session.label ? ` ${session.label}` : ""}${lost ? " (reconnecting)" : ""}`}
+    </output>
+  ) : (
+    <output
+      className="be-runs-on be-runs-on-simulated"
+      aria-label="Runs on"
+      title="The behavior runs in this page, on a simulated runtime: no device runs it."
+    >
+      Simulated
+    </output>
   );
 }
 

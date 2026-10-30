@@ -44,12 +44,12 @@ serves as is. Elsewhere, pass the module's bytes:
 | Prop | |
 |---|---|
 | `language` | The language service: `createBehaviorText(wasm)`, or any `BehaviorText`. |
-| `runtime` | Where the behavior runs. A `MockArora` with the math module by default. |
-| `session` | A `DeviceSession`: while it is connected, or lost and connecting again, the editor is on that device (below). An example that brings its own runtime runs on that runtime. |
+| `runtime` | Where the behavior runs with no device attached. A `MockArora` with the math module by default. |
+| `session` | A `DeviceSession`: while it is connected, or lost and connecting again, the editor is on that device (below), whatever file is open, an example as any other. |
 | `text`, `onTextChange` | The file's text, for a controlled editor. |
 | `defaultText` | The text an uncontrolled editor starts from. With neither it nor `text`, the editor opens on its start screen. |
 | `fileName` | The name a new file is saved under; its extension says its format. |
-| `examples` | The behaviors the start screen offers, each a `BehaviorExample`: its `title`, `fileName` and `text`, the `plotKeys` it plots, and the `runtime` it needs, if any. None by default. |
+| `examples` | The behaviors the start screen offers, each a `BehaviorExample`: its `title`, `fileName` and `text`, the `plotKeys` it plots, and the `runtime` it runs on with no device attached, if any. None by default. |
 | `moduleNames` | Names the palette shows for module ids. |
 | `plotKeys` | The store keys plotted from the start. |
 | `autoPlay` | Whether the behavior ticks as soon as it resolves (default `true`). |
@@ -57,10 +57,12 @@ serves as is. Elsewhere, pass the module's bytes:
 The editor:
 
 - opens, with no behavior, on a start screen: a new behavior, a file to open,
-  the files opened lately, and the examples the host gives. An example that
-  declares a runtime, such as a device seeded for it, runs on one made when it
-  opens and disposed when another file opens; any other file runs on the
-  editor's runtime. Once a file is open, the File menu holds New, Open, the
+  the files opened lately, and the examples the host gives. With no device
+  attached, an example that declares a runtime, such as a device seeded for
+  it, runs on one made when it opens and disposed when another file opens; any
+  other file runs on the editor's runtime. With a device attached, every file
+  works on the device, and the start screen marks the examples that cannot run
+  there, which still open to be read. Once a file is open, the File menu holds New, Open, the
   recent files, Save, Save As and Close, which goes back to the start screen;
   each asks before discarding unsaved changes.
 - remembers the last ten files opened or saved, per browser, in IndexedDB: a
@@ -291,9 +293,21 @@ followed by its trace, clock and store.
 
 ### The editor on a device
 
+- **The device is where everything opened works.** A new file, a file opened,
+  a recent file or an example: while a device is attached, each works on it,
+  and nothing ticks in the page. Letting go of the device hands the file back
+  to its runtime with no device: the example's own, or the editor's.
+- **The header says where the behavior runs:** **Simulated**, on the editor's
+  or the example's runtime in the page, or **Device** and what the session is
+  connected to.
 - **Attaching is read-only.** The editor reads what the device runs. The
   device steps itself, so its tick, step rate, clock and revision show where
   Play, Step and the rate would.
+- **A file calling functions the device lacks** says so in the banner, by
+  name, and its Run is disabled with that reason; the text's diagnostics point
+  at the calls. The start screen marks each example the device cannot run:
+  the functions it calls that the device lacks, or that it does not resolve
+  against the device's functions.
 - **The file the device runs** — one whose graph is the device's — shows the
   device's node states, and each change of it goes to the device as an edit
   (**Live edits**, on by default). Turned off, the changes wait for **Apply**,
@@ -354,8 +368,10 @@ The demo offers the NGBT spectrum's examples on its start screen, each on a
 mock device seeded for it, and `dataflow.bt` on that Arora device. Its bar
 connects to a running Arora device's open local bridge (`ws://127.0.0.1:9000`
 by default), or to that Arora device in the page through a bridge client of
-its own (`fixtures/page-bridge.ts`); every file but an example then works on
-that device.
+its own (`fixtures/page-bridge.ts`); every file, examples included, then works
+on that device. A device carrying `@arora/dataflow` runs `dataflow.bt`; the
+spectrum's examples call the mock's math module, and are marked as not
+running there.
 
 `npm run lint:rust` and `npm run test:rust` check both crates. The language's
 tests run in release, as its wasm is built: its nesting limit is set for a

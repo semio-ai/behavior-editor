@@ -72,6 +72,8 @@ export class FakeDevice {
   readDelayMs = 0;
   /** Why it refuses to list its keys, while it does. */
   refusesKeys: string | null = null;
+  /** The functions its modules offer: the math module's by default. */
+  functions: MethodSignature[] = mathModule().functions.map((f) => f.signature);
   /** Each node's status, as the next trace report states it. */
   statuses: Record<string, TraceStatus> = {};
   /** The interpreter's tick. */
@@ -216,9 +218,7 @@ export class FakeBridgeClient implements BridgeClient {
 
   describeMethods(prefix?: string): Promise<MethodSignature[]> {
     return this.#answer(() =>
-      mathModule()
-        .functions.map((f) => f.signature)
-        .filter((m) => !prefix || m.name.startsWith(prefix)),
+      this.#device.functions.filter((m) => !prefix || m.name.startsWith(prefix)),
     );
   }
 

@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import type { Graph, GraphDiff } from "../model/graph";
 import type { Loaded } from "../text/language";
 import type { FunctionIndex } from "./functions";
@@ -37,6 +37,11 @@ export interface DeviceBannerProps {
   device: DeviceMode;
   /** The file as it resolves, when it runs. */
   loaded: Loaded | null;
+  /**
+   * Why the file cannot run on the device, when it cannot: told beside the
+   * buttons that would run it, which it disables.
+   */
+  blocked: string | null;
   index: FunctionIndex;
   /** Whether the file has changes not saved: opening another asks first. */
   dirty: boolean;
@@ -57,6 +62,7 @@ export interface DeviceBannerProps {
 export function DeviceBanner({
   device,
   loaded,
+  blocked,
   index,
   dirty,
   onView,
@@ -67,9 +73,22 @@ export function DeviceBanner({
   const [asking, setAsking] = useState<(() => void) | null>(null);
   const lost = device.state?.status !== "connected";
   const guarded = (open: () => void) => () => (dirty ? setAsking(() => open) : open());
-  const runnable = loaded !== null && !lost;
+  const runnable = loaded !== null && blocked === null && !lost;
+  const reasonId = useId();
+  const reason = blocked && (
+    <p className="be-banner-reason" id={reasonId}>
+      {blocked}
+    </p>
+  );
+  const describedBy = blocked ? reasonId : undefined;
   const run = (
-    <button type="button" className="be-primary" disabled={!runnable} onClick={device.run}>
+    <button
+      type="button"
+      className="be-primary"
+      disabled={!runnable}
+      aria-describedby={describedBy}
+      onClick={device.run}
+    >
       Run this file on the device
     </button>
   );
@@ -94,7 +113,16 @@ export function DeviceBanner({
 
   switch (device.relation) {
     case "running":
-      return null;
+      // A change that keeps the file from running is not sent: the device
+      // goes on running the file as it last ran.
+      return blocked ? (
+        <section className="be-banner be-banner-warn" aria-label="Device's behavior">
+          {reason}
+          <p role="status">
+            The device goes on running this file as it last ran: your changes are not sent.
+          </p>
+        </section>
+      ) : null;
     case "reading":
       return (
         <p className="be-banner" role="status">
@@ -107,6 +135,7 @@ export function DeviceBanner({
           <p role="status">
             This device doesn&apos;t report its behavior: the editor cannot show what it runs.
           </p>
+          {reason}
           <div className="be-banner-actions">
             {run}
             <button type="button" disabled={lost} onClick={device.stop}>
@@ -123,11 +152,18 @@ export function DeviceBanner({
               device.status.revision === null ? "" : ` (revision ${device.status.revision})`
             }: this file no longer runs on it, and your changes are not sent.`}
           </p>
+          {reason}
           <div className="be-banner-actions">
             <button type="button" disabled={lost} onClick={guarded(onReload)}>
               Reload from the device
             </button>
-            <button type="button" className="be-danger" disabled={!runnable} onClick={device.run}>
+            <button
+              type="button"
+              className="be-danger"
+              disabled={!runnable}
+              aria-describedby={describedBy}
+              onClick={device.run}
+            >
               Overwrite with mine
             </button>
             {confirm}
@@ -140,6 +176,7 @@ export function DeviceBanner({
         return (
           <section className="be-banner" aria-label="Device's behavior">
             <p role="status">The device runs no behavior.</p>
+            {reason}
             <div className="be-banner-actions">{run}</div>
           </section>
         );
@@ -147,6 +184,7 @@ export function DeviceBanner({
       return (
         <section className="be-banner" aria-label="Device's behavior">
           <p role="status">The device runs another behavior than this file.</p>
+          {reason}
           <div className="be-banner-actions">
             <button type="button" onClick={guarded(() => onView(graph))}>
               View the device&apos;s behavior

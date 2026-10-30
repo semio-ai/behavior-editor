@@ -14,11 +14,20 @@ export interface BehaviorExample {
   /** The store keys plotted when it opens. */
   plotKeys?: readonly string[];
   /**
-   * The runtime it needs, such as a device seeded for it: made when it opens,
-   * and disposed when another file opens or the editor closes. Without it, it
-   * runs on the editor's runtime.
+   * The runtime it runs on with no device attached, such as a device seeded
+   * for it: made when it opens, and disposed when another file opens or the
+   * editor closes. Without it, it runs on the editor's runtime. While a
+   * device is attached, it works on that device, as every file does.
    */
   runtime?(): { runtime: BehaviorRuntime; dispose?(): void };
+}
+
+/** How an example stands to the device attached. */
+export interface ExampleFit {
+  /** The functions it calls that the device does not have, as written. */
+  missing: readonly string[];
+  /** Whether it resolves against the device's functions: it can run there. */
+  runs: boolean;
 }
 
 export interface StartScreenProps {
@@ -29,6 +38,12 @@ export interface StartScreenProps {
   onOpenRecent(file: RecentFile): void;
   onForget(file: RecentFile): void;
   onExample(example: BehaviorExample): void;
+  /**
+   * How each example stands to the device attached, once it said its
+   * functions; `null` with no device. An example that cannot run there is
+   * marked, and still opens, to be read.
+   */
+  fits: ReadonlyMap<BehaviorExample, ExampleFit> | null;
   /** Why the last attempt to open a file failed. */
   error: string | null;
   /** Whether to take the focus: the person came back to it from a file. */
@@ -47,6 +62,7 @@ export function StartScreen({
   onOpenRecent,
   onForget,
   onExample,
+  fits,
   error,
   focus,
 }: StartScreenProps) {
@@ -107,23 +123,42 @@ export function StartScreen({
         {examples.length > 0 && (
           <section aria-labelledby={ids.examples}>
             <h3 id={ids.examples}>Examples</h3>
+            {fits && (
+              <p className="be-fine">
+                They run on the device attached: those greyed out don&apos;t run there, and open
+                to be read.
+              </p>
+            )}
             <ul className="be-start-list">
-              {examples.map((example, i) => (
-                <li key={`${i}:${example.fileName}`}>
-                  <button
-                    type="button"
-                    className="be-start-item"
-                    onClick={() => onExample(example)}
-                  >
-                    <span className="be-start-name">{example.title}</span>
-                    <span className="be-start-meta">{example.fileName}</span>
-                  </button>
-                </li>
-              ))}
+              {examples.map((example, i) => {
+                const fit = fits?.get(example);
+                const foreign = fit !== undefined && !fit.runs;
+                return (
+                  <li key={`${i}:${example.fileName}`}>
+                    <button
+                      type="button"
+                      className={foreign ? "be-start-item be-start-foreign" : "be-start-item"}
+                      onClick={() => onExample(example)}
+                    >
+                      <span className="be-start-name">{example.title}</span>
+                      <span className="be-start-meta">{example.fileName}</span>
+                      {fit && <span className="be-start-meta">{fitText(fit)}</span>}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         )}
       </div>
     </section>
   );
+}
+
+/** What the start screen says of an example on the device attached. */
+function fitText(fit: ExampleFit): string {
+  if (fit.runs) return "Runs on the device";
+  return fit.missing.length
+    ? `Not on this device: calls ${fit.missing.join(", ")}`
+    : "Not on this device: does not resolve against its functions";
 }

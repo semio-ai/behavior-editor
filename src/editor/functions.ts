@@ -1,7 +1,7 @@
 import type { MethodSignature } from "../model/signature";
 import * as N from "../runtime/natives";
 import { functionName } from "../model/edit";
-import type { FunctionName } from "../text/ast";
+import type { BehaviorDocument, Call, Expression, FunctionName } from "../text/ast";
 
 /** A function the palette offers and a node may call. */
 export interface FunctionEntry {
@@ -70,6 +70,57 @@ export function functionIndex(
       return named.find((e) => !e.native && e.signature.module_id === name.module!.text);
     },
   };
+}
+
+/** A function's name as written: `name`, or `module::name`. */
+export function writtenName(name: FunctionName): string {
+  return name.module ? `${name.module.text}::${name.name.text}` : name.name.text;
+}
+
+/**
+ * The functions `document` calls that `index` has none of, as written, each
+ * once, in the order the file first calls them: its nodes' calls and the
+ * calls nested in their arguments. A name two modules have is not missing:
+ * the call is ambiguous, which naming the module resolves.
+ */
+export function missingFunctions(document: BehaviorDocument, index: FunctionIndex): string[] {
+  const missing = new Set<string>();
+  const has = ({ module, name }: FunctionName) =>
+    index.entries.some(
+      (e) =>
+        e.signature.name === name.text &&
+        (module === null || (!e.native && e.signature.module_id === module.text)),
+    );
+  const inCall = (call: Call) => {
+    if (!has(call.function)) missing.add(writtenName(call.function));
+    call.arguments.forEach((a) => inExpression(a.value));
+  };
+  const inExpression = (expression: Expression) => {
+    const kind = expression.kind;
+    switch (kind.type) {
+      case "call":
+        inCall(kind.call);
+        break;
+      case "some":
+        inExpression(kind.value);
+        break;
+      case "array":
+        kind.elements.forEach(inExpression);
+        break;
+      case "select":
+        inExpression(kind.source);
+        break;
+      default:
+        break;
+    }
+  };
+  const inNode = (node: BehaviorDocument["nodes"][number]) => {
+    if (node.target) inExpression(node.target);
+    inCall(node.call);
+    node.children.forEach(inNode);
+  };
+  document.nodes.forEach(inNode);
+  return [...missing];
 }
 
 /** How the diagram draws a node: what it does decides its shape. */

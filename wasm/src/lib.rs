@@ -147,7 +147,8 @@ pub fn open_file(file: &str, format: &str, functions_json: &str) -> Result<Strin
 /// A resolved behavior as a file in `format`: a readable graph in JSON or
 /// YAML, each node by `names_json` (`{ "<node id>": "<name or path>" }`),
 /// each function and port by its name; or a Groot tree (`groot`). Answers
-/// `{ text }`, or `{ problems }` naming what Groot cannot hold.
+/// `{ text }`, or `{ problems }` naming what the format cannot hold, a file
+/// that would not open again among them.
 #[wasm_bindgen(js_name = writeFile)]
 pub fn write_file(
     graph_json: &str,
@@ -160,9 +161,7 @@ pub fn write_file(
     let functions = index(functions_json)?;
     let outcome = match format {
         "groot" => files::write_groot(&graph, &names, &functions),
-        other => Ok(
-            files::write_graph(&graph, &names, graph_format(other)?, &functions).map_err(error)?,
-        ),
+        other => files::write_graph(&graph, &names, graph_format(other)?, &functions),
     };
     outcome_json(outcome)
 }

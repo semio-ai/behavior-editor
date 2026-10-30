@@ -59,7 +59,9 @@ export interface BehaviorText {
    * A resolved behavior as a file in another form than the text: a readable
    * graph in JSON or YAML, each node, function and port by its name; or a
    * Groot tree, which holds no node outside the tree, no binding reading
-   * another node and no node name, and answers those as problems.
+   * another node and no node name, and answers those as problems. A file
+   * that would not open again, such as YAML nested past its 128 levels, is
+   * answered as a problem too.
    */
   writeFile(loaded: Loaded, format: GraphFileFormat, functions: MethodSignature[]): FileOutcome;
 }

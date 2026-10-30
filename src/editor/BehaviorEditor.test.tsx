@@ -613,10 +613,10 @@ describe("BehaviorEditor", () => {
     );
     const { user, texts } = setup(SMILE, { runtime });
     await fileMenu(user, "Open…");
-    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+    // The open asks in the runtime's queue, behind the first request.
     first([]);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.getByRole("button", { name: "Step" })).toBeEnabled();
+    await waitFor(() => expect(texts.at(-1)).toContain("fresh: not(x: {social/greeted})"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Step" })).toBeEnabled());
   });
 
   it("opens no graph file whose functions came from a runtime switched away from", async () => {

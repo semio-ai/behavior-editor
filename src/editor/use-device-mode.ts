@@ -135,12 +135,13 @@ export function useDeviceMode(
    * hook unmounted, has its late answers dropped.
    */
   const shown = useRef(session);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Set again as effects are set up again, as Strict Mode does.
+    shown.current = session;
+    return () => {
       shown.current = null;
-    },
-    [],
-  );
+    };
+  }, [session]);
   /** Why following the device failed at its last step, until the next succeeds. */
   const [followError, setFollowError] = useState<string | null>(null);
 

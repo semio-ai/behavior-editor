@@ -2,7 +2,7 @@
 import "../../fixtures/dom";
 import { act, cleanup, configure, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { type Example, GREET, ORDER } from "../../fixtures/examples";
 import { FAKE_CALLS, FakeDevice } from "../../fixtures/fake-device";
@@ -68,7 +68,12 @@ async function setup(example: Example, running: Graph, prepare?: (device: FakeDe
     );
   }
   const user = userEvent.setup();
-  render(<Host />);
+  // In Strict Mode, as a host's development build renders it.
+  render(
+    <StrictMode>
+      <Host />
+    </StrictMode>,
+  );
   await screen.findByRole("group", { name: "Device" });
   return { device, session, user, type: (text: string) => act(() => typeText(text)) };
 }
@@ -127,7 +132,9 @@ describe("BehaviorEditor on a device", () => {
     const offer = await screen.findByRole("region", { name: "Device's behavior" });
     await user.click(within(offer).getByRole("button", { name: "View the device's behavior" }));
     await waitFor(() => expect(screen.getByText("device.bt")).toBeTruthy());
-    await waitFor(() => expect(banner()).toBeNull());
+    // The file opened is the one the device runs: its changes go to it.
+    expect(await screen.findByRole("switch", { name: "Live edits" })).toBeChecked();
+    expect(banner()).toBeNull();
     const text = (screen.getByRole("textbox", { name: "Behavior text", hidden: true }) as HTMLTextAreaElement).value;
     expect(same(graphOf(text), graphOf(ORDER.text))).toBe(true);
   });
@@ -173,6 +180,25 @@ describe("BehaviorEditor on a device", () => {
     await waitFor(() => expect(screen.getByText("device.bt")).toBeTruthy());
     const text = (screen.getByRole("textbox", { name: "Behavior text", hidden: true }) as HTMLTextAreaElement).value;
     expect(same(graphOf(text), graphOf(GREET.text))).toBe(true);
+  });
+
+  it("opens nothing it read for a reload once another file replaced this one", async () => {
+    const { device, user } = await setup(ORDER, graphOf(ORDER.text));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Live edits" })).toBeTruthy());
+    device.loadedByAnother(graphOf(GREET.text));
+    const alert = await screen.findByText(/Another client changed/);
+    device.readDelayMs = 300;
+    await user.click(
+      within(alert.closest("section")!).getByRole("button", { name: "Reload from the device" }),
+    );
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "New" }));
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(screen.queryByText("device.bt")).toBeNull();
+    const text = (
+      screen.getByRole("textbox", { name: "Behavior text", hidden: true }) as HTMLTextAreaElement
+    ).value;
+    expect(text).toBe("");
   });
 
   it("on a device that does not report its behavior, still runs and stops the file", async () => {

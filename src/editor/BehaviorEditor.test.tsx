@@ -364,6 +364,25 @@ describe("BehaviorEditor", () => {
     expect(calls).toEqual(["edit"]);
   });
 
+  it("keeps a tick's failure after a refused edit, when the text is back", async () => {
+    const runtime = new MockArora({ store: SMILE.store });
+    runtime.edit = () => Promise.reject(new Error("the device refused the edit"));
+    const { user } = setup(SMILE, { runtime });
+    await user.click(await screen.findByRole("button", { name: "Step" }));
+    await waitFor(() => expect(screen.getByLabelText("Tick")).toHaveTextContent("tick 1"));
+    await user.click(screen.getByRole("treeitem", { name: /^cheeks: / }));
+    await user.clear(screen.getByRole("textbox", { name: "b" }));
+    await user.type(screen.getByRole("textbox", { name: "b" }), "0.9{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("the device refused the edit");
+    runtime.step = () => Promise.reject(new Error("the tick failed"));
+    await user.click(screen.getByRole("button", { name: "Step" }));
+    expect(await screen.findByText("the tick failed")).toBeTruthy();
+    await user.clear(screen.getByRole("textbox", { name: "b" }));
+    await user.type(screen.getByRole("textbox", { name: "b" }), "0.6{Enter}");
+    await new Promise((resolve) => setTimeout(resolve, REPARSE_DELAY_MS));
+    expect(screen.getByRole("alert")).toHaveTextContent("the tick failed");
+  });
+
   it("shows what an edit wrote to the store without a tick", async () => {
     const runtime = new MockArora({ store: SMILE.store });
     const edit = runtime.edit.bind(runtime);

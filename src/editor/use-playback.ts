@@ -88,6 +88,11 @@ export function usePlayback(
   const running = useRef<Graph | null>(null);
   /** Whether the runtime refused the last edit: the error shown is that refusal. */
   const refused = useRef(false);
+  /** Show why an operation other than an edit failed: the error is no edit's refusal. */
+  const fail = useCallback((e: unknown) => {
+    refused.current = false;
+    setError(message(e));
+  }, []);
   /** Whether there is a behavior to tick: `loaded` is not `null`. */
   const runnable = useRef(loaded !== null);
   const stepping = useRef(false);
@@ -135,8 +140,8 @@ export function usePlayback(
     enqueue(async () => {
       setPending(new Set());
       await readStore();
-    }).catch((e: unknown) => setError(message(e)));
-  }, [enqueue, readStore, setPending]);
+    }).catch(fail);
+  }, [enqueue, readStore, setPending, fail]);
 
   /** Start `behavior` when none runs, or edit the one running into it. */
   const run = useCallback(
@@ -225,13 +230,13 @@ export function usePlayback(
       });
     })
       .catch((e: unknown) => {
-        setError(message(e));
+        fail(e);
         setPlaying(false);
       })
       .finally(() => {
         stepping.current = false;
       });
-  }, [runtime, rate, enqueue, setStore, setPending, readKeys]);
+  }, [runtime, rate, enqueue, setStore, setPending, readKeys, fail]);
 
   const ticking = playing && loaded !== null;
   useEffect(() => {
@@ -256,9 +261,9 @@ export function usePlayback(
         else next.set(key, value);
         setStore(next);
         setPending(new Set([...pendingRef.current, key]));
-      }).catch((e: unknown) => setError(message(e)));
+      }).catch(fail);
     },
-    [runtime, enqueue, setStore, setPending],
+    [runtime, enqueue, setStore, setPending, fail],
   );
 
   return {

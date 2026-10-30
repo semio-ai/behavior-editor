@@ -94,6 +94,14 @@ describe("the diagram's rows", () => {
   });
 });
 
+/** The layout of `text`, resolved against the mock device's functions. */
+function layoutOf(text: string) {
+  const { document } = language.parse(text);
+  const loaded = language.resolve(document, MATH_FUNCTIONS);
+  const index = functionIndex(language.natives(), MATH_FUNCTIONS);
+  return layoutDiagram(diagramRows(document, index, loaded.nodes), new Set());
+}
+
 describe("the diagram's outputs", () => {
   it("names each output: _ret where it is written, then the parameters a function writes back", () => {
     const rows = rowsOf(RETURN_VALUES);
@@ -154,6 +162,26 @@ describe("the diagram's outputs", () => {
     expect(wire.d).not.toContain("C");
     const ys = [...wire.d.matchAll(/V(-?[\d.]+)/g)].map((m) => Number(m[1]));
     expect(Math.min(...ys)).toBeLessThan(Math.min(reader.y, producer.y));
+  });
+
+  it("routes a wire to a reader under its producer across the gap between them", () => {
+    const layout = layoutOf("p: sequence\n  succeed\n  identity(x: @p._ret)\n");
+    const [producer, reader] = [layout.boxes.get("0")!, layout.boxes.get("0.1")!];
+    const wire = layout.wires.find((w) => w.from === "0" && w.to === "0.1")!;
+    const across = Number(/V(-?[\d.]+)/.exec(wire.d)![1]);
+    expect(across).toBeGreaterThan(producer.y + producer.h);
+    expect(across).toBeLessThan(reader.y);
+  });
+
+  it("curves a wire to the sibling on its right within the gap between them", () => {
+    const layout = layoutOf("sequence\n  a: identity(x: 1)\n  identity(x: @a._ret)\n");
+    const [producer, reader] = [layout.boxes.get("0.0")!, layout.boxes.get("0.1")!];
+    const wire = layout.wires.find((w) => w.from === "0.0" && w.to === "0.1")!;
+    const xs = /C(-?[\d.]+),[^ ]+ (-?[\d.]+),/.exec(wire.d)!.slice(1).map(Number);
+    for (const x of xs) {
+      expect(x).toBeGreaterThanOrEqual(producer.x + producer.w);
+      expect(x).toBeLessThanOrEqual(reader.x);
+    }
   });
 
   it("starts a wire at the output it reads", () => {

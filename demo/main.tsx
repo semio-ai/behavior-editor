@@ -77,11 +77,17 @@ function Demo({ language, offered }: { language: BehaviorText; offered: Behavior
   const attempts = useRef(0);
   /** A connection the person let go of, closed once the editor stopped the behavior on it. */
   const [releasing, setReleasing] = useState<Connected | null>(null);
+  /**
+   * Settles once the connection let go of last is closed: the bridge serves
+   * one client, so a new connection would take its place before the editor
+   * stopped the behavior on it.
+   */
+  const released = useRef<Promise<void>>(Promise.resolve());
   // This runs after the editor queued the stop of the behavior on the device,
   // in the same commit: the connection closes once that ran.
   useEffect(() => {
     if (!releasing) return;
-    whenIdle(releasing.runtime).then(() => releasing.device.close());
+    released.current = whenIdle(releasing.runtime).then(() => releasing.device.close());
   }, [releasing]);
 
   // A connection the device closes, or that another client takes, says why.
@@ -103,8 +109,10 @@ function Demo({ language, offered }: { language: BehaviorText; offered: Behavior
     const attempt = ++attempts.current;
     setConnecting(true);
     setProblem(null);
-    WebSocketDevice.connect(url)
+    released.current
+      .then(() => (attempts.current === attempt ? WebSocketDevice.connect(url) : null))
       .then((device) => {
+        if (!device) return;
         if (attempts.current !== attempt) {
           device.close();
           return;

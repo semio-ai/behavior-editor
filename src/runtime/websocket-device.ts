@@ -65,11 +65,11 @@ export const TAKEN_KEYS = 32;
  * follows it or not, and pushes what each step changed. `step` waits for the
  * next push carrying the device's clock, `arora/time`, or answers after
  * `dtMs` when none comes. The store is read from what the device pushed,
- * which starts as what it held when the connection opened: a read is as
- * current as the device's last step. `takeValues` gives every value a key was
- * pushed, the last `TAKEN_LIMIT` of them, for a key that changes at each of
- * the device's steps, as a trace's
- * reports do.
+ * which starts as what it held when the connection opened, and which each
+ * step reads again whole, as the device pushes what it sets and not what it
+ * unsets: a read is as current as the device's last step. `takeValues` gives
+ * every value a key was pushed, the last `TAKEN_LIMIT` of them, for a key that
+ * changes at each of the device's steps, as a trace's reports do.
  *
  * A request is answered in the order it was sent, as the bridge answers its
  * messages one at a time; a request with no answer within the timeout, or
@@ -216,9 +216,9 @@ export class WebSocketDevice implements AroraDevice {
     return JSON.stringify(keys.map((info) => [info.path, info.__meta ?? {}]));
   }
 
-  step(dtMs: number): Promise<void> {
+  async step(dtMs: number): Promise<void> {
     this.#check();
-    return new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined = undefined;
       const stepped = () => {
         clearTimeout(timer);
@@ -227,6 +227,24 @@ export class WebSocketDevice implements AroraDevice {
       };
       timer = setTimeout(stepped, dtMs);
       this.#stepped.push(stepped);
+    });
+    await this.#reconcile();
+  }
+
+  /**
+   * Read every key the store holds again: the device pushes what it sets, not
+   * what it unsets, so a key it no longer answers for is let go here. The
+   * answer is applied as it arrives, after every push before it.
+   */
+  async #reconcile() {
+    const keys = [...this.#values.keys()];
+    if (!keys.length) return;
+    await this.#request({ type: "read_values", keys }, "read_values_resp", (read) => {
+      const values = (read.values ?? {}) as Record<string, unknown>;
+      for (const key of keys) {
+        if (key in values) this.#values.set(key, values[key]);
+        else this.#values.delete(key);
+      }
     });
   }
 

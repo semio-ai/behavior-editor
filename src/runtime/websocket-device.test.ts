@@ -202,6 +202,17 @@ describe("WebSocketDevice", () => {
     expect(JSON.parse(await device.read("face/smile"))).toEqual({ f64: 0.4 });
   });
 
+  it("lets go of a key the device unset, which it pushes nothing for", async () => {
+    const { bridge, device } = await connect();
+    expect(JSON.parse(await device.read("sensor/distance"))).toEqual({ f32: 0.5 });
+    delete bridge.values["sensor/distance"];
+    const step = device.step(5_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    bridge.step();
+    await step;
+    expect(JSON.parse(await device.read("sensor/distance"))).toBeNull();
+  });
+
   it("answers a step after its time when the device does not step", async () => {
     const { device } = await connect();
     const started = Date.now();

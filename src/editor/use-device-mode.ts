@@ -10,7 +10,7 @@ import type {
 } from "../session/device-session";
 import { useSessionState } from "../session/use-device-session";
 import type { Loaded } from "../text/language";
-import { withTick } from "./use-playback";
+import { withTick } from "./use-functions";
 
 /**
  * How the file open stands to the behavior the device runs:
@@ -281,6 +281,22 @@ export function useDeviceMode(
       setBehavior((b) => (b ? { ...b, graph: next.graph } : b));
     });
   }, [session, enqueue, setRunningGraph, markChanged]);
+
+  // An Arora the page steps is the page's own: a file opened on it runs there
+  // at once, as soon as it runs at all. A device stepping itself, and an
+  // Arora the editor switches to with the file open, run it only when asked:
+  // what they run is not the editor's to replace unasked.
+  const runsAtOnce = useRef(session?.clock === "driven");
+  useEffect(() => {
+    if (!runsAtOnce.current || !session || !connected || !loaded) return;
+    if (session.clock !== "driven" || running !== null || changed || behavior === undefined) return;
+    runsAtOnce.current = false;
+    // The Arora runs the file already: it is followed as it runs, not loaded afresh.
+    if (behavior && isEmptyDiff(diff(behavior.graph, loaded.graph))) return;
+    run();
+  }, [session, connected, loaded, running, changed, behavior, diff, run]);
+  // Switched to another Arora, the file is that one's to run when asked.
+  if (known !== session) runsAtOnce.current = false;
 
   const stop = useCallback(() => {
     if (!session) return;

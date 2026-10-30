@@ -84,7 +84,15 @@ export function writtenName(name: FunctionName): string {
  * the call is ambiguous, which naming the module resolves.
  */
 export function missingFunctions(document: BehaviorDocument, index: FunctionIndex): string[] {
-  const missing = new Set<string>();
+  return [...new Set(unknownCalls(document, index).map((call) => writtenName(call.function)))];
+}
+
+/**
+ * The calls of `document` to a function `index` has none of, in the order the
+ * file makes them: its nodes' calls and the calls nested in their arguments.
+ */
+export function unknownCalls(document: BehaviorDocument, index: FunctionIndex): Call[] {
+  const unknown: Call[] = [];
   const has = ({ module, name }: FunctionName) =>
     index.entries.some(
       (e) =>
@@ -92,7 +100,7 @@ export function missingFunctions(document: BehaviorDocument, index: FunctionInde
         (module === null || (!e.native && e.signature.module_id === module.text)),
     );
   const inCall = (call: Call) => {
-    if (!has(call.function)) missing.add(writtenName(call.function));
+    if (!has(call.function)) unknown.push(call);
     call.arguments.forEach((a) => inExpression(a.value));
   };
   const inExpression = (expression: Expression) => {
@@ -120,7 +128,7 @@ export function missingFunctions(document: BehaviorDocument, index: FunctionInde
     node.children.forEach(inNode);
   };
   document.nodes.forEach(inNode);
-  return [...missing];
+  return unknown;
 }
 
 /** How the diagram draws a node: what it does decides its shape. */

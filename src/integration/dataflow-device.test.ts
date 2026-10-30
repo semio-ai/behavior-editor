@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import initDataflowDevice, { DataflowDevice } from "../../device/pkg/dataflow_device.js";
-import { DATAFLOW_INPUTS } from "../../fixtures/devices/dataflow";
+import { DATAFLOW } from "../../fixtures/examples";
 import { loadLanguage } from "../../fixtures/language";
 import type { MethodSignature } from "../model/signature";
 import { type Value, valueNumber, valueString } from "../model/value";
@@ -21,7 +21,6 @@ import type { BehaviorText, Loaded } from "../text/language";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
-const FILE = join(root, "fixtures", "devices", "dataflow.bt");
 const NAMESPACE = "D";
 const DT_MS = 20;
 
@@ -33,14 +32,14 @@ beforeAll(async () => {
     module_or_path: await readFile(join(root, "device", "pkg", "dataflow_device_bg.wasm")),
   });
   language = await loadLanguage();
-  text = await readFile(FILE, "utf8");
+  text = DATAFLOW.text;
 });
 
 let device: DataflowDevice;
 let runtime: DeviceRuntime;
 
 beforeEach(() => {
-  device = new DataflowDevice(NAMESPACE, JSON.stringify(DATAFLOW_INPUTS));
+  device = new DataflowDevice(NAMESPACE, JSON.stringify(DATAFLOW.inputs));
   runtime = new DeviceRuntime({
     device,
     deviceId: NAMESPACE,

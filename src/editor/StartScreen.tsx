@@ -1,5 +1,4 @@
 import { useEffect, useId, useRef } from "react";
-import type { BehaviorRuntime } from "../runtime/runtime";
 import { labelOf } from "./file-formats";
 import type { RecentFile } from "./recent-files";
 
@@ -13,13 +12,6 @@ export interface BehaviorExample {
   text: string;
   /** The store keys plotted when it opens. */
   plotKeys?: readonly string[];
-  /**
-   * The runtime it runs on with no device attached, such as a device seeded
-   * for it: made when it opens, and disposed when another file opens or the
-   * editor closes. Without it, it runs on the editor's runtime. While a
-   * device is attached, it works on that device, as every file does.
-   */
-  runtime?(): { runtime: BehaviorRuntime; dispose?(): void };
 }
 
 /** How an example stands to the device attached. */

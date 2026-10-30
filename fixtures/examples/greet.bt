@@ -1,16 +1,20 @@
 # Greet, then rest: control around dataflow. A leaf whose return value goes to
-# a key writes it each time it ticks, and succeeds.
+# a key writes it each time it ticks, and succeeds; a damp whose state is a key
+# eases that key from wherever it is.
 fallback  # greet or rest
   sequence  # greet
-    truthy(x: {person/visible})
-    truthy(x: @fresh._ret)  # not greeted yet
-    parallel  # wave until the timer ends
-      {rig/arm_raise} = damp(target: 1, half_life: 0.12, state: none, initial: {rig/arm_raise})
-      {rig/arm_wave} = mul(a: oscillator(t: {arora/time}, frequency: 1.6), b: 0.6)
-      wait(seconds: 2, now: {arora/time}, since: none)
-    {social/greeted} = identity(x: true)
+    equal(a: {person/visible}, b: true)
+    equal(a: @fresh._ret, b: true)  # not greeted yet
+    parallel  # wave until two seconds have passed
+      damp(in: 1f32, param.half_life: 0.12f32, dt: {arora/dt}, state: {rig/arm_raise})
+      {rig/arm_wave} = multiply(operand_0: oscillator(frequency: 1.6f32, t: {arora/time}), operand_1: 0.6f32)
+      fallback  # wait
+        equal(a: @waved._ret, b: 2f32)
+        running
+    {social/greeted} = not(in: false)
   parallel  # rest
-    {rig/arm_raise} = damp(target: 0, half_life: 0.2, state: none, initial: {rig/arm_raise})
-    {rig/arm_wave} = damp(target: 0, half_life: 0.2, state: none, initial: {rig/arm_wave})
+    damp(in: 0f32, param.half_life: 0.2f32, dt: {arora/dt}, state: {rig/arm_raise})
+    damp(in: 0f32, param.half_life: 0.2f32, dt: {arora/dt}, state: {rig/arm_wave})
 
-fresh: not(x: {social/greeted})
+fresh: not(in: {social/greeted})
+waved: slew(in: 2f32, param.max_rate: 1f32, dt: {arora/dt}, state: 0f32)  # seconds waved, up to 2

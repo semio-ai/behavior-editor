@@ -1,13 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { EXAMPLES } from "../../fixtures/examples";
-import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import { loadLanguage } from "../../fixtures/language";
+import { DATAFLOW_FUNCTIONS } from "../../fixtures/local-arora";
 import { type Graph, applyDiff, changedNodes, isEmptyDiff } from "./graph";
 
-/** `graph` with its nodes in id order: a graph's node order means nothing to an interpreter. */
-const sorted = (graph: Graph): Graph => ({
-  ...graph,
-  nodes: [...(graph.nodes ?? [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
-});
+/**
+ * Every `f32` in `value` as the float it is: the language writes one as the
+ * nearest decimal or as its exact widening, the same `f32` either way.
+ */
+const f32s = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(f32s)
+    : value && typeof value === "object"
+      ? Object.fromEntries(
+          Object.entries(value).map(([k, v]) => [
+            k,
+            k === "f32" && typeof v === "number" ? Math.fround(v) : f32s(v),
+          ]),
+        )
+      : value;
+
+/**
+ * `graph` with its nodes in id order, a graph's node order meaning nothing to
+ * an interpreter, and its `f32`s as the floats they are.
+ */
+const sorted = (graph: Graph): Graph =>
+  f32s({
+    ...graph,
+    nodes: [...(graph.nodes ?? [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+  }) as Graph;
 
 describe("applyDiff", () => {
   it("takes every example's graph to every other's by the diff the language gives", async () => {
@@ -15,7 +36,7 @@ describe("applyDiff", () => {
     const graphs = [
       {},
       ...EXAMPLES.map(
-        (e) => language.resolve(language.parse(e.text).document, MATH_FUNCTIONS).graph,
+        (e) => language.resolve(language.parse(e.text).document, DATAFLOW_FUNCTIONS).graph,
       ),
     ];
     for (const from of graphs) {

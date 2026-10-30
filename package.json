@@ -1,6 +1,6 @@
 {
   "name": "@semio/behavior-editor",
-  "description": "An editor for Arora behavior trees and their detached nodes: a diagram and the text language side by side, run against a device or a mock.",
+  "description": "An editor for Arora behavior trees and their detached nodes: a diagram and the text language side by side, run on an Arora: a local one in the page, or a device connected to.",
   "version": "0.0.0",
   "repository": {
     "type": "git",
@@ -22,6 +22,12 @@
       "import": "./dist/websocket.mjs",
       "require": "./dist/websocket.js"
     },
+    "./local-arora": {
+      "types": "./dist/local-arora.d.ts",
+      "source": "./src/local-arora/index.ts",
+      "import": "./dist/local-arora.mjs",
+      "require": "./dist/local-arora.js"
+    },
     "./styles.css": {
       "source": "./src/styles.css",
       "default": "./dist/styles.css"
@@ -29,6 +35,10 @@
     "./wasm": {
       "types": "./wasm/pkg/behavior_text.d.ts",
       "default": "./wasm/pkg/behavior_text.js"
+    },
+    "./device": {
+      "types": "./device/pkg/dataflow_device.d.ts",
+      "default": "./device/pkg/dataflow_device.js"
     }
   },
   "sideEffects": [
@@ -41,13 +51,17 @@
     "wasm/pkg/behavior_text.d.ts",
     "wasm/pkg/behavior_text_bg.wasm",
     "wasm/pkg/behavior_text_bg.wasm.d.ts",
+    "device/pkg/dataflow_device.js",
+    "device/pkg/dataflow_device.d.ts",
+    "device/pkg/dataflow_device_bg.wasm",
+    "device/pkg/dataflow_device_bg.wasm.d.ts",
     "LICENSE"
   ],
   "scripts": {
     "build:wasm": "wasm-pack build wasm --target web --release --no-pack --out-dir pkg --out-name behavior_text -- --locked && rm -f wasm/pkg/.gitignore",
-    "build:device": "wasm-pack build device --target web --dev --no-pack --out-dir pkg --out-name dataflow_device -- --locked && rm -f device/pkg/.gitignore",
-    "build": "tsup --entry.index src/index.ts --entry.websocket src/websocket/index.ts --entry.styles src/styles.css --format esm,cjs --dts.entry.index src/index.ts --dts.entry.websocket src/websocket/index.ts --external react",
-    "dev": "tsup --entry.index src/index.ts --entry.websocket src/websocket/index.ts --entry.styles src/styles.css --format esm,cjs --watch --dts.entry.index src/index.ts --dts.entry.websocket src/websocket/index.ts --external react",
+    "build:device": "wasm-pack build device --target web --release --no-pack --out-dir pkg --out-name dataflow_device -- --locked && rm -f device/pkg/.gitignore",
+    "build": "tsup --entry.index src/index.ts --entry.websocket src/websocket/index.ts --entry.local-arora src/local-arora/index.ts --entry.styles src/styles.css --format esm,cjs --dts.entry.index src/index.ts --dts.entry.websocket src/websocket/index.ts --dts.entry.local-arora src/local-arora/index.ts --external react",
+    "dev": "tsup --entry.index src/index.ts --entry.websocket src/websocket/index.ts --entry.local-arora src/local-arora/index.ts --entry.styles src/styles.css --format esm,cjs --watch --dts.entry.index src/index.ts --dts.entry.websocket src/websocket/index.ts --dts.entry.local-arora src/local-arora/index.ts --external react",
     "demo": "vite --config demo/vite.config.ts",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",

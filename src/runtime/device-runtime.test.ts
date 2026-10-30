@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { GREET, ORDER } from "../../fixtures/examples";
+import { DATAFLOW_FUNCTIONS, loadedOf } from "../../fixtures/local-arora";
 import type { Graph, GraphDiff } from "../model/graph";
 import type { Value } from "../model/value";
 import { type AroraDevice, DeviceRuntime } from "./device-runtime";
-import { MATH, mathModule } from "./math-module";
 import type { TraceReport } from "./trace";
 
 /**
@@ -18,7 +18,7 @@ class FakeDevice implements AroraDevice {
   onStep: (store: Map<string, Value>) => void = () => {};
 
   describeMethods() {
-    return JSON.stringify(mathModule().functions.map((f) => f.signature));
+    return JSON.stringify(DATAFLOW_FUNCTIONS);
   }
   call(callJson: string) {
     this.calls.push(callJson);
@@ -48,6 +48,10 @@ class FakeDevice implements AroraDevice {
   }
 }
 
+/** The examples' behaviors, resolved against `@arora/dataflow`'s functions. */
+const order = await loadedOf(ORDER);
+const greet = await loadedOf(GREET);
+
 function setup() {
   const device = new FakeDevice();
   const loaded: Graph[] = [];
@@ -72,20 +76,22 @@ describe("DeviceRuntime", () => {
     const { runtime } = setup();
     const names = (await runtime.functions()).map((f) => f.name);
     expect(names).toContain("damp");
-    expect((await runtime.functions()).find((f) => f.name === "add")?.id).toBe(MATH.add.id);
+    expect((await runtime.functions()).find((f) => f.name === "add")?.id).toBe(
+      DATAFLOW_FUNCTIONS.find((f) => f.name === "add")!.id,
+    );
   });
 
   it("starts a behavior through the device's call path", async () => {
     const { device, runtime, loaded } = setup();
-    await runtime.start(ORDER.loaded);
-    expect(loaded).toEqual([ORDER.loaded.graph]);
+    await runtime.start(order);
+    expect(loaded).toEqual([order.graph]);
     expect(device.calls).toEqual([JSON.stringify({ load: 1 })]);
   });
 
   it("reports a step's changes from the store an edit left", async () => {
     const { device, runtime } = setup();
     device.store.set("k", { f64: 1 });
-    await runtime.start(ORDER.loaded);
+    await runtime.start(order);
     // As a device applying the call with a step at zero dt.
     const call = device.call.bind(device);
     device.call = (json: string) => {
@@ -101,7 +107,7 @@ describe("DeviceRuntime", () => {
     const { device, runtime, edited } = setup();
     const diff: GraphDiff = { remove: ["n"] };
     await expect(runtime.edit(diff)).rejects.toThrow(/no behavior runs/);
-    await runtime.start(ORDER.loaded);
+    await runtime.start(order);
     await runtime.edit(diff);
     expect(edited).toEqual([diff]);
     expect(device.calls).toEqual([JSON.stringify({ load: 1 }), JSON.stringify({ edit: 1 })]);
@@ -113,7 +119,7 @@ describe("DeviceRuntime", () => {
     const { device, runtime } = setup();
     device.store.set("v", { f64: 0 });
     device.store.set("gone", { bool: true });
-    await runtime.start(ORDER.loaded);
+    await runtime.start(order);
     device.onStep = (store) => {
       store.set("v", { f64: 1 });
       store.delete("gone");
@@ -166,7 +172,7 @@ describe("DeviceRuntime", () => {
 
   it("stops the behavior by loading the empty graph", async () => {
     const { device, runtime, loaded } = setup();
-    await runtime.start(ORDER.loaded);
+    await runtime.start(order);
     await runtime.stop();
     expect(loaded.at(-1)).toEqual({});
     expect(device.calls.at(-1)).toBe(JSON.stringify({ load: 2 }));
@@ -178,7 +184,7 @@ describe("DeviceRuntime", () => {
     device.call = () => {
       throw new Error("unknown module");
     };
-    await expect(runtime.start(ORDER.loaded)).rejects.toThrow("unknown module");
+    await expect(runtime.start(order)).rejects.toThrow("unknown module");
   });
 
   describe("with a trace", () => {
@@ -234,15 +240,15 @@ describe("DeviceRuntime", () => {
       return { device, runtime, write, traceCalls, halts, decoded, ...rest };
     }
 
-    const root = ORDER.loaded.graph.root!;
+    const root = order.graph.root!;
 
     it("reports each node as the trace's reports leave it, watching the named and detached nodes", async () => {
       const { runtime, write, traceCalls } = traced();
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       expect(traceCalls()).toEqual([
         {
           trace: {
-            values: ORDER.loaded.nodes
+            values: order.nodes
               .filter((n) => n.name !== null || !n.attached)
               .map((n) => n.id),
           },
@@ -258,7 +264,7 @@ describe("DeviceRuntime", () => {
 
     it("starts the trace over past a report it did not read", async () => {
       const { runtime, write, traceCalls, halts } = traced();
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       write(1, { tick: 1, status: [[root, "running"]] });
       await runtime.step(10);
       write(1, { tick: 4, since: 3, status: [[root, "failure"]] });
@@ -271,16 +277,16 @@ describe("DeviceRuntime", () => {
 
     it("starts the trace over when an edit changes the nodes it watches", async () => {
       const { runtime, traceCalls } = traced();
-      await runtime.start(ORDER.loaded);
-      await runtime.edit({ remove: ["n"] }, ORDER.loaded);
+      await runtime.start(order);
+      await runtime.edit({ remove: ["n"] }, order);
       expect(traceCalls()).toHaveLength(1);
-      await runtime.edit({ remove: ["n"] }, GREET.loaded);
+      await runtime.edit({ remove: ["n"] }, greet);
       expect(traceCalls()).toHaveLength(2);
     });
 
     it("follows the root and the nodes a diff sets when it is given no behavior", async () => {
       const { runtime, write } = traced();
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       await runtime.edit({
         set: [{ id: "added", function: "f" }],
         root: "added",
@@ -302,11 +308,11 @@ describe("DeviceRuntime", () => {
 
     it("watches the nodes an empty diff names anew, sending the device no edit", async () => {
       const { device, runtime, traceCalls } = traced();
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       const calls = device.calls.length;
       const renamed = {
-        ...ORDER.loaded,
-        nodes: ORDER.loaded.nodes.map((n) =>
+        ...order,
+        nodes: order.nodes.map((n) =>
           n.attached ? { ...n, name: n.name ?? `n${n.path}` } : n,
         ),
       };
@@ -329,7 +335,7 @@ describe("DeviceRuntime", () => {
       });
       // The trace has already written past its first report when it is first read.
       write(1, { tick: 7, since: 6, status: [[root, "running"]] });
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       expect(traceCalls()).toHaveLength(1);
       await runtime.step(10);
       expect(traceCalls()).toHaveLength(2);
@@ -337,7 +343,7 @@ describe("DeviceRuntime", () => {
 
     it("lets go of a root a diff given no behavior removes, before the root it sets", async () => {
       const { runtime, write } = traced();
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       await runtime.edit({ remove: [root], set: [{ id: root, function: "f" }] });
       write(1, { tick: 1, status: [[root, "failure"]] });
       const report = await runtime.step(10);
@@ -351,7 +357,7 @@ describe("DeviceRuntime", () => {
         '{"tick":1,"values":[{"node":"n","port":"p","value":{"u64":18446744073709551615}}]}';
       // A device that gives every value it kept.
       Object.assign(device, { takeValues: () => `[${big}]` });
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       expect(decoded).toEqual([big]);
       // A device read for its latest: the report is handed on as it is read.
       Object.assign(device, { takeValues: undefined });
@@ -365,11 +371,11 @@ describe("DeviceRuntime", () => {
 
     it("shows nothing of the behavior before when one is started afresh", async () => {
       const { runtime, write } = traced();
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       write(1, { tick: 1, status: [[root, "running"]] });
       expect((await runtime.step(10)).root).toBe("R");
       await runtime.stop();
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       const report = await runtime.step(10);
       expect(report.root).toBeUndefined();
       expect(report.statuses).toEqual({});
@@ -377,11 +383,11 @@ describe("DeviceRuntime", () => {
 
     it("takes no report of a new trace before its first, whatever the old trace's last tick", async () => {
       const { runtime, write, traceCalls } = traced();
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       write(1, { tick: 4, status: [[root, "running"]] });
       await runtime.step(10);
       // An edit watching other nodes starts a new trace, whose first report is lost.
-      await runtime.edit({ remove: ["n"] }, GREET.loaded);
+      await runtime.edit({ remove: ["n"] }, greet);
       expect(traceCalls()).toHaveLength(2);
       write(2, { tick: 5, since: 4, status: [[root, "success"]] });
       const report = await runtime.step(10);
@@ -391,7 +397,7 @@ describe("DeviceRuntime", () => {
 
     it("states the store as the trace started over leaves it", async () => {
       const { device, runtime, write } = traced();
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       write(1, { tick: 1, status: [[root, "running"]] });
       await runtime.step(10);
       // A report missed: the trace starts over, and the device's call ticks.
@@ -410,7 +416,7 @@ describe("DeviceRuntime", () => {
 
     it("halts the trace when the behavior stops", async () => {
       const { device, runtime } = traced();
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       await runtime.stop();
       expect(device.calls.slice(-2)).toEqual([
         JSON.stringify({ halt: 1 }),
@@ -420,7 +426,7 @@ describe("DeviceRuntime", () => {
 
     it("reports the store alone where the device does not trace", async () => {
       const { runtime } = traced(true);
-      await runtime.start(ORDER.loaded);
+      await runtime.start(order);
       const report = await runtime.step(10);
       expect(report.tick).toBe(1);
       expect(report.statuses).toBeUndefined();

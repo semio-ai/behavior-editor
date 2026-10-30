@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { GREET, ORDER } from "../../fixtures/examples";
+import { loadedOf } from "../../fixtures/local-arora";
 import { watchedNodes } from "../runtime/trace";
 import { FAKE_CALLS, FAKE_CALLS_WITHOUT_READ, FakeDevice } from "../../fixtures/fake-device";
 import type { Graph } from "../model/graph";
@@ -16,7 +17,9 @@ afterEach(async () => {
   for (const session of sessions.splice(0)) await session.close();
 });
 
-const GRAPH: Graph = ORDER.loaded.graph;
+const ORDER_LOADED = await loadedOf(ORDER);
+const GREET_LOADED = await loadedOf(GREET);
+const GRAPH: Graph = ORDER_LOADED.graph;
 
 /** A device running `graph` at revision 4, and a session connecting to it, again after a loss. */
 function setup(options: Partial<DeviceSessionOptions> & { graph?: Graph } = {}) {
@@ -97,7 +100,7 @@ describe("DeviceSession", () => {
   it("runs, edits and stops the behavior, each change its own", async () => {
     const { device, session, changes } = setup({ graph: {} });
     await until(() => status(session) === "connected");
-    await session.run(ORDER.loaded);
+    await session.run(ORDER_LOADED);
     expect(device.graph).toEqual(GRAPH);
     await session.edit({ root: GRAPH.nodes![1]!.id });
     expect(device.graph.root).toBe(GRAPH.nodes![1]!.id);
@@ -117,17 +120,17 @@ describe("DeviceSession", () => {
   it("follows what was asked last, a run asked before it notwithstanding", async () => {
     const { device, session } = setup({ graph: {} });
     await until(() => status(session) === "connected");
-    const running = session.run(ORDER.loaded);
-    await session.follow(GREET.loaded);
+    const running = session.run(ORDER_LOADED);
+    await session.follow(GREET_LOADED);
     await running;
     const traces = device.calls.filter((c) => c.id === "trace");
-    expect(traces.at(-1)).toMatchObject({ values: watchedNodes(GREET.loaded) });
+    expect(traces.at(-1)).toMatchObject({ values: watchedNodes(GREET_LOADED) });
   });
 
   it("tells a change of the device's behavior another client made", async () => {
     const { device, session, changes } = setup();
     await until(() => status(session) === "connected");
-    await session.run(ORDER.loaded);
+    await session.run(ORDER_LOADED);
     await until(
       () => changes.length === 1,
       () => device.step(),
@@ -262,7 +265,7 @@ describe("DeviceSession", () => {
   it("closes without stopping the behavior, its trace halted", async () => {
     const { device, session } = setup();
     await until(() => status(session) === "connected");
-    await session.follow(ORDER.loaded);
+    await session.follow(ORDER_LOADED);
     await session.close();
     expect(device.calls.some((c) => c.id === "load")).toBe(false);
     expect(device.traces.size).toBe(0);

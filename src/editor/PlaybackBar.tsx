@@ -1,70 +1,65 @@
-import { useId } from "react";
-import type { Status } from "../runtime/runtime";
-import { RATES, type Rate } from "./use-playback";
+import { useCallback, useId, useSyncExternalStore } from "react";
+import type { ClockState, DeviceSession } from "../session/device-session";
 
-export interface PlaybackBarProps {
-  playing: boolean;
-  onPlayingChange(playing: boolean): void;
-  onStep(): void;
-  onReset(): void;
-  rate: Rate;
-  onRateChange(rate: Rate): void;
-  tick: number;
-  root: Status | undefined;
-  /** Whether a behavior runs: nothing to play while the document does not resolve. */
-  runnable: boolean;
+/** The rates a person picks for an Arora the page steps, in steps per second. */
+export const RATES = [10, 30, 60] as const;
+
+/** `session`'s clock, kept current. */
+function useClockState(session: DeviceSession): ClockState {
+  const subscribe = useCallback((changed: () => void) => session.on("clock", changed), [session]);
+  return useSyncExternalStore(
+    subscribe,
+    () => session.clockState,
+    () => session.clockState,
+  );
 }
 
-const ROOT_WORDS: Record<Status, string> = { S: "Success", F: "Failure", R: "Running" };
-
-/** The clock: play, pause, step and reset, the tick rate, the tick count and the root's status. */
-export function PlaybackBar({
-  playing,
-  onPlayingChange,
-  onStep,
-  onReset,
-  rate,
-  onRateChange,
-  tick,
-  root,
-  runnable,
-}: PlaybackBarProps) {
+/**
+ * The clock of an Arora the page steps, the local one: play, pause, a step
+ * at a time, and the rate. An Arora on its own clock has none: it steps
+ * itself.
+ */
+export function PlaybackBar({ session }: { session: DeviceSession }) {
   const rateId = useId();
+  const { playing, rate } = useClockState(session);
+  const state = useSyncExternalStore(
+    useCallback((changed: () => void) => session.on("state", changed), [session]),
+    () => session.state,
+    () => session.state,
+  );
+  if (state.status !== "connected" || session.clock !== "driven") return null;
+  const rates: readonly number[] = RATES.includes(rate as (typeof RATES)[number])
+    ? RATES
+    : [...RATES, rate].sort((a, b) => a - b);
   return (
     <div className="be-playback" role="group" aria-label="Playback">
       <button
         type="button"
         className="be-primary"
         aria-pressed={playing}
-        disabled={!runnable}
-        onClick={() => onPlayingChange(!playing)}
+        onClick={() => (playing ? session.pause() : session.play())}
       >
         {playing ? "Pause" : "Play"}
       </button>
-      <button type="button" disabled={!runnable || playing} onClick={onStep}>
+      <button
+        type="button"
+        disabled={playing}
+        onClick={() => void session.step().catch(() => undefined)}
+      >
         Step
-      </button>
-      <button type="button" disabled={!runnable} onClick={onReset}>
-        Reset
       </button>
       <label className="be-inline" htmlFor={rateId}>
         rate
         <select
           id={rateId}
           value={rate}
-          onChange={(event) => onRateChange(Number(event.target.value) as Rate)}
+          onChange={(event) => session.setRate(Number(event.target.value))}
         >
-          {RATES.map((r) => (
+          {rates.map((r) => (
             <option key={r} value={r}>{`${r} Hz`}</option>
           ))}
         </select>
       </label>
-      <output className="be-readout" aria-label="Tick">
-        {`tick ${tick}`}
-      </output>
-      <output className={`be-root-status be-${root ?? "none"}`} aria-label="Root status">
-        {root ? ROOT_WORDS[root] : "–"}
-      </output>
     </div>
   );
 }

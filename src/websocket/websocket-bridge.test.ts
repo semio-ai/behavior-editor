@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { ORDER } from "../../fixtures/examples";
 import { FakeBridge } from "../../fixtures/fake-bridge";
+import { DATAFLOW_FUNCTIONS, loadedOf } from "../../fixtures/local-arora";
 import { BridgeDevice, TAKEN_KEYS, TAKEN_LIMIT } from "../bridge/bridge-device";
 import type { Value } from "../model/value";
 import { DeviceRuntime } from "../runtime/device-runtime";
-import { MATH } from "../runtime/math-module";
 import type { TraceReport } from "../runtime/trace";
 import { WebSocketBridge, type WebSocketLike } from "./websocket-bridge";
+
+/** The order example's behavior, resolved against `@arora/dataflow`'s functions. */
+const order = await loadedOf(ORDER);
 
 const bridges: FakeBridge[] = [];
 const devices: BridgeDevice[] = [];
@@ -63,7 +66,10 @@ describe("a device over WebSocketBridge", () => {
       id: string;
     }[];
     expect(bridge.received.at(-1)).toEqual({ type: "describe_methods", path: "ad" });
-    expect(methods.map((m) => [m.name, m.id])).toEqual([["add", MATH.add.id]]);
+    expect(methods.map((m) => [m.name, m.id])).toEqual(
+      DATAFLOW_FUNCTIONS.filter((f) => f.name.startsWith("ad")).map((f) => [f.name, f.id]),
+    );
+    expect(methods.map((m) => m.name)).toContain("add");
   });
 
   it("calls a function by ids, and rejects with the device's reason", async () => {
@@ -237,7 +243,7 @@ describe("a device over WebSocketBridge", () => {
       editCall: () => JSON.stringify({ module_id: "interpreter", id: "edit", args: [] }),
     });
     expect((await runtime.functions()).map((f) => f.name)).toContain("damp");
-    await runtime.start(ORDER.loaded);
+    await runtime.start(order);
     expect(bridge.received.find((m) => m.type === "call")).toMatchObject({ id: "load" });
     const report = runtime.step(5_000);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -289,7 +295,7 @@ describe("a device over WebSocketBridge", () => {
   it("follows every report a trace writes between two of the editor's steps", async () => {
     const { bridge, device } = await connect();
     bridge.callResult = { success: true, ret: { u64: 1 }, mutated: [] };
-    const root = ORDER.loaded.graph.root!;
+    const root = order.graph.root!;
     const runtime = new DeviceRuntime({
       device,
       loadCall: () => JSON.stringify({ module_id: "interpreter", id: "load", args: [] }),
@@ -300,7 +306,7 @@ describe("a device over WebSocketBridge", () => {
         traceReport: (json) => JSON.parse(json) as TraceReport,
       },
     });
-    await runtime.start(ORDER.loaded);
+    await runtime.start(order);
     // The device ticks twice before the editor looks: two reports, each a change of the one before.
     bridge.step({ "t/feedback": { tick: 1, status: [[root, "running"]] } as unknown as Value });
     bridge.step({
@@ -316,7 +322,7 @@ describe("a device over WebSocketBridge", () => {
 
   it("keeps a trace's reports pushed before its call is answered, and lets them go with it", async () => {
     const { bridge, device } = await connect();
-    const root = ORDER.loaded.graph.root!;
+    const root = order.graph.root!;
     const feedback = "arora/tasks/interpreter/trace/t/feedback";
     const answer = bridge.answer;
     bridge.answer = (m) => {
@@ -349,7 +355,7 @@ describe("a device over WebSocketBridge", () => {
         traceReport: (json) => JSON.parse(json) as TraceReport,
       },
     });
-    await runtime.start(ORDER.loaded);
+    await runtime.start(order);
     const report = runtime.step(5_000);
     await new Promise((resolve) => setTimeout(resolve, 20));
     bridge.step();

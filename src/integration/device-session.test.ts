@@ -3,11 +3,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import initDataflowDevice, { DataflowDevice } from "../../device/pkg/dataflow_device.js";
-import { DATAFLOW_INPUTS } from "../../fixtures/devices/dataflow";
+import { DATAFLOW } from "../../fixtures/examples";
 import { loadLanguage } from "../../fixtures/language";
-import { PageBridge } from "../../fixtures/page-bridge";
 import { type Value, valueNumber } from "../model/value";
 import { type BehaviorChange, DeviceSession, type SessionTick } from "../session/device-session";
+import { PageBridge } from "../local-arora/page-bridge";
 import type { BehaviorText, Loaded } from "../text/language";
 
 /**
@@ -29,7 +29,7 @@ beforeAll(async () => {
     module_or_path: await readFile(join(root, "device", "pkg", "dataflow_device_bg.wasm")),
   });
   language = await loadLanguage();
-  text = await readFile(join(root, "fixtures", "devices", "dataflow.bt"), "utf8");
+  text = DATAFLOW.text;
 });
 
 let device: DataflowDevice;
@@ -53,9 +53,9 @@ async function until(check: () => boolean, timeoutMs = 5000) {
 }
 
 function connect() {
-  device = new DataflowDevice(NAMESPACE, JSON.stringify(DATAFLOW_INPUTS));
-  device.update(JSON.stringify({ "sensor/distance": { f32: 0.3 }, "face/smile_target": { f32: 1 } }));
-  session = new DeviceSession(new PageBridge(device, { namespace: NAMESPACE }), {
+  device = new DataflowDevice(NAMESPACE, JSON.stringify(DATAFLOW.inputs));
+  device.update(JSON.stringify(DATAFLOW.values));
+  session = new DeviceSession(new PageBridge(device, { namespace: NAMESPACE, periodMs: 20 }), {
     language,
     rate: 50,
   });

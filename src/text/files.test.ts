@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { EXAMPLES, GREET, SMILE } from "../../fixtures/examples";
 import { GROOT_TEST_FUNCTIONS } from "../../fixtures/files/functions";
-import { MATH_FUNCTIONS, loadLanguage } from "../../fixtures/language";
+import { loadLanguage } from "../../fixtures/language";
+import { DATAFLOW_FUNCTIONS } from "../../fixtures/local-arora";
 import type { Graph } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import type { BehaviorText, FileOutcome, GraphFileFormat, Loaded } from "./language";
@@ -22,7 +23,7 @@ const sorted = (graph: Graph): Graph => ({
   nodes: [...(graph.nodes ?? [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
 });
 
-const resolved = (text: string, functions: MethodSignature[] = MATH_FUNCTIONS): Loaded => {
+const resolved = (text: string, functions: MethodSignature[] = DATAFLOW_FUNCTIONS): Loaded => {
   const loaded = language.resolve(language.parse(text).document, functions);
   expect(loaded.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
   return loaded;
@@ -34,7 +35,7 @@ const textOf = (outcome: FileOutcome): string => {
 };
 
 /** `text` written in `format`, opened again, and resolved. */
-function roundTrip(text: string, format: GraphFileFormat, functions = MATH_FUNCTIONS) {
+function roundTrip(text: string, format: GraphFileFormat, functions = DATAFLOW_FUNCTIONS) {
   const before = resolved(text, functions);
   const file = textOf(language.writeFile(before, format, functions));
   const after = resolved(textOf(language.openFile(file, format, functions)), functions);
@@ -45,10 +46,10 @@ function roundTrip(text: string, format: GraphFileFormat, functions = MATH_FUNCT
 const TREE = [
   "sequence",
   "  sequence_star",
-  "    truthy(x: {person/visible})",
+  "    equal(a: {person/visible}, b: true)",
   '    set_string(variable: {face/mood}, value: "near")',
-  "  {rig/arm_raise} = damp(target: 1, half_life: 0.12, state: none, initial: {rig/arm_raise})",
-  "  wait(seconds: 2, now: {arora/time}, since: none)",
+  "  damp(in: 1f32, param.half_life: 0.12f32, dt: {arora/dt}, state: {rig/arm_raise})",
+  "  slew(in: 2f32, param.max_rate: 1f32, dt: {arora/dt}, state: 0f32)",
   "",
 ].join("\n");
 
@@ -66,26 +67,28 @@ describe("a behavior file in another form than the text", () => {
     const { file, after } = roundTrip(GREET.text, "yaml");
     expect(file).toContain("- id: fresh\n");
     expect(file).toContain("root: root\n");
-    expect(file).toContain("x:\n      port:\n        node: fresh\n        port: _ret\n");
+    expect(file).toContain("a:\n      port:\n        node: fresh\n        port: _ret\n");
     expect(after.nodes.find((n) => n.name === "fresh")).toBeTruthy();
   });
 
   it("reads back from Groot as the same graph", () => {
     const { before, file, after } = roundTrip(TREE, "groot");
     expect(file).toContain("<SequenceStar");
-    expect(file).toContain('half_life="0.12f64"');
+    // A parameter of any type keeps its value's type, written as JSON.
+    expect(file).toContain('param.half_life="json:{&quot;f32&quot;:0.12}"');
     expect(sorted(after.graph)).toEqual(sorted(before.graph));
   });
 
   it("refuses Groot for what it cannot hold, naming it", () => {
-    const outcome = language.writeFile(resolved(GREET.text), "groot", MATH_FUNCTIONS);
+    const outcome = language.writeFile(resolved(GREET.text), "groot", DATAFLOW_FUNCTIONS);
     expect("problems" in outcome && outcome.problems.map((p) => p.message)).toEqual([
       // A call in an argument is a node of its own, which reads into its caller.
-      "Groot holds no node outside the tree: `root.0.2.1.a`, `fresh`",
-      "Groot has no form for a port reading another node, as `root.0.1`'s `x` does",
-      "Groot has no form for a port reading another node, as `root.0.2.1`'s `a` does",
+      "Groot holds no node outside the tree: `root.0.2.1.operand_0`, `fresh`, `waved`",
+      "Groot has no form for a port reading another node, as `root.0.1`'s `a` does",
+      "Groot has no form for a port reading another node, as `root.0.2.1`'s `operand_0` does",
+      "Groot has no form for a port reading another node, as `root.0.2.2.0`'s `a` does",
     ]);
-    const named = language.writeFile(resolved(`watch: ${TREE}`), "groot", MATH_FUNCTIONS);
+    const named = language.writeFile(resolved(`watch: ${TREE}`), "groot", DATAFLOW_FUNCTIONS);
     expect("problems" in named && named.problems.map((p) => p.message)).toEqual([
       "Groot keeps no node name: `watch`",
     ]);
@@ -94,9 +97,9 @@ describe("a behavior file in another form than the text", () => {
   it("answers a YAML file too deep to open again as a problem, not an exception", () => {
     const depth = 126;
     const text = `running\n\nx: equal(a: ${"some(".repeat(depth)}1f64${")".repeat(depth)}, b: 1f64)\n`;
-    const outcome = language.writeFile(resolved(text), "yaml", MATH_FUNCTIONS);
+    const outcome = language.writeFile(resolved(text), "yaml", DATAFLOW_FUNCTIONS);
     expect("problems" in outcome && outcome.problems[0]!.message).toMatch(/recursion limit/);
-    expect("text" in language.writeFile(resolved(text), "json", MATH_FUNCTIONS)).toBe(true);
+    expect("text" in language.writeFile(resolved(text), "json", DATAFLOW_FUNCTIONS)).toBe(true);
   });
 
   it("says why a file does not load, and where", () => {
@@ -104,9 +107,10 @@ describe("a behavior file in another form than the text", () => {
     expect(json).toEqual({
       problems: [expect.objectContaining({ line: 2, message: expect.stringMatching(/JSON/) })],
     });
-    const yaml = "root: near\nnodes:\n- id: near\n  function: lt\n  bind:\n    low: {value: {f64: 1.0}}\n";
-    expect(language.openFile(yaml, "yaml", MATH_FUNCTIONS)).toEqual({
-      problems: [{ at: "nodes[0].bind.low", message: "`lt` has no parameter `low`" }],
+    const yaml =
+      "root: near\nnodes:\n- id: near\n  function: lessthan\n  bind:\n    low: {value: {f32: 1.0}}\n";
+    expect(language.openFile(yaml, "yaml", DATAFLOW_FUNCTIONS)).toEqual({
+      problems: [{ at: "nodes[0].bind.low", message: "`lessthan` has no parameter `low`" }],
     });
     const groot = language.openFile("<root>\n<BehaviorTree>\n<Fly/>\n</BehaviorTree>\n</root>", "groot", []);
     expect("problems" in groot && groot.problems[0]!.message).toMatch(/Fly/);
@@ -118,12 +122,12 @@ describe("the files of fixtures/files", () => {
     textOf(language.openFile(await readFile(join(files, name), "utf8"), format, functions));
 
   it("opens a readable graph in JSON as its text", async () => {
-    const text = await open("greet.json", "json", MATH_FUNCTIONS);
+    const text = await open("greet.json", "json", DATAFLOW_FUNCTIONS);
     expect(sorted(resolved(text).graph)).toEqual(sorted(resolved(GREET.text).graph));
   });
 
   it("opens a readable graph in YAML as its text", async () => {
-    const text = await open("smile.yaml", "yaml", MATH_FUNCTIONS);
+    const text = await open("smile.yaml", "yaml", DATAFLOW_FUNCTIONS);
     expect(sorted(resolved(text).graph)).toEqual(sorted(resolved(SMILE.text).graph));
   });
 

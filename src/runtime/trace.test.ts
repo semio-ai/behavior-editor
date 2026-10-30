@@ -39,10 +39,11 @@ describe("TraceView", () => {
   it("reads a report once, and says when one was missed", () => {
     const view = new TraceView();
     view.read({ tick: 1, status: [["a", "success"]] });
-    expect(view.read({ tick: 1, status: [["a", "failure"]] })).toBe(true);
-    expect(view.report("a", NODES).root).toBe("S");
+    view.read({ tick: 2, since: 1, status: [["a", "running"]] });
+    expect(view.read({ tick: 2, since: 1, status: [["a", "failure"]] })).toBe(true);
+    expect(view.report("a", NODES).root).toBe("R");
     expect(view.read({ tick: 5, since: 4, status: [["a", "failure"]] })).toBe(false);
-    expect(view.report("a", NODES).root).toBe("S");
+    expect(view.report("a", NODES).root).toBe("R");
   });
 
   it("starts afresh at a first report", () => {
@@ -54,6 +55,14 @@ describe("TraceView", () => {
       detached: {},
       values: {},
     });
+  });
+
+  it("states a new trace's first report even at the tick of the last report read", () => {
+    const view = new TraceView();
+    view.read({ tick: 1, status: [["a", "success"]] });
+    view.read({ tick: 3, since: 1, status: [["b", "running"]] });
+    view.read({ tick: 3, status: [["c", "failure"]] });
+    expect(view.report(undefined, NODES).statuses).toEqual({ c: "F" });
   });
 
   it("states a restarted node anew, and an unset output as no value", () => {

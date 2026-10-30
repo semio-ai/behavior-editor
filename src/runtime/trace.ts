@@ -74,13 +74,15 @@ export class TraceView {
   #last: number | null = null;
 
   /**
-   * Fold `report` in. A report already read changes nothing; a first report
-   * starts the view afresh. `false` when the report follows one not read: the
-   * view is no longer whole, and the trace must start over.
+   * Fold `report` in. A first report starts the view afresh; a later report
+   * already read changes nothing. `false` when the report follows one not
+   * read: the view is no longer whole, and the trace must start over.
    */
   read(report: TraceReport): boolean {
-    if (report.tick === this.#last) return true;
+    // A first report states everything, whatever tick it was written at: a
+    // new trace's first may share its tick with the old trace's last.
     if (report.since === undefined) this.#clear();
+    else if (report.tick === this.#last) return true;
     else if (report.since !== this.#last) return false;
     for (const node of report.restarted ?? []) {
       this.#status.delete(node);

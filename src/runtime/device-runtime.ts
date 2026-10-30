@@ -132,6 +132,8 @@ export class DeviceRuntime implements BehaviorRuntime {
   #root: string | undefined;
   /** Where the interpreter keeps its traces' keys, once one is started: `arora/tasks/<module>/<TRACE>/`. */
   #traces: string | null = null;
+  /** Whether the trace's view missed a report it could not start over for at once. */
+  #missed = false;
   /** The behavior's nodes: a trace reports the interpreter's own besides. */
   #nodes = new Set<string>();
 
@@ -162,11 +164,15 @@ export class DeviceRuntime implements BehaviorRuntime {
       this.#root = next.graph.root;
       this.#nodes = new Set(next.nodes.map((n) => n.id));
     } else {
-      // The behavior as the diff makes it, as far as it says.
-      if (diff.root !== undefined) this.#root = diff.root;
-      for (const id of diff.remove ?? []) this.#nodes.delete(id);
+      // The behavior as the diff makes it, as far as it says, in the order
+      // `applyDiff` applies it: a removed root goes with its node, then the
+      // diff's own root, if any, stands.
+      for (const id of diff.remove ?? []) {
+        this.#nodes.delete(id);
+        if (this.#root === id) this.#root = undefined;
+      }
       for (const node of diff.set ?? []) this.#nodes.add(node.id);
-      if (this.#root !== undefined && !this.#nodes.has(this.#root)) this.#root = undefined;
+      if (diff.root !== undefined) this.#root = diff.root;
     }
     const watched = next && watchedNodes(next);
     if (this.#trace && watched && !sameNodes(watched, this.#trace.watched)) {
@@ -243,6 +249,7 @@ export class DeviceRuntime implements BehaviorRuntime {
       return;
     }
     this.#trace = { handle, watched };
+    this.#missed = false;
     // A device applying a call with a step may have reported already.
     await this.#readTrace(false);
   }
@@ -271,12 +278,19 @@ export class DeviceRuntime implements BehaviorRuntime {
     const { device, trace } = this.#options;
     const running = this.#trace!;
     const feedback = running.handle.feedback[0]!;
+    // A report missed at a read that could not start the trace over still
+    // makes the view incomplete: the next read that can, does.
+    if (restart && this.#missed) {
+      await this.#follow(running.watched);
+      return;
+    }
     const values = device.takeValues
       ? (JSON.parse(await device.takeValues(feedback)) as unknown[])
       : [JSON.parse(await this.#rawRead(feedback)) as unknown].filter((v) => v !== null);
     for (const value of values) {
       if (!this.#view.read(trace!.traceReport(JSON.stringify(value)))) {
         if (restart) await this.#follow(running.watched);
+        else this.#missed = true;
         return;
       }
     }

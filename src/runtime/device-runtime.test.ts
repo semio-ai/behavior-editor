@@ -310,6 +310,36 @@ describe("DeviceRuntime", () => {
       expect(device.calls.slice(calls).some((c) => c.includes('"edit"'))).toBe(false);
     });
 
+    it("starts the trace over at the next step when its first read missed a report", async () => {
+      const { device, runtime, write, traceCalls } = traced();
+      // A device that gives each value once, as a device on its own clock does.
+      const given = new Set<string>();
+      Object.assign(device, {
+        takeValues: (key: string) => {
+          const value = device.store.get(key);
+          if (value === undefined || given.has(key)) return "[]";
+          given.add(key);
+          return JSON.stringify([value]);
+        },
+      });
+      // The trace has already written past its first report when it is first read.
+      write(1, { tick: 7, since: 6, status: [[root, "running"]] });
+      await runtime.start(ORDER.loaded);
+      expect(traceCalls()).toHaveLength(1);
+      await runtime.step(10);
+      expect(traceCalls()).toHaveLength(2);
+    });
+
+    it("lets go of a root a diff given no behavior removes, before the root it sets", async () => {
+      const { runtime, write } = traced();
+      await runtime.start(ORDER.loaded);
+      await runtime.edit({ remove: [root], set: [{ id: root, function: "f" }] });
+      write(1, { tick: 1, status: [[root, "failure"]] });
+      const report = await runtime.step(10);
+      expect(report.root).toBeUndefined();
+      expect(report.statuses).toMatchObject({ [root]: "F" });
+    });
+
     it("halts the trace when the behavior stops", async () => {
       const { device, runtime } = traced();
       await runtime.start(ORDER.loaded);

@@ -1,8 +1,10 @@
-import { EMPTY_GRAPH, type Graph, type GraphDiff } from "../model/graph";
+import { EMPTY_GRAPH, type Graph, type GraphDiff, isEmptyDiff } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
 import { type Value, valueEquals } from "../model/value";
-import type { Loaded } from "../text/language";
+import type { BehaviorText, Loaded } from "../text/language";
 import type { BehaviorRuntime, KeyInfo, TickReport } from "./runtime";
+import { parseExact } from "./exact-json";
+import { type TraceHandle, TraceView, watchedNodes } from "./trace";
 
 /** What a device says of a key: `arora_types::data::KeyMeta`'s JSON, as far as the editor reads it. */
 interface KeyMeta {
@@ -39,6 +41,21 @@ export interface AroraDevice {
   update(changesJson: string): DeviceAnswer<void>;
   /** Read one key: its Value JSON, or `null`. */
   read(key: string): DeviceAnswer<string>;
+  /**
+   * The values the device-relative `key` took since the last call for it,
+   * oldest first, as a JSON array: the first call answers the value it holds.
+   * A device on its own clock offers it, as a key may change at several of its
+   * steps between two the editor sees.
+   */
+  takeValues?(key: string): DeviceAnswer<string>;
+  /**
+   * Keep, from now on, every value pushed to a device-relative key starting
+   * with `prefix`, for `takeValues` to give: a key that appears with its
+   * first values, as a trace's feedback key does, loses none of them. A key
+   * kept this way gives nothing at its first `takeValues` but what it was
+   * pushed.
+   */
+  keepValues?(prefix: string): DeviceAnswer<void>;
   /** The device's keys and what they are: a JSON array of `[key, KeyMeta]`, device-relative. */
   listKeys(prefix?: string): DeviceAnswer<string>;
   /**
@@ -62,6 +79,13 @@ export interface DeviceRuntimeOptions {
   loadCall: (graph: Graph) => string;
   /** The `Call` JSON that applies a diff to the device's behavior: the language's `editCall`. */
   editCall: (diff: GraphDiff) => string;
+  /**
+   * How to trace the behavior, for each node's status, each detached node's
+   * activity and the named and detached nodes' values: the language. Without
+   * it, or on a device whose interpreter does not trace, the runtime reports
+   * the store alone.
+   */
+  trace?: Pick<BehaviorText, "traceCall" | "traceHandle" | "traceReport">;
 }
 
 /**
@@ -76,8 +100,14 @@ export interface DeviceRuntimeOptions {
  *   its place among its children and a `damp` its value.
  * - `stop` sends LOAD with the empty graph, which runs nothing.
  *
- * The device reports its store; it does not say which nodes ticked or what
- * the root returned.
+ * Given the language's `trace`, it follows the behavior's nodes through a
+ * trace (arora-behavior's `docs/trace.md`): `start` starts one, watching the
+ * outputs of the nodes the text names and of the detached ones, and each step
+ * folds the reports written since into each node's status, each detached
+ * node's activity and each watched node's return value, as the mock reports
+ * them. An edit that changes the nodes watched, or a report that follows one
+ * not read, starts the trace over; `stop` halts it. Without a trace, the
+ * device reports its store alone.
  *
  * A device on its own clock runs its behavior whether the editor follows it
  * or not: a step waits for the device's next one and reports what changed
@@ -96,6 +126,17 @@ export class DeviceRuntime implements BehaviorRuntime {
    * changes it under that read: the next step then states it whole.
    */
   #seen: Map<string, Value> | null = new Map();
+  /** The trace following the behavior's nodes, and the nodes it watches. */
+  #trace: { handle: TraceHandle; watched: string[] } | null = null;
+  #view = new TraceView();
+  /** The behavior's root, whose status is the report's. */
+  #root: string | undefined;
+  /** Where the interpreter keeps its traces' keys, once one is started: `arora/tasks/<module>/<TRACE>/`. */
+  #traces: string | null = null;
+  /** Whether the trace's view missed a report it could not start over for at once. */
+  #missed = false;
+  /** The behavior's nodes: a trace reports the interpreter's own besides. */
+  #nodes = new Set<string>();
 
   constructor(options: DeviceRuntimeOptions) {
     this.#options = options;
@@ -110,18 +151,48 @@ export class DeviceRuntime implements BehaviorRuntime {
     await device.call(loadCall(loaded.graph));
     this.#running = true;
     this.#ticks = 0;
+    this.#root = loaded.graph.root;
+    this.#nodes = new Set(loaded.nodes.map((n) => n.id));
+    // A behavior started afresh shows nothing of the one before.
+    this.#view = new TraceView();
+    await this.#follow(watchedNodes(loaded));
     this.#seen = null;
   }
 
-  async edit(diff: GraphDiff): Promise<void> {
+  async edit(diff: GraphDiff, next?: Loaded): Promise<void> {
     if (!this.#running) throw new Error("no behavior runs on the device: start one to edit it");
-    await this.#options.device.call(this.#options.editCall(diff));
+    // An empty diff changes nothing on the device: only what `next` says of the nodes.
+    if (!isEmptyDiff(diff)) await this.#options.device.call(this.#options.editCall(diff));
+    if (next) {
+      this.#root = next.graph.root;
+      this.#nodes = new Set(next.nodes.map((n) => n.id));
+    } else {
+      // The behavior as the diff makes it, as far as it says, in the order
+      // `applyDiff` applies it: a removed root goes with its node, then the
+      // diff's own root, if any, stands.
+      for (const id of diff.remove ?? []) {
+        this.#nodes.delete(id);
+        if (this.#root === id) this.#root = undefined;
+      }
+      for (const node of diff.set ?? []) this.#nodes.add(node.id);
+      if (diff.root !== undefined) this.#root = diff.root;
+    }
+    const watched = next && watchedNodes(next);
+    if (this.#trace && watched && !sameNodes(watched, this.#trace.watched)) {
+      await this.#follow(watched);
+    } else if (this.#trace) {
+      await this.#readTrace(true);
+    }
     // The device applies a call with a step: a step reports what changed since.
     this.#seen = null;
   }
 
   async step(dtMs: number): Promise<TickReport> {
     await this.#options.device.step(dtMs);
+    // The trace is read, and started over if need be, before the store: a
+    // device applying a call with a step ticks at HALT and TRACE, and the
+    // store then shows what that tick did, as the nodes do.
+    if (this.#running && this.#trace) await this.#readTrace(true);
     const now = await this.#snapshot();
     const changes: TickReport["changes"] = [];
     for (const [key, value] of now) {
@@ -133,7 +204,8 @@ export class DeviceRuntime implements BehaviorRuntime {
     this.#seen = now;
     if (!this.#running) return { tick: 0, ...store };
     this.#ticks += 1;
-    return { tick: this.#ticks, ...store };
+    if (!this.#trace) return { tick: this.#ticks, ...store };
+    return { tick: this.#ticks, ...store, ...this.#view.report(this.#root, this.#nodes) };
   }
 
   async write(key: string, value: Value | null): Promise<void> {
@@ -155,19 +227,111 @@ export class DeviceRuntime implements BehaviorRuntime {
   }
 
   async stop(): Promise<void> {
+    await this.#halt();
     if (this.#running) await this.#options.device.call(this.#options.loadCall(EMPTY_GRAPH));
     this.#running = false;
   }
 
-  /** The device's keys with their meta: what makes a key open to `update`, and its type. */
+  /**
+   * Follow the behavior with a new trace watching `watched`, in place of the
+   * one running: its first report states every node anew. A device whose
+   * interpreter refuses to trace is followed by its store alone.
+   */
+  async #follow(watched: string[]) {
+    const { device, trace } = this.#options;
+    await this.#halt();
+    if (!trace) return;
+    const call = trace.traceCall({ values: watched });
+    // A trace's keys sit under `arora/tasks/<module>/<function>/<run id>/`: a
+    // device that keeps values keeps the reports from the first, which may be
+    // pushed before the call is answered.
+    const { module_id: module, id } = JSON.parse(call) as { module_id: string; id: string };
+    this.#traces = `arora/tasks/${module}/${id}/`;
+    await device.keepValues?.(this.#traces);
+    let handle: TraceHandle;
+    try {
+      handle = trace.traceHandle(await device.call(call));
+    } catch {
+      return;
+    }
+    this.#trace = { handle, watched };
+    this.#missed = false;
+    // A new trace is read from its first report: until one comes, no report
+    // of it follows one the view read, whatever the old trace's last tick.
+    this.#view.awaitFirst();
+    // A device applying a call with a step may have reported already.
+    await this.#readTrace(false);
+  }
+
+  /** Halt the trace running, if one does: a trace the device no longer runs is let go. */
+  async #halt() {
+    const running = this.#trace;
+    this.#trace = null;
+    if (!running) return;
+    const { device } = this.#options;
+    try {
+      await device.call(JSON.stringify(running.handle.stop));
+      // What it reported and was not read goes with it.
+      await device.takeValues?.(running.handle.feedback[0]!);
+    } catch {
+      // The trace ended with the behavior or the device: nothing to halt.
+    }
+  }
+
+  /**
+   * Fold in the reports the trace wrote since they were last read; past a
+   * gap, start it over when `restart` says so. A device applying a call with
+   * a step reports at the call: each call is followed by a read.
+   */
+  async #readTrace(restart: boolean) {
+    const { device, trace } = this.#options;
+    const running = this.#trace!;
+    const feedback = running.handle.feedback[0]!;
+    // A report missed at a read that could not start the trace over still
+    // makes the view incomplete: the next read that can, does.
+    if (restart && this.#missed) {
+      await this.#follow(running.watched);
+      return;
+    }
+    // Each report as JSON, its integers' digits as the device wrote them: the
+    // Rust decoder refuses a rounded 64-bit value.
+    let reports: string[];
+    if (device.takeValues) {
+      const taken = parseExact(await device.takeValues(feedback)) as unknown[];
+      reports = taken.map((value) => JSON.stringify(value));
+    } else {
+      const latest = await this.#rawRead(feedback);
+      reports = latest === "null" ? [] : [latest];
+    }
+    for (const report of reports) {
+      if (!this.#view.read(trace!.traceReport(report))) {
+        if (restart) await this.#follow(running.watched);
+        else this.#missed = true;
+        return;
+      }
+    }
+  }
+
+  /**
+   * The device's keys with their meta: what makes a key open to `update`, and
+   * its type. The keys of the interpreter's traces, this runtime's or any
+   * client's, are the clients' bookkeeping, not the behavior's: they are left
+   * out.
+   */
   async #listed(): Promise<[string, KeyMeta][]> {
-    return JSON.parse(await this.#options.device.listKeys()) as [string, KeyMeta][];
+    const listed = JSON.parse(await this.#options.device.listKeys()) as [string, KeyMeta][];
+    const traces = this.#traces;
+    return traces === null ? listed : listed.filter(([key]) => !key.startsWith(traces));
   }
 
   async #readKey(key: string): Promise<Value | null> {
+    return JSON.parse(await this.#rawRead(key)) as Value | null;
+  }
+
+  /** The Value JSON of the device-relative `key`, or `null`. */
+  async #rawRead(key: string): Promise<string> {
     const { device, deviceId } = this.#options;
-    const at = deviceId === undefined ? key : `${deviceId}/${key}`;
-    return JSON.parse(await device.read(at)) as Value | null;
+    return device.read(deviceId === undefined ? key : `${deviceId}/${key}`);
   }
 
   async #snapshot(): Promise<Map<string, Value>> {
@@ -180,4 +344,10 @@ export class DeviceRuntime implements BehaviorRuntime {
     });
     return snapshot;
   }
+}
+
+/** Whether `a` and `b` hold the same nodes. */
+function sameNodes(a: readonly string[], b: readonly string[]): boolean {
+  const set = new Set(a);
+  return a.length === b.length && b.every((n) => set.has(n));
 }

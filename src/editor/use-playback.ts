@@ -46,6 +46,8 @@ interface OnRuntime {
   refused: boolean;
   /** Whether a step is under way. */
   stepping: boolean;
+  /** The behavior running, as the text resolved it: its nodes' names and places. */
+  loaded: Loaded | null;
 }
 
 /**
@@ -133,7 +135,7 @@ export function usePlayback(
   const states = useRef(new WeakMap<BehaviorRuntime, OnRuntime>());
   let on = states.current.get(runtime);
   if (!on) {
-    on = { started: false, running: null, refused: false, stepping: false };
+    on = { started: false, running: null, refused: false, stepping: false, loaded: null };
     states.current.set(runtime, on);
   }
   const at = on;
@@ -214,6 +216,7 @@ export function usePlayback(
           at.started = false;
           await runtime.start(behavior);
           at.running = behavior.graph;
+          at.loaded = behavior;
           at.started = true;
           at.refused = false;
           if (live()) {
@@ -229,14 +232,26 @@ export function usePlayback(
           // Back to the behavior running: a refusal of another is moot.
           if (at.refused && live()) setError(null);
           at.refused = false;
+          // The same graph, its nodes named or placed anew: a runtime that
+          // follows the nodes by what the text says of them is told.
+          if (at.loaded === null || sameNodes(at.loaded, behavior)) return;
+          // As any edit: refused, the runtime keeps the nodes it knew, which
+          // the next resolution is compared with again.
+          at.refused = true;
+          await runtime.edit(change, behavior);
+          at.refused = false;
+          at.loaded = behavior;
+          // The runtime states its store afresh after an edit: show it now.
+          await readStore();
           return;
         }
         // A refused edit leaves the behavior running as it was, which the
         // next edit is the diff from.
         at.refused = true;
-        await runtime.edit(change);
+        await runtime.edit(change, behavior);
         at.refused = false;
         at.running = behavior.graph;
+        at.loaded = behavior;
         if (live()) setError(null);
         // An edit may write the store: a device applies a call with a step.
         await readStore();
@@ -256,6 +271,7 @@ export function usePlayback(
       enqueue(async () => {
         at.started = false;
         at.running = null;
+        at.loaded = null;
         await runtime.stop();
       }),
     [runtime, at, enqueue],
@@ -385,4 +401,11 @@ export function useRuntimeFunctions(runtime: BehaviorRuntime): {
   return state.runtime === runtime
     ? { functions: state.functions, error: state.error, known: true }
     : { functions: [], error: null, known: false };
+}
+
+/** Whether `a` and `b` say the same of their nodes: each one's name and whether the tree holds it. */
+function sameNodes(a: Loaded, b: Loaded): boolean {
+  const said = (loaded: Loaded) =>
+    loaded.nodes.map((n) => `${n.id}|${n.name ?? ""}|${n.attached}`).join("\n");
+  return said(a) === said(b);
 }

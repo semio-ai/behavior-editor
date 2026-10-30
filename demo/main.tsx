@@ -49,6 +49,7 @@ function examples(language: BehaviorText): BehaviorExample[] {
         deviceId: DEVICE,
         loadCall: (graph) => language.loadCall(graph),
         editCall: (diff) => language.editCall(diff),
+        trace: language,
       });
       return { runtime, dispose: () => device.free() };
     },
@@ -130,6 +131,7 @@ function Demo({ language, offered }: { language: BehaviorText; offered: Behavior
           device,
           loadCall: (graph) => language.loadCall(graph),
           editCall: (diff) => language.editCall(diff),
+          trace: language,
         });
         setConnected({ device, runtime });
         setAsking(false);

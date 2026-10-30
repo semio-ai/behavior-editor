@@ -4,6 +4,7 @@
  * by default. See the bridge's README, "Messages" and "Who may do what".
  */
 import type { AroraDevice } from "./device-runtime";
+import { parseExact } from "./exact-json";
 import { TIME_KEY } from "./mock-arora";
 
 /** The bridge's address on a device that serves it with its defaults. */
@@ -46,6 +47,19 @@ interface Waiting {
 const OPEN = 1;
 
 /**
+ * How many values of a key `takeValues` keeps between two calls: past it,
+ * the oldest go. A trace reading them then sees a report missing and starts
+ * over, so a long pause costs one restart rather than memory.
+ */
+export const TAKEN_LIMIT = 256;
+
+/**
+ * How many keys values are kept for: past it, the key kept longest goes, as
+ * a trace no longer read leaves its feedback key behind.
+ */
+export const TAKEN_KEYS = 32;
+
+/**
  * An Arora device behind its open local bridge.
  *
  * The device runs on its own clock (`ownClock`): it steps whether the editor
@@ -54,7 +68,9 @@ const OPEN = 1;
  * `dtMs` when none comes. The store is read from what the device pushed,
  * which starts as what it held when the connection opened, and which each
  * step reads again whole, as the device pushes what it sets and not what it
- * unsets: a read is as current as the device's last step.
+ * unsets: a read is as current as the device's last step. `takeValues` gives
+ * every value a key was pushed, the last `TAKEN_LIMIT` of them, for a key that
+ * changes at each of the device's steps, as a trace's reports do.
  *
  * A request is answered in the order it was sent, as the bridge answers its
  * messages one at a time; a request with no answer within the timeout, or
@@ -71,6 +87,10 @@ export class WebSocketDevice implements AroraDevice {
   readonly #timeoutMs: number;
   readonly #waiting: Waiting[] = [];
   readonly #values = new Map<string, unknown>();
+  /** The values each key `takeValues` follows was pushed since its last call. */
+  readonly #taken = new Map<string, unknown[]>();
+  /** The prefixes whose keys' values are kept from their first push (`keepValues`). */
+  readonly #kept = new Set<string>();
   #stepped: (() => void)[] = [];
   #closedWith: string | null = null;
   #requests = 0;
@@ -182,6 +202,44 @@ export class WebSocketDevice implements AroraDevice {
     return Promise.resolve(JSON.stringify(this.#values.get(key) ?? null));
   }
 
+  keepValues(prefix: string): Promise<void> {
+    this.#check();
+    this.#kept.add(prefix);
+    // Kept keys are given by `takeValues` alone: the store read and read
+    // again at each step holds none, a retired trace's among them.
+    for (const key of [...this.#values.keys()])
+      if (key.startsWith(prefix)) this.#values.delete(key);
+    return Promise.resolve();
+  }
+
+  takeValues(key: string): Promise<string> {
+    this.#check();
+    const taken = this.#taken.get(key);
+    if (this.#isKept(key)) {
+      this.#taken.delete(key);
+      return Promise.resolve(JSON.stringify(taken ?? []));
+    }
+    this.#taken.delete(key);
+    this.#keep(key);
+    if (taken) return Promise.resolve(JSON.stringify(taken));
+    const now = this.#values.get(key);
+    return Promise.resolve(JSON.stringify(now === undefined ? [] : [now]));
+  }
+
+  /** Start keeping `key`'s values, past `TAKEN_KEYS` letting go of the key kept longest. */
+  #keep(key: string): unknown[] {
+    const taken: unknown[] = [];
+    this.#taken.set(key, taken);
+    // Map keeps keys in the order they came: the first is the one kept longest.
+    if (this.#taken.size > TAKEN_KEYS) this.#taken.delete(this.#taken.keys().next().value!);
+    return taken;
+  }
+
+  #isKept(key: string): boolean {
+    for (const prefix of this.#kept) if (key.startsWith(prefix)) return true;
+    return false;
+  }
+
   async listKeys(prefix?: string): Promise<string> {
     const answer = await this.#request({ type: "list_keys", path: prefix }, "list_keys_resp");
     const keys = (answer.keys ?? []) as { path: string; __meta?: unknown }[];
@@ -272,7 +330,19 @@ export class WebSocketDevice implements AroraDevice {
     }
     if (message.type === "values_changed") {
       const values = (message.values ?? {}) as Record<string, unknown>;
-      for (const [key, value] of Object.entries(values)) this.#values.set(key, value);
+      // A kept value goes on to Rust: its integers keep their digits.
+      let exact: Record<string, unknown> | null = null;
+      for (const [key, value] of Object.entries(values)) {
+        const kept = this.#isKept(key);
+        if (!kept) this.#values.set(key, value);
+        let taken = this.#taken.get(key);
+        if (!taken && kept) taken = this.#keep(key);
+        if (taken) {
+          exact ??= ((parseExact(String(data)) as Message).values ?? {}) as Record<string, unknown>;
+          taken.push(exact[key]);
+          if (taken.length > TAKEN_LIMIT) taken.shift();
+        }
+      }
       if (TIME_KEY in values) for (const stepped of [...this.#stepped]) stepped();
       return;
     }

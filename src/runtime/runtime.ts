@@ -63,9 +63,10 @@ export interface BehaviorRuntime {
    * Apply `diff` to the behavior running, the diff from the graph it runs
    * to the next: the nodes the diff sets or binds restart, and every other
    * node keeps its state and goes on from where it was. Refused when no
-   * behavior runs.
+   * behavior runs. `next` is the behavior the edit makes, for a runtime that
+   * follows its nodes by what the text says of them.
    */
-  edit(diff: GraphDiff): Promise<void>;
+  edit(diff: GraphDiff, next?: Loaded): Promise<void>;
   /**
    * Advance one tick of `dtMs` milliseconds. A runtime following a device on
    * its own clock makes no tick: it waits for the device's next step, and

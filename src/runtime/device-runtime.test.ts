@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ORDER } from "../../fixtures/examples";
+import { GREET, ORDER } from "../../fixtures/examples";
 import type { Graph, GraphDiff } from "../model/graph";
 import type { Value } from "../model/value";
 import { type AroraDevice, DeviceRuntime } from "./device-runtime";
 import { MATH, mathModule } from "./math-module";
+import type { TraceReport } from "./trace";
 
 /**
  * A device whose store is a map of device-relative keys, the host's store
@@ -178,5 +179,251 @@ describe("DeviceRuntime", () => {
       throw new Error("unknown module");
     };
     await expect(runtime.start(ORDER.loaded)).rejects.toThrow("unknown module");
+  });
+
+  describe("with a trace", () => {
+    /**
+     * The runtime over the fake device, tracing: a TRACE call answers the
+     * trace's number, its reports sit at `t<n>/feedback` as the device writes
+     * them, and HALT is a call naming it.
+     */
+    function traced(refuse = false) {
+      const { device, runtime: _, ...rest } = setup();
+      let traces = 0;
+      /** Each report the language was handed to decode, as JSON. */
+      const decoded: string[] = [];
+      const call = device.call.bind(device);
+      device.call = (json: string) => {
+        const parsed = JSON.parse(json) as { trace?: { values: string[] } };
+        if (!parsed.trace) return call(json);
+        if (refuse) throw new Error("this interpreter does not trace");
+        call(json);
+        traces += 1;
+        return JSON.stringify({ ret: { u64: traces }, mutated: [] });
+      };
+      const runtime = new DeviceRuntime({
+        device,
+        deviceId: "robot",
+        loadCall: () => JSON.stringify({ load: true }),
+        editCall: () => JSON.stringify({ edit: true }),
+        trace: {
+          traceCall: (options) => JSON.stringify({ trace: options }),
+          traceHandle: (result) => {
+            const n = (JSON.parse(result) as { ret: { u64: number } }).ret.u64;
+            return {
+              id: `t${n}`,
+              stop: { halt: n },
+              status: `t${n}/status`,
+              feedback: [`t${n}/feedback`],
+            };
+          },
+          traceReport: (json) => {
+            decoded.push(json);
+            return JSON.parse(json) as TraceReport;
+          },
+        },
+      });
+      /** The device writes `report` as trace `n`'s latest. */
+      const write = (n: number, report: TraceReport) =>
+        device.store.set(`t${n}/feedback`, report as unknown as Value);
+      const traceCalls = () =>
+        device.calls
+          .map((c) => JSON.parse(c) as Record<string, unknown>)
+          .filter((c) => "trace" in c);
+      const halts = () => device.calls.filter((c) => c.includes('"halt"'));
+      return { device, runtime, write, traceCalls, halts, decoded, ...rest };
+    }
+
+    const root = ORDER.loaded.graph.root!;
+
+    it("reports each node as the trace's reports leave it, watching the named and detached nodes", async () => {
+      const { runtime, write, traceCalls } = traced();
+      await runtime.start(ORDER.loaded);
+      expect(traceCalls()).toEqual([
+        {
+          trace: {
+            values: ORDER.loaded.nodes
+              .filter((n) => n.name !== null || !n.attached)
+              .map((n) => n.id),
+          },
+        },
+      ]);
+      write(1, { tick: 1, status: [[root, "running"]] });
+      expect(await runtime.step(10)).toMatchObject({ root: "R", statuses: { [root]: "R" } });
+      write(1, { tick: 2, since: 1, status: [[root, "success"]] });
+      expect((await runtime.step(10)).root).toBe("S");
+      // No new report: nothing changed.
+      expect((await runtime.step(10)).root).toBe("S");
+    });
+
+    it("starts the trace over past a report it did not read", async () => {
+      const { runtime, write, traceCalls, halts } = traced();
+      await runtime.start(ORDER.loaded);
+      write(1, { tick: 1, status: [[root, "running"]] });
+      await runtime.step(10);
+      write(1, { tick: 4, since: 3, status: [[root, "failure"]] });
+      expect((await runtime.step(10)).root).toBe("R");
+      expect(traceCalls()).toHaveLength(2);
+      expect(halts()).toEqual([JSON.stringify({ halt: 1 })]);
+      write(2, { tick: 5, status: [[root, "failure"]] });
+      expect((await runtime.step(10)).root).toBe("F");
+    });
+
+    it("starts the trace over when an edit changes the nodes it watches", async () => {
+      const { runtime, traceCalls } = traced();
+      await runtime.start(ORDER.loaded);
+      await runtime.edit({ remove: ["n"] }, ORDER.loaded);
+      expect(traceCalls()).toHaveLength(1);
+      await runtime.edit({ remove: ["n"] }, GREET.loaded);
+      expect(traceCalls()).toHaveLength(2);
+    });
+
+    it("follows the root and the nodes a diff sets when it is given no behavior", async () => {
+      const { runtime, write } = traced();
+      await runtime.start(ORDER.loaded);
+      await runtime.edit({
+        set: [{ id: "added", function: "f" }],
+        root: "added",
+      });
+      write(1, {
+        tick: 1,
+        status: [
+          ["added", "failure"],
+          [root, "running"],
+        ],
+      });
+      const report = await runtime.step(10);
+      expect(report.root).toBe("F");
+      expect(report.statuses).toMatchObject({ added: "F", [root]: "R" });
+      await runtime.edit({ remove: ["added"] });
+      write(1, { tick: 2, since: 1 });
+      expect((await runtime.step(10)).root).toBeUndefined();
+    });
+
+    it("watches the nodes an empty diff names anew, sending the device no edit", async () => {
+      const { device, runtime, traceCalls } = traced();
+      await runtime.start(ORDER.loaded);
+      const calls = device.calls.length;
+      const renamed = {
+        ...ORDER.loaded,
+        nodes: ORDER.loaded.nodes.map((n) =>
+          n.attached ? { ...n, name: n.name ?? `n${n.path}` } : n,
+        ),
+      };
+      await runtime.edit({}, renamed);
+      expect(traceCalls()).toHaveLength(2);
+      expect(device.calls.slice(calls).some((c) => c.includes('"edit"'))).toBe(false);
+    });
+
+    it("starts the trace over at the next step when its first read missed a report", async () => {
+      const { device, runtime, write, traceCalls } = traced();
+      // A device that gives each value once, as a device on its own clock does.
+      const given = new Set<string>();
+      Object.assign(device, {
+        takeValues: (key: string) => {
+          const value = device.store.get(key);
+          if (value === undefined || given.has(key)) return "[]";
+          given.add(key);
+          return JSON.stringify([value]);
+        },
+      });
+      // The trace has already written past its first report when it is first read.
+      write(1, { tick: 7, since: 6, status: [[root, "running"]] });
+      await runtime.start(ORDER.loaded);
+      expect(traceCalls()).toHaveLength(1);
+      await runtime.step(10);
+      expect(traceCalls()).toHaveLength(2);
+    });
+
+    it("lets go of a root a diff given no behavior removes, before the root it sets", async () => {
+      const { runtime, write } = traced();
+      await runtime.start(ORDER.loaded);
+      await runtime.edit({ remove: [root], set: [{ id: root, function: "f" }] });
+      write(1, { tick: 1, status: [[root, "failure"]] });
+      const report = await runtime.step(10);
+      expect(report.root).toBeUndefined();
+      expect(report.statuses).toMatchObject({ [root]: "F" });
+    });
+
+    it("hands the language a report's integers as the device wrote them", async () => {
+      const { device, runtime, write, decoded } = traced();
+      const big =
+        '{"tick":1,"values":[{"node":"n","port":"p","value":{"u64":18446744073709551615}}]}';
+      // A device that gives every value it kept.
+      Object.assign(device, { takeValues: () => `[${big}]` });
+      await runtime.start(ORDER.loaded);
+      expect(decoded).toEqual([big]);
+      // A device read for its latest: the report is handed on as it is read.
+      Object.assign(device, { takeValues: undefined });
+      write(1, { tick: 2, since: 1 });
+      const read = device.read.bind(device);
+      device.read = (key: string) =>
+        key.endsWith("t1/feedback") ? big.replace('"tick":1', '"tick":2,"since":1') : read(key);
+      await runtime.step(10);
+      expect(decoded.at(-1)).toContain("18446744073709551615");
+    });
+
+    it("shows nothing of the behavior before when one is started afresh", async () => {
+      const { runtime, write } = traced();
+      await runtime.start(ORDER.loaded);
+      write(1, { tick: 1, status: [[root, "running"]] });
+      expect((await runtime.step(10)).root).toBe("R");
+      await runtime.stop();
+      await runtime.start(ORDER.loaded);
+      const report = await runtime.step(10);
+      expect(report.root).toBeUndefined();
+      expect(report.statuses).toEqual({});
+    });
+
+    it("takes no report of a new trace before its first, whatever the old trace's last tick", async () => {
+      const { runtime, write, traceCalls } = traced();
+      await runtime.start(ORDER.loaded);
+      write(1, { tick: 4, status: [[root, "running"]] });
+      await runtime.step(10);
+      // An edit watching other nodes starts a new trace, whose first report is lost.
+      await runtime.edit({ remove: ["n"] }, GREET.loaded);
+      expect(traceCalls()).toHaveLength(2);
+      write(2, { tick: 5, since: 4, status: [[root, "success"]] });
+      const report = await runtime.step(10);
+      expect(traceCalls()).toHaveLength(3);
+      expect(report.root).toBe("R");
+    });
+
+    it("states the store as the trace started over leaves it", async () => {
+      const { device, runtime, write } = traced();
+      await runtime.start(ORDER.loaded);
+      write(1, { tick: 1, status: [[root, "running"]] });
+      await runtime.step(10);
+      // A report missed: the trace starts over, and the device's call ticks.
+      write(1, { tick: 9, since: 8 });
+      const call = device.call.bind(device);
+      device.call = (json: string) => {
+        if (json.includes('"trace"')) device.store.set("ticked at the restart", { bool: true });
+        return call(json);
+      };
+      const report = await runtime.step(10);
+      expect(report.changes).toContainEqual({
+        key: "ticked at the restart",
+        value: { bool: true },
+      });
+    });
+
+    it("halts the trace when the behavior stops", async () => {
+      const { device, runtime } = traced();
+      await runtime.start(ORDER.loaded);
+      await runtime.stop();
+      expect(device.calls.slice(-2)).toEqual([
+        JSON.stringify({ halt: 1 }),
+        JSON.stringify({ load: true }),
+      ]);
+    });
+
+    it("reports the store alone where the device does not trace", async () => {
+      const { runtime } = traced(true);
+      await runtime.start(ORDER.loaded);
+      const report = await runtime.step(10);
+      expect(report.tick).toBe(1);
+      expect(report.statuses).toBeUndefined();
+    });
   });
 });

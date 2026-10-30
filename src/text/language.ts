@@ -1,5 +1,6 @@
 import type { Graph, GraphDiff } from "../model/graph";
 import type { MethodSignature } from "../model/signature";
+import type { TraceHandle, TraceOptions, TraceReport } from "../runtime/trace";
 import type { BehaviorDocument, Span } from "./ast";
 
 /**
@@ -46,6 +47,16 @@ export interface BehaviorText {
    * or binds and keeps the state of every other.
    */
   editCall(diff: GraphDiff): string;
+  /**
+   * The `arora_types::call::Call` JSON that starts a trace of a device's
+   * behavior: the interpreter's `TRACE`, whose reports carry the statuses,
+   * the detached activity, and the outputs of `options.values`' nodes.
+   */
+  traceCall(options: TraceOptions): string;
+  /** The trace's handle, out of the `CallResult` JSON its call answered. */
+  traceHandle(resultJson: string): TraceHandle;
+  /** A trace's report, out of the `Value` JSON its feedback key holds. */
+  traceReport(valueJson: string): TraceReport;
   /**
    * A behavior file in another form than the text, as the text the editor
    * edits: a readable graph in JSON or YAML (`arora-behavior-tree`'s

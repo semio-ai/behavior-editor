@@ -178,6 +178,26 @@
   align-items: center;
   gap: 8px 16px;
 }
+/* Where the behavior runs, then its clock: the editor's, or the device's. */
+.be-header-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.be-runs-on {
+  padding: 3px 9px;
+  border: 1px solid var(--be-line);
+  border-radius: 999px;
+  font: 600 12px var(--be-body);
+  color: var(--be-muted);
+  white-space: nowrap;
+}
+.be-runs-on-device {
+  border-color: var(--be-accent);
+  background: var(--be-accent);
+  color: var(--be-panel);
+}
 .be-file,
 .be-playback {
   display: flex;
@@ -304,6 +324,10 @@
   font: 400 12px var(--be-mono);
   color: var(--be-muted);
 }
+.be-root .be-start-foreign {
+  opacity: 0.6;
+  border-style: dashed;
+}
 .be-root .be-start-forget {
   min-width: 32px;
   color: var(--be-muted);
@@ -377,6 +401,10 @@
 }
 .be-banner p {
   margin: 0;
+}
+.be-banner .be-banner-reason {
+  color: var(--be-warning);
+  font-weight: 600;
 }
 .be-banner-warn {
   border-color: var(--be-warning);

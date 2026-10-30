@@ -33,7 +33,7 @@ fn calls_another_module(function: Uuid) -> bool {
 }
 
 /// The host module `@arora/dataflow`, answering its calls in-process.
-pub(crate) fn module() -> HostModule {
+pub fn module() -> HostModule {
     let nodes = Rc::new(RefCell::new(DataflowNodes::new()));
     let mut functions: Vec<_> = function_index()
         .values()

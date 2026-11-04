@@ -817,7 +817,7 @@ function Workspace({
           error={fileError}
           notice={fileNotice}
         />
-        <div className="be-header-run">
+        <div className="be-header-runs-on">
           <RunsOn session={session} onStartLocal={onStartLocal} error={localError} />
           {session && (
             <DeviceBehaviorButton
@@ -826,6 +826,8 @@ function Workspace({
               onOpen={openDeviceBehavior}
             />
           )}
+        </div>
+        <div className="be-header-run">
           {session && <PlaybackBar session={session} />}
           {session && <DeviceBar device={device} />}
         </div>

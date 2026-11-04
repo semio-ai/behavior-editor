@@ -170,20 +170,35 @@
   white-space: nowrap;
 }
 
-/* Header: the file and the clock. */
+/* Header: the file, where the behavior runs in the middle, which its clock
+   changing width does not move, and the clock. */
 .be-header {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 8px 16px;
 }
-/* Where the behavior runs, then its clock: the editor's, or the device's. */
+.be-header-runs-on {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px 12px;
+}
+/* The clock: the editor's, or the device's. */
 .be-header-run {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 6px 12px;
+}
+@media (max-width: 720px) {
+  .be-header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
 }
 .be-runs-on {
   padding: 3px 9px;

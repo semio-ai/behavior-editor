@@ -5,10 +5,12 @@ import type { DetachedActivity, Status, TickReport } from "../runtime/runtime";
 import {
   type Box,
   type DiagramLayout,
+  LINE,
   MINI,
+  type Summary,
   layoutDiagram,
+  outputText,
   outputY,
-  portY,
 } from "./diagram-layout";
 import type { DiagramRow } from "./diagram-rows";
 
@@ -24,12 +26,17 @@ export type Drop =
 export interface DiagramProps {
   rows: DiagramRow[];
   folds: ReadonlySet<string>;
+  /** The rows packed: their ports bound to keys summed up, the wires reaching them joined. */
+  packed?: ReadonlySet<string>;
+  /** Whether to link a node writing a key to each node reading it. */
+  storeLinks?: boolean;
   selected: string | null;
   report: TickReport | null;
   /** The tick before `report`'s, to tell a value that changed from one that stayed. */
   previous: TickReport | null;
   onSelect(key: string): void;
   onToggleFold(key: string): void;
+  onTogglePack?(key: string): void;
   onDelete(key: string): void;
   onMove(key: string, delta: -1 | 1): void;
   onDrop(key: string, drop: Drop): void;
@@ -115,25 +122,34 @@ export function dropAt(
 /**
  * The behavior as a diagram: the tree top-down with this tick's statuses, the
  * detached nodes on its left, and the wires from each producing node to the
- * ports that read it. A node is selected by click or arrow keys, folded by its
- * chevron or the left and right keys, moved by dragging or Alt+arrows, and
- * deleted with Delete.
+ * ports that read it, and from each node writing a key to the ports reading
+ * it. A node is selected by click or arrow keys, folded by its chevron or the
+ * left and right keys, packed or unpacked by its summary line, a double click
+ * or P, moved by dragging or Alt+arrows, and deleted with Delete. A wire's
+ * badge, counting the links it joins, unpacks the node it reaches.
  */
 export function Diagram({
   rows,
   folds,
+  packed,
+  storeLinks = true,
   selected,
   report,
   previous,
   onSelect,
   onToggleFold,
+  onTogglePack,
   onDelete,
   onMove,
   onDrop,
 }: DiagramProps) {
-  const layout = useMemo(() => layoutDiagram(rows, folds), [rows, folds]);
+  const layout = useMemo(
+    () => layoutDiagram(rows, folds, { packed, storeLinks }),
+    [rows, folds, packed, storeLinks],
+  );
   const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [hoveredWire, setHoveredWire] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ key: string; x: number; y: number; drop: Drop | null } | null>(
     null,
   );
@@ -195,6 +211,10 @@ export function Diagram({
         case "Backspace":
           onDelete(key);
           return true;
+        case "p":
+        case "P":
+          onTogglePack?.(key);
+          return true;
         default:
           return false;
       }
@@ -230,8 +250,10 @@ export function Diagram({
       if (drag.drop) onDrop(drag.key, drag.drop);
       setDrag(null);
     } else if (pressed) {
-      // The chevron folds; anywhere else on a node selects it.
-      if ((event.target as Element).closest("[data-fold]")) onToggleFold(pressed.key);
+      // The chevron folds, a summary line packs or unpacks; anywhere else on a node selects it.
+      const target = event.target as Element;
+      if (target.closest("[data-fold]")) onToggleFold(pressed.key);
+      else if (target.closest("[data-pack]") && onTogglePack) onTogglePack(pressed.key);
       else focus(pressed.key);
     }
   };
@@ -288,15 +310,26 @@ export function Diagram({
           ))}
         </g>
         <g aria-hidden="true">
-          {layout.wires.map((w) => (
-            <path
-              key={w.id}
-              className={`be-wire${isLive(w.from) && isLive(w.to) ? " be-live" : ""}${
-                hot !== null && (w.from === hot || w.to === hot) ? " be-hot" : ""
-              }`}
-              d={w.d}
-            />
-          ))}
+          {layout.wires.map((w) => {
+            const hotWire =
+              hoveredWire === w.id || (hot !== null && (w.from === hot || w.to === hot));
+            return (
+              <g
+                key={w.id}
+                className={`be-wire${w.store ? " be-via-key" : ""}${
+                  w.carries.length > 1 ? " be-packed" : ""
+                }${isLive(w.from) && isLive(w.to) ? " be-live" : ""}${hotWire ? " be-hot" : ""}`}
+                onPointerEnter={() => setHoveredWire(w.id)}
+                onPointerLeave={() => setHoveredWire(null)}
+              >
+                <title>{`${byKey.get(w.from)?.title ?? w.from} → ${
+                  byKey.get(w.to)?.title ?? w.to
+                }: ${w.carries.join(", ")}`}</title>
+                <path className="be-wire-hit" d={w.d} />
+                <path className="be-wire-line" d={w.d} />
+              </g>
+            );
+          })}
         </g>
         <g>
           {[...layout.boxes.values()].map((box) => (
@@ -306,6 +339,7 @@ export function Diagram({
               state={states.get(box.row.key) ?? { state: null }}
               miniStates={box.minis?.map((m) => states.get(m.key)?.state ?? null) ?? []}
               position={positionOf(box.row)}
+              storeLinks={storeLinks}
               selected={box.row.key === selected}
               focusable={box.row.key === focusKey}
               dropTarget={box.row.key === dropKey}
@@ -317,7 +351,31 @@ export function Diagram({
               onFocus={() => onSelect(box.row.key)}
               onHover={(on) => setHovered(on ? box.row.key : null)}
               onPointerDown={onPointerDown(box.row.key)}
+              onDoubleClick={(event) => {
+                // A double click on the chevron or a summary is two clicks of theirs.
+                if (!(event.target as Element).closest("[data-fold], [data-pack]")) {
+                  onTogglePack?.(box.row.key);
+                }
+              }}
             />
+          ))}
+        </g>
+        <g aria-hidden="true">
+          {layout.badges.map((b) => (
+            <g
+              key={`${b.to}@${b.y}`}
+              className={`be-badge${hot === b.to ? " be-hot" : ""}`}
+              transform={`translate(${b.x},${b.y})`}
+              onClick={() => onTogglePack?.(b.to)}
+            >
+              <title>
+                {`${b.count} links, joined: unpack ${byKey.get(b.to)?.title ?? b.to}\n${b.title}`}
+              </title>
+              <rect x={-9} y={-7} width={18} height={14} rx={7} />
+              <text y={3.5} textAnchor="middle">
+                {b.count}
+              </text>
+            </g>
           ))}
         </g>
         {drag && (
@@ -336,6 +394,7 @@ interface DiagramNodeProps {
   position: { at: number; of: number };
   state: RowState;
   miniStates: (NodeState | null)[];
+  storeLinks: boolean;
   selected: boolean;
   focusable: boolean;
   dropTarget: boolean;
@@ -344,6 +403,7 @@ interface DiagramNodeProps {
   onFocus(): void;
   onHover(on: boolean): void;
   onPointerDown(event: React.PointerEvent): void;
+  onDoubleClick(event: React.MouseEvent): void;
 }
 
 function DiagramNode({
@@ -351,6 +411,7 @@ function DiagramNode({
   position,
   state: { state, known = true, value, change },
   miniStates,
+  storeLinks,
   selected,
   focusable,
   dropTarget,
@@ -359,11 +420,13 @@ function DiagramNode({
   onFocus,
   onHover,
   onPointerDown,
+  onDoubleClick,
 }: DiagramNodeProps) {
   const { row, w, h } = box;
   // The outputs describe the node: its name says what it is and did.
   const outputsId = useId();
-  const outputIds = box.outputLines.map((_, i) => `${outputsId}-${i}`);
+  const summary = (output: boolean, line: number) =>
+    box.summaries.find((s) => s.output === output && line >= s.from && line <= s.to);
   const rx =
     row.shape === "condition"
       ? row.ports.length
@@ -389,6 +452,7 @@ function DiagramNode({
     state === null ? "" : STATE_WORDS[state],
     value === undefined ? "" : `value ${formatValue(value)}`,
     hasChildren && box.folded ? `${row.descendantKeys.length} nodes folded` : "",
+    box.packed ? "packed" : "",
   ]
     .filter(Boolean)
     .join(", ");
@@ -404,14 +468,18 @@ function DiagramNode({
       aria-selected={selected}
       aria-expanded={hasChildren ? !box.folded : undefined}
       aria-label={label}
-      aria-describedby={outputIds.length ? outputIds.join(" ") : undefined}
+      aria-describedby={row.outputs.length ? outputsId : undefined}
       tabIndex={focusable ? 0 : -1}
       data-key={row.key}
       onFocus={onFocus}
       onPointerEnter={() => onHover(true)}
       onPointerLeave={() => onHover(false)}
       onPointerDown={onPointerDown}
+      onDoubleClick={onDoubleClick}
     >
+      {row.outputs.length > 0 && (
+        <desc id={outputsId}>{row.outputs.map(outputText).join(" ")}</desc>
+      )}
       {box.folded && <rect className="be-under" x={4} y={4} width={w} height={h} rx={rx} />}
       <rect className="be-box" width={w} height={h} rx={rx} />
       <text className="be-title" x={tx} y={19}>
@@ -424,37 +492,45 @@ function DiagramNode({
         {row.title}
       </text>
       {box.lines.map((line, i) => (
-        <text key={i} className="be-line" x={tx} y={36 + 15 * i}>
-          {line}
-        </text>
+        <IoLine key={i} line={line} x={tx} y={36 + 15 * i} summary={summary(false, i)} />
       ))}
-      {row.ports.map((p, i) => (
+      {[...new Set(box.portLine)].map((line) => (
         <circle
-          key={p.name}
-          className={`be-port${p.sources.length ? " be-wired" : ""}`}
+          key={`in-${line}`}
+          className={`be-port${
+            row.ports.some(
+              (p, i) =>
+                box.portLine[i] === line &&
+                p.sources.some((s) => storeLinks || s.via === undefined),
+            ) ? " be-wired" : ""
+          }`}
           cx={0}
-          cy={portY(box, i)}
+          cy={32 + LINE * line}
           r={3.2}
         />
       ))}
       {box.outputLines.map((line, i) => (
-        <text
+        <IoLine
           key={`out-${i}`}
-          id={outputIds[i]}
-          className="be-line be-output"
+          line={line}
+          output
           x={w - 11}
-          y={4 + outputY(box, i)}
-          textAnchor="end"
-        >
-          {line}
-        </text>
+          y={4 + 32 + LINE * (box.lines.length + i)}
+          summary={summary(true, i)}
+        />
       ))}
-      {row.outputs.map((o, i) => (
+      {[
+        ...new Set(
+          row.outputs.flatMap((_, i) => (box.outputLine[i]! < 0 ? [] : [outputY(box, i)])),
+        ),
+      ].map((y) => (
         <circle
-          key={`out-${o.name}`}
-          className={`be-port be-out${o.text ? " be-wired" : ""}`}
+          key={`out-${y}`}
+          className={`be-port be-out${
+            row.outputs.some((o, i) => o.text && outputY(box, i) === y) ? " be-wired" : ""
+          }`}
           cx={w}
-          cy={outputY(box, i)}
+          cy={y}
           r={3.2}
         />
       ))}
@@ -488,6 +564,37 @@ function DiagramNode({
         </g>
       )}
     </g>
+  );
+}
+
+/**
+ * A port's or an output's line, an output's set at the right; a summary's
+ * packs or unpacks its node, and says the keys it stands for.
+ */
+function IoLine({
+  line,
+  output = false,
+  x,
+  y,
+  summary,
+}: {
+  line: string;
+  output?: boolean;
+  x: number;
+  y: number;
+  summary: Summary | undefined;
+}) {
+  return (
+    <text
+      className={`be-line${output ? " be-output" : ""}${summary ? " be-summary" : ""}`}
+      x={x}
+      y={y}
+      textAnchor={output ? "end" : undefined}
+      data-pack={summary ? "" : undefined}
+    >
+      {summary && <title>{summary.title}</title>}
+      {line}
+    </text>
   );
 }
 

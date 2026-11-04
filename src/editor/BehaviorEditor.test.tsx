@@ -290,6 +290,29 @@ describe("BehaviorEditor", () => {
     expect(screen.getAllByRole("treeitem")).toHaveLength(before);
   });
 
+  it("packs the diagram, and links the nodes writing a key to those reading it", async () => {
+    const { user } = await setup(GREET);
+    const damp = (await screen.findAllByRole("treeitem", { name: /^damp/ }))[0]!;
+    const lines = () => [...damp.querySelectorAll(".be-line")].map((l) => l.textContent);
+    const keyWires = () => document.querySelectorAll(".be-wire.be-via-key").length;
+    // Packed: a port written back shares its line with its output.
+    expect(lines()).toContain("state ⇄ {rig/arm_raise}");
+    expect(damp).toHaveAccessibleName(/, packed$/);
+    expect(keyWires()).toBe(3);
+    // P unpacks the node alone; the switch, every node.
+    await user.click(damp);
+    await user.keyboard("p");
+    expect(lines()).toEqual(
+      expect.arrayContaining(["state  {rig/arm_raise}", "{rig/arm_raise} ← state"]),
+    );
+    await user.keyboard("p");
+    expect(lines()).toContain("state ⇄ {rig/arm_raise}");
+    await user.click(screen.getByRole("switch", { name: "Pack" }));
+    expect(lines()).not.toContain("state ⇄ {rig/arm_raise}");
+    await user.click(screen.getByRole("switch", { name: "Store links" }));
+    expect(keyWires()).toBe(0);
+  });
+
   it("parses the text again once typing pauses, and lists what it found", async () => {
     const { user, texts } = await setup(ORDER);
     await user.click(screen.getByRole("tab", { name: "Text" }));

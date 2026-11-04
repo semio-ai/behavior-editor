@@ -1,9 +1,16 @@
 import { type NodePath, walk } from "../model/edit";
 import { orderedParameters } from "../model/signature";
 import * as N from "../runtime/natives";
+import { nativeWrites } from "../runtime/natives";
 import type { BehaviorDocument, SourceNode, Span } from "../text/ast";
 import type { LoadedNode } from "../text/language";
-import { expressionText, functionText, portsRead } from "./expression-text";
+import {
+  expressionText,
+  functionText,
+  portsRead,
+  variableName,
+  variablesRead,
+} from "./expression-text";
 import {
   type FunctionEntry,
   type FunctionIndex,
@@ -12,10 +19,15 @@ import {
   nodeShape,
 } from "./functions";
 
-/** An output an argument reads: the producing row, and which of its outputs. */
+/**
+ * An output an argument reads: the producing row, and which of its outputs;
+ * `via`, the key it goes through, when the argument reads a key the output is
+ * written to rather than the output itself.
+ */
 export interface DiagramSource {
   key: string;
   output: string;
+  via?: string;
 }
 
 /** One argument line of a node: the parameter, what it reads, and the outputs it reads. */
@@ -24,6 +36,8 @@ export interface DiagramPort {
   text: string;
   /** The outputs of other rows this argument reads. */
   sources: DiagramSource[];
+  /** The key the argument is, when it is one whole: `{imu/gyro}`, `{.count}`. */
+  key?: string;
 }
 
 /**
@@ -34,6 +48,8 @@ export interface DiagramPort {
 export interface DiagramOutput {
   name: string;
   text: string;
+  /** The key the output is written to, when it is one. */
+  key?: string;
 }
 
 /** A node of the document as the diagram draws it. */
@@ -117,8 +133,61 @@ export function diagramRows(
       rows.get(parent)!.descendantKeys.push(row.key);
     }
   }
+  linkKeys([...rows.values()]);
   return [...rows.values()];
 }
+
+/**
+ * Give each argument reading a key the outputs written to it, as sources
+ * through that key: a node reads what another wrote there. A node that both
+ * reads and writes a key holds it, as its state: between two holders of one
+ * key there is no link, each being the other's source: the key is a state
+ * they share, which each names, not a flow from one to the other.
+ */
+function linkKeys(rows: readonly DiagramRow[]) {
+  const writers = new Map<string, DiagramSource[]>();
+  for (const row of rows) {
+    for (const o of row.outputs) {
+      if (o.key === undefined) continue;
+      writers.set(o.key, [...(writers.get(o.key) ?? []), { key: row.key, output: o.name }]);
+    }
+  }
+  if (!writers.size) return;
+  const reads = new Map(
+    rows.map((row) => [row.key, row.ports.map((p) => keysRead(row, p.name))] as const),
+  );
+  const holds = (row: string, key: string) =>
+    reads.get(row)!.some((keys) => keys.includes(key)) &&
+    writers.get(key)!.some((w) => w.key === row);
+  for (const row of rows) {
+    row.ports.forEach((port, i) => {
+      for (const key of reads.get(row.key)![i]!) {
+        for (const w of writers.get(key) ?? []) {
+          if (w.key === row.key || (holds(row.key, key) && holds(w.key, key))) continue;
+          port.sources.push({ ...w, via: key });
+        }
+      }
+    });
+  }
+}
+
+/**
+ * The keys a node's argument `name` reads, at any depth: every key it holds,
+ * but the one a native only writes, as `set_string` its `variable`.
+ */
+function keysRead(row: DiagramRow, name: string): string[] {
+  const argument = row.node.call.arguments.find((a) => a.name.text === name);
+  if (!argument) return [];
+  const keys = [...new Set(variablesRead(argument.value))];
+  const id = row.entry && parameterId(row.entry, name);
+  return id !== undefined && nativeWrites(row.entry!.signature.id, id)
+    ? keys.filter((k) => k !== variableName(argument.value))
+    : keys;
+}
+
+/** The id of `entry`'s parameter `name`. */
+const parameterId = (entry: FunctionEntry, name: string) =>
+  orderedParameters(entry.signature.function).find((p) => p.parameter.name === name)?.id;
 
 /**
  * One port per argument written: the function's parameters in declared order,
@@ -140,9 +209,11 @@ function ports(
   ];
   return names.map((name) => {
     const { value } = node.call.arguments.find((a) => a.name.text === name)!;
+    const key = variableName(value);
     return {
       name,
       text: expressionText(value),
+      ...(key === undefined ? {} : { key }),
       sources: portsRead(value).flatMap(({ node: n, port }) => {
         const producer = producers.get(n);
         return producer === undefined
@@ -174,7 +245,8 @@ function outputName(port: string, entry: FunctionEntry | undefined): string {
 /**
  * A node's outputs: `_ret` when the node binds it, can be read by name, or
  * returns a value that is not a status (a status shows as the node's pill),
- * then each parameter the function writes back, in declared order.
+ * then each parameter the function writes back, or a native writes, in
+ * declared order, with the key its argument names.
  */
 function outputs(node: SourceNode, entry: FunctionEntry | undefined): DiagramOutput[] {
   const fn = entry?.signature.function;
@@ -183,14 +255,29 @@ function outputs(node: SourceNode, entry: FunctionEntry | undefined): DiagramOut
     returns !== undefined &&
     !(returns.type === "primitive" && returns.value.kind === "unit") &&
     !(returns.type === "frozenScalar" && returns.value.reference.id === N.STATUS_ENUMERATION);
+  const target = node.target ? variableName(node.target) : undefined;
   const ret =
     node.target !== null || node.name !== null || returnsData
-      ? [{ name: RET, text: node.target ? expressionText(node.target) : "" }]
+      ? [
+          {
+            name: RET,
+            text: node.target ? expressionText(node.target) : "",
+            ...(target === undefined ? {} : { key: target }),
+          },
+        ]
       : [];
   const written = fn
     ? orderedParameters(fn)
-        .filter((p) => p.parameter.mutable)
-        .map((p) => ({ name: p.parameter.name, text: "" }))
+        .filter((p) => p.parameter.mutable || nativeWrites(entry!.signature.id, p.id))
+        .map((p) => {
+          const argument = node.call.arguments.find((a) => a.name.text === p.parameter.name);
+          const key = argument && variableName(argument.value);
+          return {
+            name: p.parameter.name,
+            text: key === undefined ? "" : expressionText(argument!.value),
+            ...(key === undefined ? {} : { key }),
+          };
+        })
     : [];
   return [...ret, ...written];
 }

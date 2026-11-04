@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { type Graph, isEmptyDiff } from "../model/graph";
 import { type NodePath, deleteNode, moveNode, reparent, siblingPath, walk } from "../model/edit";
 import type { MethodSignature } from "../model/signature";
@@ -73,6 +73,18 @@ export interface BehaviorEditorProps {
   moduleNames?: Readonly<Record<string, string>>;
   /** The store keys plotted from the start. */
   plotKeys?: readonly string[];
+  /**
+   * Whether the diagram starts packed (default `true`): a node's ports bound to
+   * keys no node writes summed up in one line, its ports reading one same node
+   * on one line, and the wires reaching it joined. The diagram's bar switches it.
+   */
+  packDiagram?: boolean;
+  /**
+   * Whether the diagram starts with the links through keys (default `true`):
+   * from each node writing a key to each node reading it. The diagram's bar
+   * switches them.
+   */
+  storeLinks?: boolean;
 }
 
 type Tab = "diagram" | "text" | "store";
@@ -134,8 +146,13 @@ export function BehaviorEditor({
   examples = NO_EXAMPLES,
   moduleNames,
   plotKeys = [],
+  packDiagram = true,
+  storeLinks: storeLinksAtStart = true,
 }: BehaviorEditorProps) {
   const local = useLocalArora(localArora, startLocalArora);
+  // How the diagram draws the data, kept from file to file.
+  const [packAll, setPackAll] = useState(packDiagram);
+  const [storeLinks, setStoreLinks] = useState(storeLinksAtStart);
   const connectedState = useSessionState(connected);
   const localState = useSessionState(local.session);
   const live = (state: SessionState | null) =>
@@ -329,6 +346,10 @@ export function BehaviorEditor({
       onTextChange={onTextChange}
       moduleNames={moduleNames}
       plotKeys={openFile.example?.plotKeys ?? plotKeys}
+      packAll={packAll}
+      onPackAll={setPackAll}
+      storeLinks={storeLinks}
+      onStoreLinks={setStoreLinks}
       device={attached}
       onStartLocal={local.start}
       localError={local.error}
@@ -440,6 +461,11 @@ interface WorkspaceProps {
   onTextChange: ((text: string) => void) | undefined;
   moduleNames: Readonly<Record<string, string>> | undefined;
   plotKeys: readonly string[];
+  /** Whether the diagram's nodes are packed, but those switched one by one. */
+  packAll: boolean;
+  onPackAll(packed: boolean): void;
+  storeLinks: boolean;
+  onStoreLinks(shown: boolean): void;
   tab: Tab;
   onTab(tab: Tab): void;
   /** The session with the Arora attached, if one is: the file works on it. */
@@ -459,6 +485,10 @@ function Workspace({
   onTextChange,
   moduleNames,
   plotKeys,
+  packAll,
+  onPackAll,
+  storeLinks,
+  onStoreLinks,
   tab,
   onTab: setTab,
   device: session,
@@ -473,6 +503,9 @@ function Workspace({
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>("0");
   const [folds, setFolds] = useState<ReadonlySet<string>>(new Set());
+  // The nodes packed otherwise than the rest.
+  const [packSwitched, setPackSwitched] = useState<ReadonlySet<string>>(new Set());
+  const switchIds = useId();
   const [plotted, setPlotted] = useState<string[]>([...plotKeys]);
   const wide = useMediaQuery(WIDE);
 
@@ -704,11 +737,58 @@ function Workspace({
       return next;
     });
 
+  const togglePack = (key: string) =>
+    setPackSwitched((p) => {
+      const next = new Set(p);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const packed = useMemo(
+    () => new Set(rows.filter((r) => packAll !== packSwitched.has(r.key)).map((r) => r.key)),
+    [rows, packAll, packSwitched],
+  );
+
   const diagram = (
     <div className="be-pane be-diagram-pane">
       <div className="be-pane-bar">
         <h2>Diagram</h2>
         <Legend />
+        <span className="be-diagram-options" role="group" aria-label="Data links">
+          <span className="be-switch">
+            <input
+              id={`${switchIds}-pack`}
+              type="checkbox"
+              role="switch"
+              checked={packAll}
+              onChange={(event) => {
+                setPackSwitched(new Set());
+                onPackAll(event.target.checked);
+              }}
+            />
+            <label
+              htmlFor={`${switchIds}-pack`}
+              title="Sum up each node's ports bound to keys no node writes, and join the wires between two nodes. A node's summary line, a double click or P packs or unpacks it alone."
+            >
+              Pack
+            </label>
+          </span>
+          <span className="be-switch">
+            <input
+              id={`${switchIds}-keys`}
+              type="checkbox"
+              role="switch"
+              checked={storeLinks}
+              onChange={(event) => onStoreLinks(event.target.checked)}
+            />
+            <label
+              htmlFor={`${switchIds}-keys`}
+              title="Link each node writing a key to each node reading it."
+            >
+              Store links
+            </label>
+          </span>
+        </span>
         <span className="be-fold-actions" role="group" aria-label="Folding">
           <button type="button" onClick={() => setFolds(new Set())}>
             Expand all
@@ -736,11 +816,14 @@ function Workspace({
           <Diagram
             rows={rows}
             folds={folds}
+            packed={packed}
+            storeLinks={storeLinks}
             selected={selectedRow?.key ?? null}
             report={playback.report}
             previous={playback.previous}
             onSelect={setSelected}
             onToggleFold={toggleFold}
+            onTogglePack={togglePack}
             onDelete={(key) => {
               const row = byKey.get(key);
               if (row && key !== "0") {
@@ -1082,7 +1165,11 @@ function Legend() {
       </span>
       <span>
         <i className="be-sw be-sw-wire" />
-        data link
+        reads a node
+      </span>
+      <span>
+        <i className="be-sw be-sw-wire be-sw-key" />
+        reads a key a node writes
       </span>
       <span>
         <span className="be-pill-key be-S">S</span>

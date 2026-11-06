@@ -12,7 +12,8 @@ import { loadLanguage } from "../../fixtures/language";
 import { DATAFLOW_FUNCTIONS } from "../../fixtures/local-arora";
 import type { BehaviorText } from "../text/language";
 import { dropAt } from "./Diagram";
-import { PAD, layoutDiagram, outputY } from "./diagram-layout";
+import type { FrozenTy, MethodSignature } from "../model/signature";
+import { PAD, keySummary, layoutDiagram, outputY, portY } from "./diagram-layout";
 import { diagramRows } from "./diagram-rows";
 import { functionIndex } from "./functions";
 
@@ -80,8 +81,9 @@ describe("the diagram's rows", () => {
     expect(raise.ports).toEqual([
       { name: "in", text: "1f32", sources: [] },
       { name: "param.half_life", text: "0.12f32", sources: [] },
-      { name: "dt", text: "{arora/dt}", sources: [] },
-      { name: "state", text: "{rig/arm_raise}", sources: [] },
+      { name: "dt", text: "{arora/dt}", sources: [], key: "arora/dt" },
+      // A key two nodes both read and write is a state they share: no link between them.
+      { name: "state", text: "{rig/arm_raise}", sources: [], key: "rig/arm_raise" },
     ]);
     const wave = rows.find((r) => r.key === "0.0.2.1")!;
     expect(wave.ports[0]).toEqual({
@@ -123,19 +125,19 @@ describe("the diagram's outputs", () => {
     ]);
     // A node binding its return value to a store key.
     expect(outputs("3")).toEqual([
-      { name: "_ret", text: "{face/level}" },
+      { name: "_ret", text: "{face/level}", key: "face/level" },
       { name: "state", text: "" },
     ]);
     // A tree leaf binding its return value; a condition's status is its pill, not an output.
     expect(outputs("0.0.1")).toEqual([
-      { name: "_ret", text: "{face/look}" },
+      { name: "_ret", text: "{face/look}", key: "face/look" },
       { name: "state", text: "" },
     ]);
     expect(outputs("0.0.0")).toEqual([]);
     // The parameter a function writes back.
     const mouth = rowsOf(SMILE).find((r) => r.node.name?.text === "mouth")!;
     expect(mouth.outputs).toEqual([
-      { name: "_ret", text: "{rig/mouth_corner}" },
+      { name: "_ret", text: "{rig/mouth_corner}", key: "rig/mouth_corner" },
       { name: "state", text: "" },
     ]);
   });
@@ -370,4 +372,259 @@ describe("the diagram's layout", () => {
     const sequence = rows.find((r) => r.key === "0.0")!;
     expect(dropAt(layout, sequence, ...centre("0.0.2"))).toBeNull();
   });
+});
+
+const F32: FrozenTy = { type: "primitive", value: { kind: "f32" } };
+
+/** A robot's module: a node sensing, conditions on what it senses, and one acting. */
+function robotFunctions(): MethodSignature[] {
+  const status = language.natives().find((n) => n.name === "equal")!.function.returnType;
+  let count = 0;
+  const uuid = () => `00000000-0000-4000-8000-${(++count).toString(16).padStart(12, "0")}`;
+  const module = uuid();
+  const fn = (name: string, params: string[], mutable: string[] = []): MethodSignature => {
+    const ids = [...params, ...mutable].map(uuid);
+    return {
+      module_id: module,
+      id: uuid(),
+      name,
+      function: {
+        parameters: Object.fromEntries(
+          [...params, ...mutable].map((p, i) => [
+            ids[i]!,
+            { name: p, type: F32, mutable: mutable.includes(p) },
+          ]),
+        ),
+        parameterOrdering: ids,
+        returnType: status,
+      },
+    };
+  };
+  return [
+    fn("sense", [...SENSORS.map(([p]) => p)], ["sensed", "posture"]),
+    fn("lying", ["posture"], ["mode", "held"]),
+    fn("falling", ["posture"], ["mode"]),
+    fn("blocked", ["sensed"]),
+    fn("act", ["skill", "vx", "vy", "vyaw", "sensed"], ["targets", "stiffness"]),
+  ];
+}
+
+const SENSORS = [
+  ["vx", "command.vx"],
+  ["vy", "command.vy"],
+  ["gyro", "imu.gyro"],
+  ["orientation", "imu.orientation"],
+  ["accelerometer", "imu.accelerometer"],
+  ["joint_positions", "joints.position"],
+  ["joint_velocities", "joints.velocity"],
+  ["efforts", "joints.effort"],
+  ["fsr", "feet.fsr"],
+  ["bumpers", "feet.bumpers"],
+  ["touch", "touch.pressed"],
+  ["sonar", "sonar.echo"],
+  ["temperatures", "joints.temperature"],
+  ["base_position", "sim/base.position"],
+  ["base_velocity", "sim/base.linear_velocity"],
+] as const;
+
+/**
+ * Sense, then the first condition that holds sets the skill, then act on it:
+ * one node read by seven, a key six nodes write and one reads, a key three
+ * nodes read and write, and fifteen keys no node writes.
+ */
+const ROBOT = `sequence
+  sense: sense(${SENSORS.map(([p, k]) => `${p}: {${k}}`).join(", ")}, sensed: {robot/sensed}, posture: {robot/posture})
+  fallback
+${["lying", "falling", "lying"]
+  .map(
+    (c, i) =>
+      `    sequence\n      ${c}(posture: @sense.posture, mode: {robot/mode}${c === "lying" ? ", held: 0f32" : ""})\n      set_string(variable: {robot/skill}, value: "s${i}")\n`,
+  )
+  .join("")}${[3, 4]
+  .map(
+    (i) =>
+      `    sequence\n      blocked(sensed: @sense.sensed)\n      set_string(variable: {robot/skill}, value: "s${i}")\n`,
+  )
+  .join("")}    set_string(variable: {robot/skill}, value: "walk")
+  act(skill: {robot/skill}, vx: {command.vx}, vy: {command.vy}, vyaw: {command.vyaw}, sensed: @sense.sensed, targets: {joints.target_position}, stiffness: {joints.stiffness})
+`;
+
+function robotRows() {
+  const functions = robotFunctions();
+  const { document } = language.parse(ROBOT);
+  const loaded = language.resolve(document, functions);
+  return diagramRows(document, functionIndex(language.natives(), functions), loaded.nodes);
+}
+
+/** The segments of a path of `M`, `H` and `V` commands. */
+function segmentsOf(d: string): [number, number, number, number][] {
+  const points = [...d.matchAll(/([MHV])(-?[\d.]+)(?:,(-?[\d.]+))?/g)];
+  let [x, y] = [Number(points[0]![2]), Number(points[0]![3])];
+  const segments: [number, number, number, number][] = [];
+  for (const [, op, v] of points.slice(1)) {
+    const [nx, ny] = op === "H" ? [Number(v), y] : [x, Number(v)];
+    segments.push([x, y, nx, ny]);
+    [x, y] = [nx, ny];
+  }
+  return segments;
+}
+
+describe("the diagram's links through keys", () => {
+  it("links each node writing a key to each node reading it, but between two holding it", () => {
+    const rows = robotRows();
+    const row = (title: RegExp, at = 0) => rows.filter((r) => title.test(r.title))[at]!;
+    const act = row(/^act/);
+    const skill = act.ports.find((p) => p.name === "skill")!;
+    // Six nodes write the skill, one reads it.
+    expect(skill.sources).toHaveLength(6);
+    expect(skill.sources.every((s) => s.via === "robot/skill" && s.output === "variable")).toBe(true);
+    expect(rows.filter((r) => r.title === "set_string").map((r) => r.key)).toEqual(
+      skill.sources.map((s) => s.key),
+    );
+    // Each condition reads and writes the mode: a state they share, linked to none.
+    for (const condition of rows.filter((r) => /^(lying|falling)$/.test(r.title))) {
+      expect(condition.ports.find((p) => p.name === "mode")!.sources).toEqual([]);
+      expect(condition.outputs.find((o) => o.name === "mode")).toEqual({
+        name: "mode",
+        text: "{robot/mode}",
+        key: "robot/mode",
+      });
+    }
+    // A node holding a key it alone reads is linked to nothing through it.
+    expect(row(/^sense:/).ports.every((p) => p.sources.length === 0)).toBe(true);
+    // The references, as ever.
+    expect(act.ports.find((p) => p.name === "sensed")!.sources).toEqual([
+      { key: "0.0", output: "sensed" },
+    ]);
+  });
+
+  it("links a writer to a reader that holds the key, and stops linking when asked", () => {
+    // GREET: the wave's leaf writes {rig/arm_wave}, which the resting damp eases.
+    const rows = rowsOf(GREET);
+    const damp = rows.find((r) => r.key === "0.1.1")!;
+    expect(damp.ports.find((p) => p.name === "state")!.sources).toEqual([
+      { key: "0.0.2.1", output: "_ret", via: "rig/arm_wave" },
+    ]);
+    const store = (storeLinks: boolean) =>
+      layoutDiagram(rows, new Set(), { storeLinks })
+        .wires.filter((w) => w.store)
+        .map((w) => `${w.from}>${w.to} ${w.carries.join()}`);
+    expect(store(true).sort()).toEqual([
+      "0.0.2.1>0.1.1 {rig/arm_wave}",
+      "0.0.3>1 {social/greeted}",
+      "0.1.2>2 {social/rested_at}",
+    ]);
+    expect(store(false)).toEqual([]);
+  });
+});
+
+describe("the diagram's packing", () => {
+  it("sums up keys in short", () => {
+    const keys = SENSORS.map(([, k]) => k);
+    expect(keySummary(keys, 60)).toBe(
+      "command, imu, joints, feet, touch.pressed, sonar.echo, sim/base",
+    );
+    expect(keySummary(["joints.target_position", "joints.stiffness", "robot/skill"], 60)).toBe(
+      "joints.{target_position,stiffness}, robot/skill",
+    );
+    expect(keySummary(["a/b.c", "a/b.d", "a/e"], 60)).toBe("a/{b.c,b.d,e}");
+  });
+
+  it("sums up the keys no node writes in one line, and lists them under it unpacked", () => {
+    const rows = robotRows();
+    const sense = rows.find((r) => r.title.startsWith("sense:"))!;
+    const packed = layoutDiagram(rows, new Set(), { packed: new Set([sense.key]) });
+    const loose = layoutDiagram(rows, new Set());
+    const box = packed.boxes.get(sense.key)!;
+    expect(box.packed).toBe(true);
+    expect(box.lines[0]).toMatch(/^▸ 15 keys: command, imu, joints/);
+    expect(new Set(box.portLine.slice(0, 15))).toEqual(new Set([0]));
+    expect(box.summaries[0]).toMatchObject({ output: false, from: 0 });
+    expect(box.summaries[0]!.title.split("\n")).toHaveLength(15);
+    // A port written back shares its line with its output, where its wires leave.
+    const posture = sense.ports.findIndex((p) => p.name === "posture");
+    const out = sense.outputs.findIndex((o) => o.name === "posture");
+    expect(box.lines[box.portLine[posture]!]).toBe("posture ⇄ {robot/posture}");
+    expect(outputY(box, out)).toBe(portY(box, posture));
+    // Its return value, a status no node reads, written nowhere: packed, not listed.
+    expect(box.outputLines).toEqual([]);
+    const open = loose.boxes.get(sense.key)!;
+    expect(open.packed).toBe(false);
+    expect(open.lines[0]).toBe("▾ 15 keys");
+    expect(open.lines[1]).toBe("  vx  {command.vx}");
+    expect(open.h).toBeGreaterThan(box.h * 3);
+    // A native writing a key: its line says so.
+    const set = rows.find((r) => r.title === "set_string")!;
+    const all = layoutDiagram(rows, new Set(), { packed: new Set(rows.map((r) => r.key)) });
+    expect(all.boxes.get(set.key)!.lines[0]).toBe("variable → {robot/skill}");
+  });
+
+  it("joins the links reaching one line of a packed node, and counts them", () => {
+    const rows = robotRows();
+    const act = rows.find((r) => r.title.startsWith("act"))!;
+    const skill = act.ports.findIndex((p) => p.name === "skill");
+    const packed = layoutDiagram(rows, new Set(), { packed: new Set([act.key]) });
+    const box = packed.boxes.get(act.key)!;
+    expect(packed.badges).toEqual([
+      expect.objectContaining({ to: act.key, y: box.y + portY(box, skill), count: 6 }),
+    ]);
+    expect(layoutDiagram(rows, new Set()).badges).toEqual([]);
+    // Two outputs of one node read by one packed node: one wire, carrying both.
+    const text = `${SMILE.text}watch: add(operand_0: @mouth._ret, operand_1: @mouth.state)\n`;
+    const { document } = language.parse(text);
+    const loaded = language.resolve(document, DATAFLOW_FUNCTIONS);
+    const index = functionIndex(language.natives(), DATAFLOW_FUNCTIONS);
+    const smile = diagramRows(document, index, loaded.nodes);
+    const watch = smile.find((r) => r.node.name?.text === "watch")!;
+    const joined = layoutDiagram(smile, new Set(), { packed: new Set([watch.key]) });
+    const into = joined.wires.filter((w) => w.to === watch.key);
+    expect(into.map((w) => w.carries)).toEqual([["@mouth._ret", "@mouth.state"]]);
+    expect(joined.boxes.get(watch.key)!.lines.slice(0, 2).join(" ")).toBe(
+      "operand_0, operand_1  @mouth._ret, @mouth.state",
+    );
+    expect(joined.badges.map((b) => b.count)).toEqual([2]);
+    expect(layoutDiagram(smile, new Set()).wires.filter((w) => w.to === watch.key)).toHaveLength(2);
+  });
+
+  it.each([false, true])(
+    "stacks subtrees too wide side by side, and routes every wire clear of the nodes (packed: %s)",
+    (pack) => {
+      const rows = robotRows();
+      const layout = layoutDiagram(rows, new Set(), {
+        packed: new Set(pack ? rows.map((r) => r.key) : []),
+      });
+      const fallback = rows.find((r) => r.title === "fallback")!;
+      const column = fallback.childKeys.map((k) => layout.boxes.get(k)!);
+      const holder = layout.boxes.get(fallback.key)!;
+      for (const [a, b] of column.slice(1).map((next, i) => [column[i]!, next] as const)) {
+        expect(b.y).toBeGreaterThan(a.y + a.h);
+        expect(b.x).toBe(holder.x + 24);
+      }
+      // Each sequence in the column holds its two leaves in a row on its right.
+      for (const sequence of column.filter((c) => c.row.childKeys.length)) {
+        const [first, second] = sequence.row.childKeys.map((k) => layout.boxes.get(k)!);
+        expect([first!.y, second!.y]).toEqual([sequence.y, sequence.y]);
+        expect(first!.x).toBeGreaterThan(sequence.x + sequence.w);
+        expect(second!.x).toBeGreaterThan(first!.x + first!.w);
+      }
+      const boxes = [...layout.boxes.values()];
+      for (const wire of layout.wires) {
+        const ends = [wire.from, wire.to];
+        if (wire.d.includes("C")) continue;
+        for (const box of boxes.filter((b) => !ends.includes(b.row.key))) {
+          const inside = ([ax, ay, bx, by]: [number, number, number, number]) =>
+            Math.min(ax, bx) < box.x + box.w &&
+            Math.max(ax, bx) > box.x &&
+            Math.min(ay, by) < box.y + box.h &&
+            Math.max(ay, by) > box.y;
+          expect(segmentsOf(wire.d).filter(inside), `${wire.id} through ${box.row.key}`).toEqual(
+            [],
+          );
+        }
+      }
+      // Sense feeds seven nodes, the six setting the skill feed one.
+      expect(layout.wires.filter((w) => w.from === "0.0" && !w.store)).toHaveLength(pack ? 6 : 6);
+      expect(layout.wires.filter((w) => w.store && w.to === "0.2")).toHaveLength(6);
+    },
+  );
 });

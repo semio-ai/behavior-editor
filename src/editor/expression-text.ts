@@ -80,3 +80,27 @@ export function portsRead(expression: Expression): { node: string; port: string 
       return [];
   }
 }
+
+/** The key `expression` is, when it is one whole: `{imu/gyro}`, `{.count}`. */
+export function variableName(expression: Expression): string | undefined {
+  return expression.kind.type === "variable" ? expression.kind.name : undefined;
+}
+
+/** The keys `expression` reads, `{key}`, at any depth, in order. */
+export function variablesRead(expression: Expression): string[] {
+  const { kind } = expression;
+  switch (kind.type) {
+    case "variable":
+      return [kind.name];
+    case "array":
+      return kind.elements.flatMap(variablesRead);
+    case "some":
+      return variablesRead(kind.value);
+    case "select":
+      return variablesRead(kind.source);
+    case "call":
+      return kind.call.arguments.flatMap((a) => variablesRead(a.value));
+    default:
+      return [];
+  }
+}

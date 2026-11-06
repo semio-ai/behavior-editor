@@ -77,6 +77,8 @@ language's.
 | `examples` | The behaviors the start screen offers, each a `BehaviorExample`: its `title`, `fileName` and `text`, and the `plotKeys` it plots. Each opens as any file does, on whichever Arora is attached. None by default. |
 | `moduleNames` | Names the palette shows for module ids. |
 | `plotKeys` | The store keys plotted from the start. |
+| `packDiagram` | Whether the diagram starts packed (default `true`). |
+| `storeLinks` | Whether the diagram starts with its links through the store (default `true`). |
 
 The editor:
 
@@ -97,6 +99,22 @@ The editor:
   runs from each named node to every argument that reads it. A detached node
   shows whether it ran to a changed value or the same one, was served from its
   cache, or was not reached; a node's return value sits in its top border.
+  Subtrees too wide side by side stack in a column, where a node holding a few
+  leaves holds them in a row on its right.
+- links the nodes through the store: a dashed wire runs from each node writing
+  a key, its return value (`{k} = …`), a parameter its function writes back
+  or a native's `variable`, to each argument reading that key. Nodes that both
+  read and write one key share it as their state, and are not linked to each
+  other through it. **Store links** in the diagram's bar hides them.
+- packs the diagram (**Pack** in its bar, on by default): a node sums up its
+  ports bound to keys no node writes, three or more, in one line
+  (`▸ 15 keys: command, imu, joints, …`, each listed in its tooltip), shows a
+  port its function writes back on one line with its output
+  (`mode ⇄ {mode}`), and puts its ports reading one same node on one line.
+  The wires reaching one line join, a badge counting them. A node's summary
+  line, a double click on it, or P packs or unpacks it alone; the badge
+  unpacks the node it sits by. Unpacked, the keys are listed under their
+  summary.
 - edits the selected node: its name (its readers follow), its function from a
   searchable palette, each argument by parameter (a literal by type, a store
   key, a tree-local variable, another node's port, a nested call), where its

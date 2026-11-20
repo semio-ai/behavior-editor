@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { MethodSignature } from "../model/signature";
-import { type Value, valueBoolean, valueNumber } from "../model/value";
+import { type Value, valuePlotted } from "../model/value";
 
 /** Whatever says the module functions it offers: an Arora's session. */
 export interface FunctionSource {
@@ -12,14 +12,6 @@ export const HISTORY = 240;
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-/** A key's value as a number to plot: a number, or a boolean as 0 or 1. */
-function plotted(value: Value | undefined): number | null {
-  const n = valueNumber(value);
-  if (n !== undefined) return n;
-  const b = valueBoolean(value);
-  return b === undefined ? null : Number(b);
-}
-
 /** `history` with one more tick, the store as `store` holds it. */
 export function withTick(
   history: ReadonlyMap<string, readonly (number | null)[]>,
@@ -27,7 +19,7 @@ export function withTick(
 ): ReadonlyMap<string, readonly (number | null)[]> {
   const out = new Map<string, readonly (number | null)[]>();
   for (const key of new Set([...history.keys(), ...store.keys()])) {
-    const series = [...(history.get(key) ?? []), plotted(store.get(key))];
+    const series = [...(history.get(key) ?? []), valuePlotted(store.get(key))];
     out.set(key, series.slice(-HISTORY));
   }
   return out;

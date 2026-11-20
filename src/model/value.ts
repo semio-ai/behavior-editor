@@ -82,11 +82,27 @@ export function numericTag(value: Value): NumericTag | undefined {
   return NUMERIC_TAGS.find((t) => t === tag);
 }
 
-/** The number a scalar numeric value holds. */
+/**
+ * The number a scalar numeric value holds. An integer past ±(2^53 − 1) that
+ * a bridge kept as its digits (`JSON.rawJSON`) comes out rounded, to show and
+ * plot; the value itself stays exact.
+ */
 export function valueNumber(value: Value | null | undefined): number | undefined {
   if (value == null) return undefined;
   const tag = numericTag(value);
-  return tag ? (value as Record<NumericTag, number>)[tag] : undefined;
+  if (!tag) return undefined;
+  const n: unknown = (value as Record<NumericTag, unknown>)[tag];
+  if (typeof n === "number") return n;
+  const raw = (n as { rawJSON?: unknown } | null)?.rawJSON;
+  return typeof raw === "string" ? Number(raw) : undefined;
+}
+
+/** A value as a number to plot: a number, or a boolean as 0 or 1; `null` for any other. */
+export function valuePlotted(value: Value | null | undefined): number | null {
+  const n = valueNumber(value);
+  if (n !== undefined) return n;
+  const b = valueBoolean(value);
+  return b === undefined ? null : Number(b);
 }
 
 /** The boolean a `bool` value holds. */

@@ -5,7 +5,8 @@ import type { MethodSignature } from "../model/signature";
 import type { DeviceSession, SessionState } from "../session/device-session";
 import { useSessionState } from "../session/use-device-session";
 import type { BehaviorDocument, Span } from "../text/ast";
-import type { BehaviorText, Diagnostic } from "../text/language";
+import type { BehaviorText, Diagnostic, Loaded, ParseResult } from "../text/language";
+import type { HistoryState } from "../session/device-history";
 import { Diagram, type Drop } from "./Diagram";
 import { diagramRows, rowKey } from "./diagram-rows";
 import {
@@ -28,6 +29,8 @@ import { DeviceBanner } from "./DeviceBanner";
 import { DeviceBar } from "./DeviceBar";
 import { DiscardConfirm } from "./DiscardConfirm";
 import { PlaybackBar } from "./PlaybackBar";
+import { TimelineBar } from "./TimelineBar";
+import { atTimeline, useTimeline } from "./use-timeline";
 import { type RecentFile, useRecentFiles } from "./recent-files";
 import { type BehaviorExample, type ExampleFit, StartScreen } from "./StartScreen";
 import { behaviorKeys } from "./store-keys";
@@ -476,6 +479,84 @@ interface WorkspaceProps {
   localError: string | null;
 }
 
+/** A text as the views show it: as typed, as parsed, and resolved. */
+interface ViewedText {
+  text: string;
+  source: string;
+  parsed: ParseResult;
+  resolved: Loaded;
+}
+
+/** What the views show at a step of the device's past. */
+interface PastBehavior {
+  /** The behavior the device ran then, as text; `null` when it is the file's, or not known: the file shows. */
+  view: ViewedText | null;
+  /** Whether the nodes' states are those of the behavior shown. */
+  nodes: boolean;
+  /** What the views show, told while they show the past. */
+  notice: string;
+}
+
+const PAST_NOTICE = "The device's behavior at the step shown: go Live to edit the file.";
+
+/**
+ * The behavior the device ran at the step `shown` of its past, as the views
+ * show it: the file, when it is the file's graph; a file that ran on the
+ * device, when it is that one's; or the graph written as text. A step whose
+ * behavior the history did not record shows the file, its nodes' states only
+ * when the device still runs that revision of it.
+ */
+function usePastBehavior(
+  language: BehaviorText,
+  shown: HistoryState | null,
+  device: DeviceMode,
+  resolved: Loaded,
+  ran: readonly RanFile[],
+  functions: MethodSignature[],
+): PastBehavior {
+  const graph = shown?.behavior ?? null;
+  const fileRuns =
+    shown !== null &&
+    shown.revision !== null &&
+    shown.revision === device.status.revision &&
+    device.relation === "running" &&
+    device.pendingChanges === 0;
+  const written = useMemo((): { text: string } | { problem: string } | null => {
+    if (!graph || isEmptyDiff(language.diff(resolved.graph, graph))) return null;
+    const held = ran.find((f) => isEmptyDiff(language.diff(f.graph, graph)));
+    if (held) return { text: held.text };
+    const out = language.openFile(JSON.stringify(graph), "json", functions);
+    return "problems" in out ? { problem: problemsText(out.problems) } : { text: out.text };
+  }, [graph, language, resolved.graph, ran, functions]);
+  const view = useMemo((): ViewedText | null => {
+    if (!written || !("text" in written)) return null;
+    const parsed = language.parse(written.text);
+    return {
+      text: written.text,
+      source: written.text,
+      parsed,
+      resolved: language.resolve(parsed.document, functions),
+    };
+  }, [written, language, functions]);
+  if (!shown) return { view: null, nodes: false, notice: "" };
+  if (view) return { view, nodes: true, notice: PAST_NOTICE };
+  if (graph && !written) return { view: null, nodes: true, notice: PAST_NOTICE };
+  if (written && "problem" in written) {
+    return {
+      view: null,
+      nodes: false,
+      notice: `The device's behavior at the step shown does not show as text (${written.problem}): the file shows, without its nodes' states.`,
+    };
+  }
+  if (fileRuns) return { view: null, nodes: true, notice: PAST_NOTICE };
+  return {
+    view: null,
+    nodes: false,
+    notice:
+      "The device's behavior at the step shown is not known: the file shows, without its nodes' states.",
+  };
+}
+
 /** One file open: the editor's views over it, on the Arora attached, if one is. */
 function Workspace({
   language,
@@ -562,35 +643,40 @@ function Workspace({
     [language],
   );
   const device = useDeviceMode(session, runnable ? resolved : null, diff);
-  const playback = device;
+  // What the views show of the device: live, or a step of its past the timeline went back to.
+  const timeline = useTimeline(session);
+  const past = usePastBehavior(language, timeline.shown, device, resolved, files.ran, functions);
+  /** What the views show: the behavior the device ran at the step of the past shown, or the file. */
+  const view = past.view ?? { text, source, parsed, resolved };
+  const playback = atTimeline(device, timeline, view.resolved.graph.root, past.nodes);
   const runtimeError = functionsError ?? playback.error;
 
   const index = useMemo(
     () => functionIndex(natives, functions, moduleNames),
     [natives, functions, moduleNames],
   );
-  const storeKeys = useMemo(() => behaviorKeys(resolved, index), [resolved, index]);
+  const storeKeys = useMemo(() => behaviorKeys(view.resolved, index), [view.resolved, index]);
   const rows = useMemo(
-    () => diagramRows(parsed.document, index, resolved.nodes),
-    [parsed.document, index, resolved.nodes],
+    () => diagramRows(view.parsed.document, index, view.resolved.nodes),
+    [view.parsed.document, index, view.resolved.nodes],
   );
   const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
   const selectedRow = (selected !== null && byKey.get(selected)) || null;
   // With no Arora, no function index says what a module call calls: the
   // resolver's word on those calls is left out, and the rest stands.
   const unchecked = useMemo(
-    () => (session ? null : unknownCalls(parsed.document, index).map((call) => call.span)),
-    [session, parsed.document, index],
+    () => (session ? null : unknownCalls(view.parsed.document, index).map((call) => call.span)),
+    [session, view.parsed.document, index],
   );
   const diagnostics = useMemo(
     () =>
       uniqueDiagnostics(
-        parsed.diagnostics,
+        view.parsed.diagnostics,
         unchecked
-          ? resolved.diagnostics.filter((d) => !unchecked.some((span) => within(d.span, span)))
-          : resolved.diagnostics,
+          ? view.resolved.diagnostics.filter((d) => !unchecked.some((span) => within(d.span, span)))
+          : view.resolved.diagnostics,
       ),
-    [parsed.diagnostics, resolved.diagnostics, unchecked],
+    [view.parsed.diagnostics, view.resolved.diagnostics, unchecked],
   );
   // On a device, the file is the device's to run: what keeps it from running
   // there is told, the functions it calls that the device lacks first.
@@ -611,7 +697,9 @@ function Workspace({
   // the parse left out the lines it could not read, so an edit formatted from
   // it would drop them. The diagram shows the parse and edits nothing. Nor
   // does it while typing waits to be parsed: the parse is of an older text.
-  const editable = !parsed.diagnostics.some((d) => d.severity === "error");
+  // Nor while the timeline shows the past: an edit acts on the present.
+  const textErrors = parsed.diagnostics.some((d) => d.severity === "error");
+  const editable = !textErrors && timeline.shown === null;
   const [editError, setEditError] = useState<string | null>(null);
   const edit = useCallback(
     (change: Edit, select?: NodePath | null) => {
@@ -654,8 +742,8 @@ function Workspace({
   };
 
   const onCaret = (offset: number) => {
-    const line = source.slice(0, offset).split("\n").length;
-    const found = walk(parsed.document)
+    const line = view.source.slice(0, offset).split("\n").length;
+    const found = walk(view.parsed.document)
       .filter(({ node }) => node.span.line === line)
       .at(-1);
     if (found) setSelected(rowKey(found.path));
@@ -805,11 +893,17 @@ function Workspace({
           </button>
         </span>
       </div>
-      {!editable && (
+      {timeline.shown !== null ? (
         <p className="be-notice" role="status">
-          The text has errors: the diagram shows what parses, and edits wait until the text is
-          fixed.
+          {past.notice}
         </p>
+      ) : (
+        textErrors && (
+          <p className="be-notice" role="status">
+            The text has errors: the diagram shows what parses, and edits wait until the text is
+            fixed.
+          </p>
+        )
       )}
       <div className="be-canvas">
         {rows.length ? (
@@ -847,7 +941,7 @@ function Workspace({
   );
   const inspector = selectedRow && (
     <Inspector
-      document={parsed.document}
+      document={view.parsed.document}
       row={selectedRow}
       rows={rows}
       index={index}
@@ -862,12 +956,13 @@ function Workspace({
         <h2>Text</h2>
       </div>
       <TextView
-        text={text}
-        parsed={source === text}
+        text={view.text}
+        parsed={view.source === view.text}
         diagnostics={diagnostics}
         highlight={selectedRow?.node.span ?? null}
         onChange={type}
         onCaret={onCaret}
+        readOnly={timeline.shown !== null}
       />
     </div>
   );
@@ -912,9 +1007,10 @@ function Workspace({
         </div>
         <div className="be-header-run">
           {session && <PlaybackBar session={session} />}
-          {session && <DeviceBar device={device} />}
+          {session && <DeviceBar device={playback} />}
         </div>
       </header>
+      {session && <TimelineBar timeline={timeline} />}
       {session && (
         <DeviceBanner
           device={device}

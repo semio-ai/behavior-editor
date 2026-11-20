@@ -309,6 +309,7 @@ time or the tenth.
 | `follow(behavior)` | the nodes the trace follows: a resolved file, or `null` for whatever the device runs |
 | `run(loaded)`, `edit(diff, next)`, `stop()` | load a behavior, apply a diff to it, load the empty one |
 | `functions()`, `read(key)`, `write(key, value)` | the device's functions and store |
+| `history`, `on("history", listener)` | the history of the device's steps on the connection (`DeviceHistory`), and each new one; `null` with `history: false` |
 | `close()` | halt the trace and close the connection; the behavior goes on running |
 
 Connecting attaches without changing what the device runs. The session reads
@@ -332,6 +333,19 @@ while paused, stepping it once at each `step()`. The local Arora answers a
 call, a load, an edit or a read of its behavior, by a step of no time, which
 ticks its behavior once without moving its clock, as arora-web applies an
 operation on a device nobody steps.
+
+Each connection keeps the history of the device's steps (`DeviceHistory`), from
+the pushes the bridge client delivers rather than from the session's samples:
+every push carrying `arora/time` is a step, and what a push without it carries
+belongs to the step before. It keeps changes only, whole, with no cap: for each
+store key the steps its value changed at, and for each node the steps its
+status, activity or return value changed at, folded from the trace's reports
+(each a delta `since` the one before; a first report states every node anew).
+`at(i)` rebuilds the state at step `i` by a binary search per key and node;
+`time(i)`, `tick(i)` and `indexAt(seconds)` place a step on the device's clock
+and the interpreter's tick. It reads nothing particular to a device: a remote
+Arora's pushes, the local one's and a recording replayed through a bridge
+client fill it alike.
 
 ### The editor on an Arora
 
@@ -362,6 +376,14 @@ operation on a device nobody steps.
   does not report its behavior.
 - **Attaching is read-only.** The editor reads what the Arora runs, and
   follows its tick, step rate, clock and revision.
+- **The past stays at hand.** Under the header, the timeline scrubs over every
+  step of the device since the connection: going back shows the nodes, the
+  store, the tick and the clock as they were at that step, while the history
+  goes on growing. **Replay** plays the past from the step shown at a speed
+  (0.1× to 4×) on the device's clock, **Hold** stops there, and **Live**
+  follows the newest step again, as a replay reaching it does. None of it
+  reaches the device or its connection; writes and changes of the behavior
+  act on its present.
 - **A file calling functions the device lacks** says so in the banner, by
   name, and its Run is disabled with that reason; the text's diagnostics point
   at the calls. The start screen marks each example the device cannot run:

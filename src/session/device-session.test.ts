@@ -273,4 +273,56 @@ describe("DeviceSession", () => {
     expect(device.clients.size).toBe(0);
     await expect(session.deviceBehavior()).rejects.toThrow("the session is closed");
   });
+
+  it("keeps in its history the behavior of each revision, made by it or another client", async () => {
+    // Its own changes are kept as it made them, on a device answering no read too.
+    const own = setup({ graph: {}, language: FAKE_CALLS_WITHOUT_READ });
+    await until(() => status(own.session) === "connected");
+    // As each change is made, before the device shows its revision.
+    await own.session.run(ORDER_LOADED);
+    const history = own.session.history!;
+    expect(history.behavior(5)).toEqual(ORDER_LOADED.graph);
+    await own.session.run(GREET_LOADED);
+    expect(history.behavior(6)).toEqual(GREET_LOADED.graph);
+    await until(
+      () => own.changes.at(-1)?.revision === 6,
+      () => own.device.step(),
+    );
+    expect(history.at(history.length - 1).behavior).toEqual(GREET_LOADED.graph);
+    // Another client's change is read; the behavior run as the session attached is too.
+    const other = setup();
+    await until(() => status(other.session) === "connected");
+    other.device.loadedByAnother(GREET_LOADED.graph);
+    await until(
+      () => other.session.history?.behavior(5) != null,
+      () => other.device.step(),
+    );
+    expect(other.session.history!.behavior(4)).toEqual(GRAPH);
+    expect(other.session.history!.behavior(5)).toEqual(GREET_LOADED.graph);
+  });
+
+  it("keeps the behavior of its own changes at the revision the device names", async () => {
+    // An edit sent without the behavior it makes is read back.
+    const reading = setup();
+    await until(() => status(reading.session) === "connected");
+    await reading.session.edit({ root: GRAPH.nodes![1]!.id });
+    expect(reading.session.history!.behavior(5)).toEqual(reading.device.graph);
+    // On a device answering no read, a change another client made and the
+    // device pushed, though not stepped to yet, comes before this session's.
+    const blind = setup({ language: FAKE_CALLS_WITHOUT_READ });
+    await until(() => status(blind.session) === "connected");
+    blind.device.loadedByAnother(GREET_LOADED.graph);
+    blind.device.step();
+    await blind.session.run(ORDER_LOADED);
+    expect(blind.session.history!.behavior(6)).toEqual(ORDER_LOADED.graph);
+    expect(blind.session.history!.behavior(5)).toBeNull();
+  });
+
+  it("keeps no behavior where it keeps no history", async () => {
+    const { device, session } = setup({ graph: {}, history: false });
+    await until(() => status(session) === "connected");
+    await session.run(ORDER_LOADED);
+    expect(session.history).toBeNull();
+    expect(device.graph).toEqual(GRAPH);
+  });
 });

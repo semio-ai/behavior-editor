@@ -116,6 +116,14 @@ export class BridgeDevice implements AroraDevice {
     return Promise.resolve(JSON.stringify(now === undefined ? [] : [now]));
   }
 
+  /**
+   * The store as the device pushed it so far, from what it held when it was
+   * taken up: every key but those kept for `takeValues`.
+   */
+  storeValues(): Map<string, Value> {
+    return new Map(this.#values as Map<string, Value>);
+  }
+
   /** The device's steps since it was taken up: the pushes that carried its clock. */
   get steps(): number {
     return this.#steps;

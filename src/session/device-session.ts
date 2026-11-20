@@ -9,16 +9,12 @@ import type { MethodSignature } from "../model/signature";
 import { type Value, valueNumber } from "../model/value";
 import type { BridgeClient, BridgeClosure } from "../bridge/bridge-client";
 import { BridgeDevice } from "../bridge/bridge-device";
+import { DeviceHistory, REVISION_KEY } from "./device-history";
 import { DeviceRuntime, type FollowedBehavior, followed } from "../runtime/device-runtime";
 import { type KeyInfo, TIME_KEY, type TickReport } from "../runtime/runtime";
 import type { BehaviorText, Loaded } from "../text/language";
 
-/**
- * The revision of the behavior a device runs, a `u64` its interpreter
- * increases at each load and each edit it accepts: `arora-behavior`'s
- * `built_in::BEHAVIOR_REVISION`.
- */
-export const REVISION_KEY = "arora/behavior/revision";
+export { REVISION_KEY };
 
 /** The nanoseconds the device's last step took: `arora-behavior`'s `built_in::DT`. */
 export const DT_KEY = "arora/dt";
@@ -100,6 +96,8 @@ export interface SessionEvents {
   tick: SessionTick;
   /** Following the device failed at a step: it goes on at the next. */
   error: Error;
+  /** A connection started a history of the device's steps: `DeviceSession.history`. */
+  history: DeviceHistory;
   /** The session started or stopped stepping a device it drives, or changed its rate. */
   clock: ClockState;
 }
@@ -131,6 +129,12 @@ export interface DeviceSessionOptions {
    * given a way to connect can: see the constructor.
    */
   reconnect?: boolean | Backoff;
+  /**
+   * Whether each connection keeps the history of the device's steps as they
+   * are pushed, whole, for a person to go back to (`history`): `true` by
+   * default.
+   */
+  history?: boolean;
   /** What the session is connected to, in words, for a host to show: a URL, a device's name. */
   label?: string;
 }
@@ -140,6 +144,8 @@ interface Connection {
   client: BridgeClient;
   device: BridgeDevice;
   runtime: DeviceRuntime;
+  /** The history of the device's steps on this connection; `null` when not kept. */
+  history: DeviceHistory | null;
 }
 
 /**
@@ -208,6 +214,7 @@ export class DeviceSession {
     state: new Set(),
     behaviorChanged: new Set(),
     tick: new Set(),
+    history: new Set(),
     error: new Set(),
     clock: new Set(),
   };
@@ -222,6 +229,13 @@ export class DeviceSession {
   #revision: number | null = null;
   /** The changes this session made or is making whose revision the device has not shown yet. */
   #own = 0;
+  /**
+   * The revision the device has once it applied every change this session
+   * made, each moving it on by one: where the history keeps the behavior a
+   * change made on a device answering no read. `null` on a device keeping no
+   * revision, or on a connection keeping no history.
+   */
+  #expected: number | null = null;
   #status: DeviceStatus = { tick: null, time: null, rate: null, revision: null };
   /**
    * What the session follows: a behavior its client said, or `null` for the
@@ -239,6 +253,8 @@ export class DeviceSession {
   #keys: KeyInfo[] = [];
   /** Wakes the loop's wait for its next step, when the clock changes or the session closes. */
   #resume: (() => void) | null = null;
+  /** The history of the device's steps on the last connection; `null` before one, or when not kept. */
+  #history: DeviceHistory | null = null;
 
   /**
    * A session over `bridge`, a connection to a device; or over the
@@ -332,6 +348,56 @@ export class DeviceSession {
    * connection: what a follower taking up the session shows before the next
    * step, as a paused local Arora takes none.
    */
+  get history(): DeviceHistory | null {
+    return this.#history;
+  }
+
+  /**
+   * Keep the history of the device behind `client` from now on: every push,
+   * the trace's reports among them, folded in as it arrives. It starts from
+   * the store `device` holds, then the pushes `early` caught while `device`
+   * read it, each a step. The store read can be newer than those pushes: a
+   * key one of them carries starts at that push, not before it, so no step
+   * shows a value ahead of its time. Reports are read from `runtime`'s own trace once it
+   * has one: another client's trace on the device is not followed. The
+   * behavior of each revision the device shows is recorded in it too, as a
+   * read of the device answers it, or as this session made it.
+   */
+  #keepHistory(
+    client: BridgeClient,
+    device: BridgeDevice,
+    runtime: DeviceRuntime,
+    early: Record<string, Value>[],
+  ): DeviceHistory | null {
+    if (this.#options.history === false) return null;
+    const { language } = this.#options;
+    // The interpreter's traces report under `arora/tasks/<module>/<function>/`, as the runtime expects.
+    const { module_id: module, id } = JSON.parse(language.traceCall({})) as {
+      module_id: string;
+      id: string;
+    };
+    const traces = `arora/tasks/${module}/${id}/`;
+    const pushedEarly = new Set(early.flatMap((values) => Object.keys(values)));
+    const history = new DeviceHistory({
+      base: new Map([...device.storeValues()].filter(([key]) => !pushedEarly.has(key))),
+      report: (key, value) => {
+        if (!key.startsWith(traces) || !key.endsWith("/feedback")) return null;
+        const own = runtime.traceFeedback;
+        if (own !== null && key !== own) return null;
+        try {
+          return language.traceReport(JSON.stringify(value));
+        } catch {
+          return null;
+        }
+      },
+    });
+    for (const values of early.splice(0)) history.record(values);
+    client.onValues((values) => history.record(values));
+    this.#history = history;
+    this.#emit("history", history);
+    return history;
+  }
+
   get snapshot(): { store: ReadonlyMap<string, Value>; keys: readonly KeyInfo[] } {
     return { store: this.#store, keys: this.#keys };
   }
@@ -398,9 +464,10 @@ export class DeviceSession {
 
   /** Load `loaded` as the device's behavior, every node starting afresh, and follow it. */
   run(loaded: Loaded): Promise<void> {
-    return this.#change(async ({ runtime }) => {
-      await runtime.start(loaded);
+    return this.#change(async (connection) => {
+      await connection.runtime.start(loaded);
       this.#followed = followed(loaded);
+      return loaded.graph;
     });
   }
 
@@ -428,14 +495,15 @@ export class DeviceSession {
       !diff.unbind?.length &&
       !diff.bind?.length &&
       diff.root === undefined;
-    const apply = async ({ runtime }: Connection) => {
+    const apply = async (connection: Connection) => {
       if (unchangedSince !== undefined && unchangedSince !== this.#external) {
         throw new Error("another client changed the device's behavior: the edit was not sent");
       }
-      await runtime.edit(diff, next);
+      await connection.runtime.edit(diff, next);
       if (next) this.#followed = followed(next);
+      return next?.graph ?? null;
     };
-    return empty ? this.#enqueue(apply) : this.#change(apply);
+    return empty ? this.#enqueue(async (at) => void (await apply(at))) : this.#change(apply);
   }
 
   /** Stop the device's behavior: load the empty one. */
@@ -444,6 +512,7 @@ export class DeviceSession {
       await connection.runtime.stop();
       this.#followed = null;
       await this.#followOn(connection, { graph: {}, revision: 0 });
+      return {};
     });
   }
 
@@ -503,18 +572,24 @@ export class DeviceSession {
         return;
       }
       let connection: Connection;
+      // What the device pushes while its store is read: steps of the history too.
+      const early: Record<string, Value>[] = [];
+      const catchEarly = this.#options.history === false ? () => {} : client.onValues((values) => early.push(values));
       try {
-        const device = await BridgeDevice.over(client);
-        connection = {
-          client,
+        let device: BridgeDevice;
+        try {
+          device = await BridgeDevice.over(client);
+        } finally {
+          catchEarly();
+        }
+        const runtime = new DeviceRuntime({
           device,
-          runtime: new DeviceRuntime({
-            device,
-            loadCall: (graph) => this.#options.language.loadCall(graph),
-            editCall: (diff) => this.#options.language.editCall(diff),
-            trace: this.#options.language,
-          }),
-        };
+          loadCall: (graph) => this.#options.language.loadCall(graph),
+          editCall: (diff) => this.#options.language.editCall(diff),
+          trace: this.#options.language,
+        });
+        const history = this.#keepHistory(client, device, runtime, early);
+        connection = { client, device, runtime, history };
         await this.#attach(connection);
       } catch (error) {
         // A device that refused the connection as it was taken up, as when
@@ -601,6 +676,7 @@ export class DeviceSession {
     this.#functions = null;
     const read = await this.#read(connection);
     const revision = read?.revision ?? (await this.#readRevision(runtime));
+    this.#expected = connection.history ? revision : null;
     if (revision !== null) {
       const known = this.#revision;
       this.#revision = revision;
@@ -696,13 +772,23 @@ export class DeviceSession {
     const ahead = known === null ? 0 : revision - known;
     const ours = known !== null && ahead > 0 && ahead <= this.#own;
     if (ours) this.#own -= ahead;
-    else this.#own = 0;
+    else {
+      this.#own = 0;
+      // Another's change: this session's next one moves on from it.
+      if (this.#expected !== null) this.#expected = revision;
+    }
     if (known === null) return;
     // Following what the device runs, the session follows its change; a
     // behavior the client said is followed until the client says otherwise.
     if (!ours && this.#followed === null) {
       const connection = this.#connection;
       if (connection) void this.#enqueue((at) => this.#followOn(at), connection).catch(() => {});
+    }
+    // The history shows each revision's behavior: another's change is read,
+    // unless following it reads it already.
+    else if (!ours) {
+      const connection = this.#connection;
+      if (connection?.history) void this.#enqueue((at) => this.#read(at), connection).catch(() => {});
     }
     if (!ours) this.#external += 1;
     this.#emit("behaviorChanged", { revision, external: !ours });
@@ -712,7 +798,8 @@ export class DeviceSession {
     return valueNumber(await runtime.read(REVISION_KEY)) ?? null;
   }
 
-  async #read({ device }: Connection): Promise<DeviceBehavior | null> {
+  /** Read the behavior the device runs, recorded in `connection`'s history as its revision's. */
+  async #read({ device, history }: Connection): Promise<DeviceBehavior | null> {
     const { readCall, readResult } = this.#options.language;
     if (!readCall || !readResult) return null;
     let answer: string;
@@ -722,20 +809,54 @@ export class DeviceSession {
       // An interpreter without a read refuses the call.
       return null;
     }
-    return readResult(answer);
+    const read = readResult(answer);
+    history?.recordBehavior(read.revision, read.graph);
+    return read;
   }
 
   /** Make a change of the device's behavior, counted as this session's when its revision shows. */
-  #change(change: (connection: Connection) => Promise<void>): Promise<void> {
+  #change(change: (connection: Connection) => Promise<Graph | null>): Promise<void> {
     return this.#enqueue(async (connection) => {
       this.#own += 1;
+      const from = await this.#revisionBefore(connection);
+      let made: Graph | null;
       try {
-        await change(connection);
+        made = await change(connection);
       } catch (error) {
         this.#own -= 1;
         throw error;
       }
+      await this.#keepMade(connection, made, from);
     });
+  }
+
+  /**
+   * The revision a change about to be made moves the device on from, for its
+   * history: the last this session's changes reach, or one the device pushed
+   * since, another client's change the session did not step to yet.
+   */
+  async #revisionBefore({ history, runtime }: Connection): Promise<number | null> {
+    if (!history || this.#expected === null) return null;
+    const shown = await this.#readRevision(runtime).catch(() => null);
+    return shown === null ? this.#expected : Math.max(this.#expected, shown);
+  }
+
+  /**
+   * Keep in `connection`'s history the behavior a change just made: read
+   * back from a device that answers reads, which names its revision itself;
+   * on one that does not, `made` as the revision after `from`. A read that
+   * fails fails the history, not the change.
+   */
+  async #keepMade(connection: Connection, made: Graph | null, from: number | null) {
+    if (!connection.history) return;
+    const read = await this.#read(connection).catch(() => null);
+    if (read) {
+      this.#expected = read.revision;
+      return;
+    }
+    if (from === null) return;
+    this.#expected = from + 1;
+    if (made) connection.history.recordBehavior(this.#expected, made);
   }
 
   /** Run `task` on the connection once every operation before it ran; refused while there is none. */

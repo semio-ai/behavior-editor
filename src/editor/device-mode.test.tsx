@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 import "../../fixtures/dom";
-import { act, cleanup, configure, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -128,6 +137,90 @@ describe("BehaviorEditor on a device", () => {
     expect(loads(device)).toEqual([]);
     expect(edits(device)).toEqual([]);
   });
+
+  it("goes back to a step of the past while the device goes on, and live again", async () => {
+    const root = graphOf(GREET.text).root!;
+    const { device, user } = await setup(GREET, graphOf(GREET.text), (d) => {
+      d.statuses = { [root]: "running" };
+    });
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: /^fallback, running/ })).toBeTruthy());
+    const timeline = await screen.findByRole("group", { name: "Timeline" });
+    const scrub = within(timeline).getByRole("slider", { name: "Step shown" });
+    // A step the root ran at: the first steps can come before the trace's first
+    // report, and the slider's growth lags behind the live report. Once it has
+    // grown again, its newest step is after the report the root ran in.
+    const seen = Number(scrub.getAttribute("max"));
+    await waitFor(() => expect(Number(scrub.getAttribute("max"))).toBeGreaterThan(seen));
+    const ran = scrub.getAttribute("max")!;
+    device.statuses = { [root]: "success" };
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: /^fallback, succeeded/ })).toBeTruthy());
+    expect(within(timeline).getByRole("button", { name: "Live" })).toHaveAttribute("aria-pressed", "true");
+    // Back to that step, once the slider has moved past it: the root runs again, and the
+    // device's tick and clock are that step's.
+    await waitFor(() => expect(Number(scrub.getAttribute("max"))).toBeGreaterThan(Number(ran)));
+    fireEvent.change(scrub, { target: { value: ran } });
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: /^fallback, running/ })).toBeTruthy());
+    expect(within(timeline).getByRole("button", { name: "Live" })).toHaveAttribute("aria-pressed", "false");
+    const shown = screen.getByLabelText("Device tick").textContent;
+    // The device goes on, and the step shown holds.
+    const length = Number(scrub.getAttribute("max"));
+    await waitFor(() => expect(Number(scrub.getAttribute("max"))).toBeGreaterThan(length));
+    expect(screen.getByLabelText("Device tick").textContent).toBe(shown);
+    expect(screen.getByRole("treeitem", { name: /^fallback, running/ })).toBeTruthy();
+    await user.click(within(timeline).getByRole("button", { name: "Live" }));
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: /^fallback, succeeded/ })).toBeTruthy());
+    expect(loads(device)).toEqual([]);
+  });
+
+  it("shows the behavior the device ran at a step of the past, and edits nothing there", async () => {
+    const root = graphOf(ORDER.text).root!;
+    const { device, session, user } = await setup(ORDER, graphOf(ORDER.text), (d) => {
+      d.statuses = { [root]: "running" };
+    });
+    // The editor found the device running the file: the change below is another's, not what it found.
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Live edits" })).toBeTruthy());
+    const timeline = await screen.findByRole("group", { name: "Timeline" });
+    const scrub = within(timeline).getByRole("slider", { name: "Step shown" });
+    // A step after the report the root ran in: the slider's growth lags behind the live report.
+    await waitFor(() => expect(screen.getByLabelText("Root status").textContent).toBe("Running"));
+    const seen = Number(scrub.getAttribute("max"));
+    await waitFor(() => expect(Number(scrub.getAttribute("max"))).toBeGreaterThan(seen));
+    const before = scrub.getAttribute("max")!;
+    // Another client loads another behavior: the steps from its revision on ran that one.
+    device.loadedByAnother(graphOf(GREET.text));
+    await screen.findByText(/Another client changed/);
+    const history = session.history!;
+    await waitFor(
+      () =>
+        expect(
+          history.behavior(4),
+          `revision ${history.revision(history.length - 1)}, session ${session.state.status}, same history ${session.history === history}`,
+        ).not.toBeNull(),
+      { timeout: 15_000 },
+    );
+    const changed = Array.from({ length: history.length }, (_, i) => i).find((i) => history.revision(i) === 4)!;
+    // Shown once the slider reaches past it: setting the slider to the value it holds changes nothing.
+    await waitFor(() => expect(Number(scrub.getAttribute("max"))).toBeGreaterThan(changed), {
+      timeout: 15_000,
+    });
+    const field = () => screen.getByRole("textbox", { name: "Behavior text", hidden: true });
+    fireEvent.change(scrub, { target: { value: changed } });
+    await waitFor(() => expect(same(graphOf(textValue()), graphOf(GREET.text))).toBe(true));
+    expect(field()).toHaveAttribute("readonly");
+    expect(screen.getByText(/go Live to edit the file/)).toBeTruthy();
+    // Before the change, the file's behavior, as the device ran it then, its
+    // root's status in the header though the device runs another now.
+    fireEvent.change(scrub, { target: { value: before } });
+    await waitFor(() => expect(textValue()).toBe(ORDER.text));
+    expect(field()).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Root status").textContent).toBe("Running");
+    // Live, the file again, to edit; nothing of this reached the device.
+    await user.click(within(timeline).getByRole("button", { name: "Live" }));
+    await waitFor(() => expect(field()).not.toHaveAttribute("readonly"));
+    expect(textValue()).toBe(ORDER.text);
+    expect(loads(device)).toEqual([]);
+    expect(edits(device)).toEqual([]);
+  }, 30_000);
 
   it("offers to view, run or compare when the device runs another behavior", async () => {
     const { device, user } = await setup(GREET, graphOf(ORDER.text));

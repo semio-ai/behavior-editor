@@ -65,6 +65,11 @@ export type {
 } from "./bridge/bridge-client";
 export { BridgeDevice } from "./bridge/bridge-device";
 export {
+  DeviceHistory,
+  type DeviceHistoryOptions,
+  type HistoryState,
+} from "./session/device-history";
+export {
   DeviceSession,
   DT_KEY,
   REVISION_KEY,

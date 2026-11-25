@@ -1,4 +1,4 @@
-import { StrictMode, useCallback } from "react";
+import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { EXAMPLES, INPUTS, VALUES } from "../fixtures/examples";
 import {
@@ -33,6 +33,14 @@ function Demo({ language }: { language: BehaviorText }) {
     () => createLocalArora(device, language, { inputs: INPUTS, values: VALUES }),
     [language],
   );
+  // Leaving the page over changes not saved asks first.
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!dirty) return;
+    const ask = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", ask);
+    return () => window.removeEventListener("beforeunload", ask);
+  }, [dirty]);
   return (
     <div style={{ maxWidth: 1600, margin: "0 auto" }}>
       <div
@@ -48,6 +56,7 @@ function Demo({ language }: { language: BehaviorText }) {
         startLocalArora
         examples={EXAMPLE_FILES}
         moduleNames={{ [DATAFLOW_MODULE_ID]: "dataflow" }}
+        onDirtyChange={setDirty}
       />
     </div>
   );

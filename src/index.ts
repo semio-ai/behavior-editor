@@ -12,6 +12,13 @@ export type {
   ParseResult,
 } from "./text/language";
 export { FILE_FORMATS, type FileFormat, formatOf } from "./editor/file-formats";
+export {
+  type BehaviorFile,
+  type FileAccess,
+  type FileHandle,
+  browserFiles,
+  formatNamed,
+} from "./editor/file-access";
 export { createBehaviorText, type BehaviorTextExports } from "./text/wasm-language";
 export type {
   Argument,

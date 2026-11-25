@@ -1,8 +1,10 @@
 /**
- * Local behavior files, in every format of `FILE_FORMATS`: through the File
- * System Access API where the browser has it, which keeps a handle so Save
- * writes the file in place; otherwise a file input to open and a download to
- * save. Opening and saving take the same paths whatever the format.
+ * Local behavior files, in every format of `FILE_FORMATS`. In a browser
+ * (`browserFiles`): through the File System Access API where the browser has
+ * it, which keeps a handle so Save writes the file in place; otherwise a file
+ * input to open and a download to save. A host with files of its own, a
+ * desktop app, gives its `FileAccess` instead. Opening and saving take the
+ * same paths whatever the format.
  */
 import {
   FILE_FORMATS,
@@ -15,13 +17,41 @@ import {
 } from "./file-formats";
 
 /**
+ * Where a file is: a File System Access handle in a browser, or a path, for a
+ * host's `FileAccess` reaching files by path.
+ */
+export type FileHandle = FileSystemFileHandle | string;
+
+/**
  * A file the editor opened or saved: its name, its format, and its handle
- * when the browser gives one.
+ * when the browser, or the host, gives one.
  */
 export interface BehaviorFile {
   name: string;
   format: FileFormat;
-  handle: FileSystemFileHandle | null;
+  handle: FileHandle | null;
+}
+
+/**
+ * How the editor opens and saves files: the browser's (`browserFiles`) by
+ * default, or a host's own, as a desktop app's dialogs and paths. Each answers
+ * `null` where the person dismissed a dialog, and rejects with a message to
+ * show otherwise.
+ */
+export interface FileAccess {
+  /** Ask for a file to open: its text, and the format its name says. */
+  open(): Promise<(BehaviorFile & { text: string }) | null>;
+  /**
+   * Open a file opened or saved before: through its handle, or, without one
+   * this access reaches, from the contents kept with it.
+   */
+  reopen(recent: BehaviorFile & { text: string }): Promise<BehaviorFile & { text: string }>;
+  /**
+   * Write `text`, in `file`'s format, to `file`'s handle; with no handle, or
+   * `saveAs`, ask where first, and refuse a name with another format's
+   * extension.
+   */
+  save(text: string, file: BehaviorFile, saveAs: boolean): Promise<BehaviorFile | null>;
 }
 
 interface PickerOptions {
@@ -55,7 +85,7 @@ const typesOf = (format?: FileFormat): PickerOptions["types"] =>
 const ACCEPT = FILE_FORMATS.flatMap((f) => f.extensions).join(",");
 
 /** The format of a file `name` names, which a file of no known extension is refused for. */
-function formatNamed(name: string): FileFormat {
+export function formatNamed(name: string): FileFormat {
   const format = formatOf(name);
   if (!format) {
     throw new Error(
@@ -111,7 +141,8 @@ export async function reopenBehaviorFile(recent: {
   text: string;
 }): Promise<BehaviorFile & { text: string }> {
   const { handle } = recent;
-  if (!handle) return { name: recent.name, format: recent.format, handle: null, text: recent.text };
+  // A path is a host's: a browser opens that file from its contents.
+  if (!handle || typeof handle === "string") return { name: recent.name, format: recent.format, handle: null, text: recent.text };
   const permissioned = handle as FileSystemFileHandle & PermissionedHandle;
   const mode = { mode: "read" } as const;
   if (permissioned.queryPermission && (await permissioned.queryPermission(mode)) !== "granted") {
@@ -148,7 +179,7 @@ export async function saveBehaviorFile(
     download(text, name, mimeOf(file.format));
     return { ...file, name, handle: null };
   }
-  let handle = saveAs ? null : file.handle;
+  let handle = saveAs || typeof file.handle === "string" ? null : file.handle;
   if (!handle) {
     try {
       handle = await showSaveFilePicker.call(window, {
@@ -192,3 +223,10 @@ function download(text: string, name: string, mime: string) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+/** The browser's files: the File System Access API, or a file input and a download. */
+export const browserFiles: FileAccess = {
+  open: openBehaviorFile,
+  reopen: reopenBehaviorFile,
+  save: saveBehaviorFile,
+};

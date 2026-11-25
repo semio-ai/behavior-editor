@@ -9,12 +9,7 @@ import type { BehaviorText, Diagnostic, Loaded, ParseResult } from "../text/lang
 import type { HistoryState } from "../session/device-history";
 import { Diagram, type Drop } from "./Diagram";
 import { diagramRows, rowKey } from "./diagram-rows";
-import {
-  type BehaviorFile,
-  openBehaviorFile,
-  reopenBehaviorFile,
-  saveBehaviorFile,
-} from "./file-access";
+import { type BehaviorFile, type FileAccess, browserFiles } from "./file-access";
 import { FileBar } from "./FileBar";
 import {
   FILE_FORMATS,
@@ -88,6 +83,22 @@ export interface BehaviorEditorProps {
    * switches them.
    */
   storeLinks?: boolean;
+  /**
+   * How files are opened and saved: the browser's by default, a host's own
+   * where it has one, as a desktop app's dialogs and paths.
+   */
+  fileAccess?: FileAccess;
+  /**
+   * A file to open as the editor mounts, as Open would: a graph file once an
+   * Arora is attached, whose functions it is read against. Read once.
+   */
+  initialFile?: BehaviorFile & { text: string };
+  /**
+   * Called when the file open comes to hold changes not saved, and when it no
+   * longer does (saved, closed, replaced): a host asks before it closes over
+   * them, as a desktop app's window or a page leaving does.
+   */
+  onDirtyChange?(dirty: boolean): void;
 }
 
 type Tab = "diagram" | "text" | "store";
@@ -151,6 +162,9 @@ export function BehaviorEditor({
   plotKeys = [],
   packDiagram = true,
   storeLinks: storeLinksAtStart = true,
+  fileAccess = browserFiles,
+  initialFile,
+  onDirtyChange,
 }: BehaviorEditorProps) {
   const local = useLocalArora(localArora, startLocalArora);
   // How the diagram draws the data, kept from file to file.
@@ -253,17 +267,18 @@ export function BehaviorEditor({
   const files: FileActions = {
     recent: recent.files,
     remember: recent.remember,
+    save: (text, file, saveAs) => fileAccess.save(text, file, saveAs),
     create: () => begin(newFile(fileName), ""),
     open: async () => {
       const asked = ++requests.current;
       await moot(asked, async () => {
-        const opened = await openBehaviorFile();
+        const opened = await fileAccess.open();
         if (opened) await openAsText(asked, opened);
       });
     },
     openRecent: async (entry) => {
       const asked = ++requests.current;
-      await moot(asked, async () => openAsText(asked, await reopenBehaviorFile(entry)));
+      await moot(asked, async () => openAsText(asked, await fileAccess.reopen(entry)));
     },
     close: () => {
       requests.current += 1;
@@ -314,6 +329,52 @@ export function BehaviorEditor({
     ran: ran.current,
   };
 
+  // The host's file opens once it can: a graph file once an Arora is attached,
+  // unless the person opened, created or closed a file meanwhile, or edited
+  // the one the editor started on.
+  const initialOpened = useRef(false);
+  /** The host's file as the editor mounted: read once, a later one given changing nothing. */
+  const startFile = useRef(initialFile);
+  /** Whether the person edited the file open; an edit while the host's file opens makes that open moot. */
+  const edited = useRef(false);
+  /** The request opening the host's file, while it runs. */
+  const initialAsked = useRef<number | null>(null);
+  const textChanged = (next: string) => {
+    edited.current = true;
+    if (initialAsked.current !== null && requests.current === initialAsked.current) requests.current += 1;
+    onTextChange?.(next);
+  };
+  /**
+   * The requests made, and the file open, when the editor mounted: one more
+   * request, or another file, is the person's doing. A file the editor
+   * started on (from `text` or `defaultText`) gives way to the host's.
+   */
+  const initialRequests = useRef<number | null>(null);
+  const initialSerial = useRef<number | null>(null);
+  useEffect(() => {
+    const start = startFile.current;
+    if (!start || initialOpened.current) return;
+    initialRequests.current ??= requests.current;
+    initialSerial.current ??= openFile?.serial ?? -1;
+    if (
+      edited.current ||
+      (openFile?.serial ?? -1) !== initialSerial.current ||
+      requests.current !== initialRequests.current
+    ) {
+      initialOpened.current = true;
+      return;
+    }
+    if (start.format !== "bt" && !attached) return;
+    initialOpened.current = true;
+    const asked = ++requests.current;
+    initialAsked.current = asked;
+    moot(asked, () => openAsText(asked, start))
+      .catch((e: unknown) => setStartError(e instanceof Error ? e.message : String(e)))
+      .finally(() => {
+        initialAsked.current = null;
+      });
+  });
+
   if (!openFile) {
     const attempt = (run: () => Promise<void>) => () => {
       setStartError(null);
@@ -346,7 +407,9 @@ export function BehaviorEditor({
       open={openFile}
       files={files}
       text={controlled}
-      onTextChange={onTextChange}
+      onTextChange={textChanged}
+      onDirtyChange={onDirtyChange}
+      openError={startError}
       moduleNames={moduleNames}
       plotKeys={openFile.example?.plotKeys ?? plotKeys}
       packAll={packAll}
@@ -419,6 +482,8 @@ function useExampleFits(
 interface FileActions {
   recent: readonly RecentFile[];
   remember(file: BehaviorFile, text: string): void;
+  /** Write `text` to `file`, through the host's or the browser's files: `FileAccess.save`. */
+  save: FileAccess["save"];
   create(): void;
   open(): Promise<void>;
   openRecent(entry: RecentFile): Promise<void>;
@@ -462,6 +527,7 @@ interface WorkspaceProps {
   /** The text of a controlled editor. */
   text: string | undefined;
   onTextChange: ((text: string) => void) | undefined;
+  onDirtyChange: ((dirty: boolean) => void) | undefined;
   moduleNames: Readonly<Record<string, string>> | undefined;
   plotKeys: readonly string[];
   /** Whether the diagram's nodes are packed, but those switched one by one. */
@@ -477,6 +543,8 @@ interface WorkspaceProps {
   onStartLocal: (() => void) | undefined;
   /** Why the local Arora did not start. */
   localError: string | null;
+  /** Why the host's file did not open, over the file the editor started on. */
+  openError: string | null;
 }
 
 /** A text as the views show it: as typed, as parsed, and resolved. */
@@ -564,6 +632,7 @@ function Workspace({
   files,
   text: controlled,
   onTextChange,
+  onDirtyChange,
   moduleNames,
   plotKeys,
   packAll,
@@ -575,11 +644,26 @@ function Workspace({
   device: session,
   onStartLocal,
   localError,
+  openError,
 }: WorkspaceProps) {
   const [own, setOwn] = useState(open.text);
   const text = controlled ?? own;
   const [file, setFile] = useState<BehaviorFile>(open.file);
   const [saved, setSaved] = useState(open.text);
+  const dirty = text !== saved;
+  // The host hears of each change of it, and that the file no longer holds
+  // any once it is closed or replaced.
+  const dirtyChange = useRef(onDirtyChange);
+  dirtyChange.current = onDirtyChange;
+  useEffect(() => {
+    dirtyChange.current?.(dirty);
+  }, [dirty]);
+  useEffect(
+    () => () => {
+      dirtyChange.current?.(false);
+    },
+    [],
+  );
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>("0");
@@ -786,7 +870,7 @@ function Workspace({
       const target = saveAs
         ? { name: withExtension(file.name, format), format, handle: null }
         : file;
-      const stored = await saveBehaviorFile(written, target, saveAs);
+      const stored = await files.save(written, target, saveAs);
       if (!stored) return;
       files.remember(stored, written);
       setFile(stored);
@@ -984,7 +1068,7 @@ function Workspace({
       <header className="be-header">
         <FileBar
           name={file.name}
-          dirty={text !== saved}
+          dirty={dirty}
           recent={files.recent}
           onNew={files.create}
           onOpen={fileAction(files.open)}
@@ -992,7 +1076,7 @@ function Workspace({
           onClose={files.close}
           onSave={save(file.format, false)}
           onSaveAs={(format) => save(format, true)()}
-          error={fileError}
+          error={fileError ?? openError}
           notice={fileNotice}
         />
         <div className="be-header-runs-on">
@@ -1000,7 +1084,7 @@ function Workspace({
           {session && (
             <DeviceBehaviorButton
               device={device}
-              dirty={text !== saved}
+              dirty={dirty}
               onOpen={openDeviceBehavior}
             />
           )}
@@ -1017,7 +1101,7 @@ function Workspace({
           loaded={runnable ? resolved : null}
           blocked={blocked}
           index={index}
-          dirty={text !== saved}
+          dirty={dirty}
           onOpenDevice={() => void openDeviceBehavior()}
           onSelect={(id) => {
             const row = rows.find((r) => r.graphId === id);

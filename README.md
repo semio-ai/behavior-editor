@@ -77,6 +77,9 @@ language's.
 | `examples` | The behaviors the start screen offers, each a `BehaviorExample`: its `title`, `fileName` and `text`, and the `plotKeys` it plots. Each opens as any file does, on whichever Arora is attached. None by default. |
 | `moduleNames` | Names the palette shows for module ids. |
 | `plotKeys` | The store keys plotted from the start. |
+| `fileAccess` | How files are opened and saved: the browser's (`browserFiles`) by default, a host's own `FileAccess` where it has one, as the desktop app's dialogs and paths. |
+| `initialFile` | A file to open as the editor mounts, as Open would, with its handle: Save writes it in place. |
+| `onDirtyChange` | Called when the file open comes to hold changes not saved, and when it no longer does: a host asks before it closes over them. |
 | `packDiagram` | Whether the diagram starts packed (default `true`). |
 | `storeLinks` | Whether the diagram starts with its links through the store (default `true`). |
 

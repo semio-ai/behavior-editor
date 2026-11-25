@@ -12,6 +12,8 @@ export default [
     ignores: [
       "node_modules/",
       "dist/",
+      "app/dist/",
+      "app/src-tauri/",
       "wasm/pkg/",
       "wasm/target/",
       "device/pkg/",

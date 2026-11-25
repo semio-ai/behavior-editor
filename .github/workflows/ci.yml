@@ -1,7 +1,7 @@
 # The package's checks: the crates' Rust checks, both wasm builds, then the
 # package's lint, typecheck, tests (the integration test runs the device's
-# wasm build) and build; and the end-to-end suite, the demo in Chromium against
-# a native Arora device. Every dependency comes from crates.io and npm, so no
+# wasm build) and build; the desktop app's build and checks; and the
+# end-to-end suite, the demo in Chromium against a native Arora device. Every dependency comes from crates.io and npm, so no
 # job needs a secret; every cargo command runs with `--locked`.
 name: CI
 
@@ -77,6 +77,95 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install the Rust toolchain
+        working-directory: wasm
+        run: |
+          rustup toolchain install
+          rustup default "$(rustup show active-toolchain | cut -d' ' -f1)"
+          rustc --version
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            wasm
+            device
+            app/src-tauri
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+        with:
+          tool: wasm-pack@0.15.0
+
+      # What Tauri builds against on Linux: WebKitGTK 4.1 and GTK 3.
+      - name: Install the webview's libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev \
+            librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libxdo-dev libssl-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build the language's wasm
+        run: npm run build:wasm
+
+      - name: Build the device's wasm
+        run: npm run build:device
+
+      # The page first: the binary embeds it.
+      - name: Build the app
+        run: npm run build:app
+
+      - name: Check formatting and Clippy
+        run: npm run lint:app
+
+      - name: Test the app
+        run: npm run test:app
+
+  # The app's Rust side on the platforms the Linux job does not build: their
+  # own code (macOS's menu) compiled, and the tests run there. The page is not
+  # built: a placeholder stands in for what the binary embeds.
+  app-platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Stand in for the page
+        shell: bash
+        run: mkdir -p app/dist && echo '<!doctype html>' > app/dist/index.html
+
+      - name: Test the app
+        run: cargo test --locked --manifest-path app/src-tauri/Cargo.toml
 
   e2e:
     runs-on: ubuntu-latest

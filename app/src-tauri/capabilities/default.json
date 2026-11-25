@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The editor's window: the core defaults. Its files go through the app's own commands, which open the dialogs from Rust.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

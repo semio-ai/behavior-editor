@@ -1,0 +1,24 @@
+[package]
+name = "behavior-editor"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "The behavior editor (@semio/behavior-editor) as a desktop app: the person's files through native dialogs, a local Arora, and Arora devices over their open local bridge."
+repository = "https://github.com/semio-ai/behavior-editor"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+[features]
+# The page embedded in the binary (app/dist): a binary standing alone, no dev server.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true

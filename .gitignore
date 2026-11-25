@@ -6,6 +6,10 @@ dist/
 /device/pkg
 /device/target
 /e2e/device/target
+# The desktop app's page build, its binary, and what tauri-build generates.
+/app/dist
+/app/src-tauri/target
+/app/src-tauri/gen
 # The end-to-end suite's results and report.
 /test-results
 /playwright-report

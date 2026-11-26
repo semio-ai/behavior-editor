@@ -77,6 +77,9 @@ language's.
 | `examples` | The behaviors the start screen offers, each a `BehaviorExample`: its `title`, `fileName` and `text`, and the `plotKeys` it plots. Each opens as any file does, on whichever Arora is attached. None by default. |
 | `moduleNames` | Names the palette shows for module ids. |
 | `plotKeys` | The store keys plotted from the start. |
+| `fileAccess` | How files are opened and saved: the browser's (`browserFiles`) by default, a host's own `FileAccess` where it has one, as the desktop app's dialogs and paths. |
+| `initialFile` | A file to open as the editor mounts, as Open would, with its handle: Save writes it in place. |
+| `onDirtyChange` | Called when the file open comes to hold changes not saved, and when it no longer does: a host asks before it closes over them. |
 | `packDiagram` | Whether the diagram starts packed (default `true`). |
 | `storeLinks` | Whether the diagram starts with its links through the store (default `true`). |
 
@@ -404,6 +407,42 @@ client fill it alike.
   stop the device.
 - **Closing the session, or losing it, leaves the device running.** Stopping
   is only ever explicit.
+
+## Desktop app
+
+`app/` is the editor as a desktop app, a Tauri 2 window around a page like
+the demo's: the person's files through native dialogs, read and saved by
+path, so Save writes the file in place; a local Arora; and a device over its
+open local bridge. Closing the window over changes not saved asks first.
+
+A save writes a new file beside the old one, which then takes its place, so
+a save failing midway leaves the file as it was. The new file has the old
+one's permission bits, but not its ACLs, extended attributes, or owner.
+
+```bash
+npm run build:app      # app/dist, then app/src-tauri/target/release/behavior-editor
+behavior-editor tree.bt --device ws://127.0.0.1:9000 --plot face/level
+```
+
+| Option | |
+|---|---|
+| `FILE` | a behavior file to open as the app starts, in any of the formats above (a graph file once an Arora is attached) |
+| `--device URL` | the open local bridge of a device to connect to as the app starts, instead of starting a local Arora |
+| `--plot KEYS` | the store keys plotted from the start, comma-separated |
+| `--size WxH` | the window's size (default 1600x1000) |
+
+The page reaches a device over its WebSocket, as in a browser; Tauri's IPC
+carries only the files (`open_file`, `read_file`, `save_file`), the
+command line (`startup`), and whether the file holds changes not saved
+(`set_unsaved`, from `onDirtyChange`). A host gives its own files to the editor the same
+way, as a `FileAccess` (`fileAccess`), and a file to open as it mounts
+(`initialFile`).
+
+Building it needs, beyond the package's setup (below), what Tauri builds
+against: on Linux, WebKitGTK 4.1 and GTK 3 (Ubuntu: `libwebkit2gtk-4.1-dev
+libgtk-3-dev librsvg2-dev libsoup-3.0-dev libxdo-dev libssl-dev`), and at run
+time `libwebkit2gtk-4.1-0`. `npm run lint:app` and `npm run test:app` check
+its Rust side, once the page is built.
 
 ## Develop
 

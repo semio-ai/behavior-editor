@@ -8,7 +8,7 @@
  * editor does fails for it.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { BehaviorFile } from "./file-access";
+import type { BehaviorFile, FileHandle } from "./file-access";
 import { FILE_FORMATS, type FileFormat } from "./file-formats";
 
 /** How many files the list keeps: the oldest goes first. */
@@ -22,8 +22,8 @@ export interface RecentFile {
   format: FileFormat;
   /** When it was last opened or saved, in milliseconds since the epoch. */
   at: number;
-  /** Its handle, where the browser gives one and storage keeps it. */
-  handle: FileSystemFileHandle | null;
+  /** Its handle, where the browser or the host gives one and storage keeps it. */
+  handle: FileHandle | null;
   /** Its contents as last opened or saved: what it opens from without its handle. */
   text: string;
 }
@@ -176,13 +176,15 @@ export async function openRecentStore(): Promise<RecentStore> {
 const newId = (now: number) => `${now.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 /**
- * Whether `entry` is the file `file` names: the same handle's file, or, where
- * either has no handle, the file of its name.
+ * Whether `entry` is the file `file` names: the same handle's file, the same
+ * path, or, where either has no handle, the file of its name.
  */
 async function names(entry: RecentFile, file: BehaviorFile): Promise<boolean> {
-  if (!file.handle || !entry.handle) return entry.name === file.name;
+  const [a, b] = [entry.handle, file.handle];
+  if (!a || !b) return entry.name === file.name;
+  if (typeof a === "string" || typeof b === "string") return a === b;
   try {
-    return await entry.handle.isSameEntry(file.handle);
+    return await a.isSameEntry(b);
   } catch {
     return false;
   }

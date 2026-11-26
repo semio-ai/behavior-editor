@@ -5,12 +5,13 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { GREET, ORDER } from "../../fixtures/examples";
 import { loadLanguage } from "../../fixtures/language";
-import { loadDevice } from "../../fixtures/local-arora";
+import { DATAFLOW_FUNCTIONS, loadDevice } from "../../fixtures/local-arora";
 import { type DeviceModule, createLocalArora } from "../local-arora/local-arora";
 import { valueNumber } from "../model/value";
 import type { DeviceSession } from "../session/device-session";
 import type { BehaviorText } from "../text/language";
 import { BehaviorEditor, type BehaviorEditorProps } from "./BehaviorEditor";
+import type { BehaviorFile, FileAccess } from "./file-access";
 import { reopenPageStore } from "./recent-files";
 import type { BehaviorExample } from "./StartScreen";
 
@@ -369,6 +370,170 @@ describe("the start screen", () => {
       "gone.bt is no longer where it was saved",
     );
     expect(screen.getByRole("region", { name: "Open a behavior" })).toBeTruthy();
+  });
+});
+
+/** A host's files, by path: `disk` holds them, `picked` is what its open dialog answers. */
+function hostFiles(disk: Map<string, string>, picked: () => string | null) {
+  const saves: { path: string; text: string; saveAs: boolean }[] = [];
+  const read = (path: string): BehaviorFile & { text: string } => {
+    const contents = disk.get(path);
+    if (contents === undefined) throw new Error(`${path} is not there`);
+    const name = path.split("/").pop()!;
+    return { name, format: name.endsWith(".bt") ? "bt" : "json", handle: path, text: contents };
+  };
+  const access: FileAccess = {
+    open: () => {
+      const path = picked();
+      return Promise.resolve(path === null ? null : read(path));
+    },
+    reopen: (recent) => Promise.resolve(read(recent.handle as string)),
+    save: (written, file, saveAs) => {
+      const path = saveAs || typeof file.handle !== "string" ? `/picked/${file.name}` : file.handle;
+      saves.push({ path, text: written, saveAs });
+      disk.set(path, written);
+      return Promise.resolve({ ...file, handle: path });
+    },
+  };
+  return { access, saves };
+}
+
+describe("a host's files", () => {
+  it("opens and saves through the host, a file by its path", async () => {
+    const disk = new Map([["/robot/order.bt", ORDER.text]]);
+    const { access, saves } = hostFiles(disk, () => "/robot/order.bt");
+    vi.stubGlobal("showOpenFilePicker", () => Promise.reject(new Error("no browser picker")));
+    const { user } = setup({ fileAccess: access });
+    await user.click(screen.getByRole("button", { name: "Open…" }));
+    await waitFor(() => expect(text()).toHaveValue(ORDER.text));
+
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    await user.type(text(), "\n");
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Save" }));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]).toMatchObject({ path: "/robot/order.bt", saveAs: false });
+    expect(disk.get("/robot/order.bt")).toBe(`${ORDER.text}\n`);
+
+    // Reopened from its path, the file is as it is on disk now.
+    disk.set("/robot/order.bt", GREET.text);
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close" }));
+    const listed = within(screen.getByRole("region", { name: "Recent" }));
+    await user.click(listed.getByRole("button", { name: /^order\.bt/ }));
+    await waitFor(() => expect(text()).toHaveValue(GREET.text));
+  });
+
+  it("opens the host's file as it mounts, and saves it in place", async () => {
+    const disk = new Map([["/robot/greet.bt", GREET.text]]);
+    const { access, saves } = hostFiles(disk, () => null);
+    const initialFile = { name: "greet.bt", format: "bt" as const, handle: "/robot/greet.bt", text: GREET.text };
+    const { user } = setup({ fileAccess: access, initialFile });
+    await waitFor(() => expect(text()).toHaveValue(GREET.text));
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Save" }));
+    await waitFor(() => expect(saves).toEqual([{ path: "/robot/greet.bt", text: GREET.text, saveAs: false }]));
+  });
+
+  it("tells the host when the file holds changes not saved, and when it no longer does", async () => {
+    const disk = new Map([["/robot/greet.bt", GREET.text]]);
+    const { access } = hostFiles(disk, () => null);
+    const initialFile = { name: "greet.bt", format: "bt" as const, handle: "/robot/greet.bt", text: GREET.text };
+    const dirty: boolean[] = [];
+    const { user } = setup({ fileAccess: access, initialFile, onDirtyChange: (d) => dirty.push(d) });
+    await waitFor(() => expect(text()).toHaveValue(GREET.text));
+    expect(dirty.at(-1)).toBe(false);
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    await user.type(text(), "\n");
+    await waitFor(() => expect(dirty.at(-1)).toBe(true));
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Save" }));
+    await waitFor(() => expect(dirty.at(-1)).toBe(false));
+    // Edited again, then closed: the changes are discarded, and none is held any more.
+    await user.type(text(), "\n");
+    await waitFor(() => expect(dirty.at(-1)).toBe(true));
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Close" }));
+    await user.click(await screen.findByRole("button", { name: /^Discard/ }));
+    await waitFor(() => expect(dirty.at(-1)).toBe(false));
+    expect(screen.getByRole("button", { name: "Open…" })).toBeTruthy();
+  });
+
+  it("keeps the text the editor started on once edited, the host's graph file opening over nothing", async () => {
+    const graph = language.resolve(language.parse(GREET.text).document, DATAFLOW_FUNCTIONS).graph;
+    const initialFile = { name: "greet.json", format: "json" as const, handle: "/robot/greet.json", text: JSON.stringify(graph) };
+    const { access } = hostFiles(new Map(), () => null);
+    const { user } = setup({ fileAccess: access, initialFile, defaultText: "", fileName: "draft.bt", startLocalArora: false });
+    await user.click(screen.getByRole("tab", { name: "Text" }));
+    await user.type(text(), "succeed");
+    await user.click(screen.getByRole("button", { name: "Start a local Arora" }));
+    await waitFor(() => expect(screen.getByRole("status", { name: "Runs on" })).toHaveTextContent("Local Arora"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(screen.getByText("draft.bt")).toBeTruthy();
+    expect(text()).toHaveValue("succeed");
+  });
+
+  it("says why the host's file did not open over the text the editor started on", async () => {
+    const initialFile = { name: "broken.json", format: "json" as const, handle: "/robot/broken.json", text: "{ not json" };
+    const { access } = hostFiles(new Map(), () => null);
+    setup({ fileAccess: access, initialFile, defaultText: "", fileName: "draft.bt" });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/broken\.json/);
+    expect(screen.getByText("draft.bt")).toBeTruthy();
+  });
+
+  it("takes the host's file over the text the editor starts on", async () => {
+    const disk = new Map([["/robot/greet.bt", GREET.text]]);
+    const { access, saves } = hostFiles(disk, () => null);
+    const initialFile = { name: "greet.bt", format: "bt" as const, handle: "/robot/greet.bt", text: GREET.text };
+    const { user } = setup({ fileAccess: access, initialFile, defaultText: GREET.text });
+    await waitFor(() => expect(screen.getByText("greet.bt")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Save" }));
+    await waitFor(() => expect(saves).toEqual([{ path: "/robot/greet.bt", text: GREET.text, saveAs: false }]));
+  });
+
+  it("opens the host's graph file once an Arora is attached, unless the person opened another meanwhile", async () => {
+    const graph = language.resolve(language.parse(GREET.text).document, DATAFLOW_FUNCTIONS).graph;
+    const initialFile = {
+      name: "greet.json",
+      format: "json" as const,
+      handle: "/robot/greet.json",
+      text: JSON.stringify(graph),
+    };
+    const { access } = hostFiles(new Map(), () => null);
+    const runsOn = () => screen.getByRole("status", { name: "Runs on" });
+
+    // Waiting for an Arora, the person starts a new behavior: the Arora attaching later replaces nothing.
+    const first = setup({ fileAccess: access, initialFile, startLocalArora: false, fileName: "draft.bt" });
+    await first.user.click(screen.getByRole("button", { name: "New behavior" }));
+    await first.user.click(screen.getByRole("tab", { name: "Text" }));
+    await first.user.type(text(), "succeed");
+    await first.user.click(screen.getByRole("button", { name: "Start a local Arora" }));
+    await waitFor(() => expect(runsOn()).toHaveTextContent("Local Arora"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(screen.getByText("draft.bt")).toBeTruthy();
+    expect(text()).toHaveValue("succeed");
+    cleanup();
+
+    // Left alone, it opens as the Arora attaches.
+    setup({ fileAccess: access, initialFile });
+    await waitFor(() => expect(screen.getByText("greet.json")).toBeTruthy());
+  });
+
+  it("opens the host's file it mounted with, another given before it opens notwithstanding", async () => {
+    const fileOf = (name: string, source: string) => ({
+      name,
+      format: "json" as const,
+      handle: `/robot/${name}`,
+      text: JSON.stringify(language.resolve(language.parse(source).document, DATAFLOW_FUNCTIONS).graph),
+    });
+    const { access } = hostFiles(new Map(), () => null);
+    const props = { language, localArora: startLocal, startLocalArora: true, fileAccess: access };
+    // The local Arora attaches after the host gave another file: the first is the one read.
+    const { rerender } = render(<BehaviorEditor {...props} initialFile={fileOf("greet.json", GREET.text)} />);
+    rerender(<BehaviorEditor {...props} initialFile={fileOf("order.json", ORDER.text)} />);
+    await waitFor(() => expect(screen.getByText("greet.json")).toBeTruthy());
+    expect(screen.queryByText("order.json")).toBeNull();
   });
 });
 

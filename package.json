@@ -63,6 +63,9 @@
     "build": "tsup --entry.index src/index.ts --entry.websocket src/websocket/index.ts --entry.local-arora src/local-arora/index.ts --entry.styles src/styles.css --format esm,cjs --dts.entry.index src/index.ts --dts.entry.websocket src/websocket/index.ts --dts.entry.local-arora src/local-arora/index.ts --external react",
     "dev": "tsup --entry.index src/index.ts --entry.websocket src/websocket/index.ts --entry.local-arora src/local-arora/index.ts --entry.styles src/styles.css --format esm,cjs --watch --dts.entry.index src/index.ts --dts.entry.websocket src/websocket/index.ts --dts.entry.local-arora src/local-arora/index.ts --external react",
     "demo": "vite --config demo/vite.config.ts",
+    "build:app": "vite build --config app/vite.config.ts && cargo build --locked --release --manifest-path app/src-tauri/Cargo.toml",
+    "lint:app": "cd app/src-tauri && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check",
+    "test:app": "cargo test --locked --manifest-path app/src-tauri/Cargo.toml",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -71,7 +74,7 @@
     "test:rust": "cd wasm && cargo test --locked --release && cd ../device && cargo test --locked",
     "build:e2e-device": "cargo build --locked --manifest-path e2e/device/Cargo.toml",
     "test:e2e": "npm run build:e2e-device && playwright test",
-    "clean": "rm -rf node_modules dist wasm/pkg wasm/target device/pkg device/target e2e/device/target test-results playwright-report"
+    "clean": "rm -rf node_modules dist app/dist app/src-tauri/target app/src-tauri/gen wasm/pkg wasm/target device/pkg device/target e2e/device/target test-results playwright-report"
   },
   "peerDependencies": {
     "react": "^19.0.0",

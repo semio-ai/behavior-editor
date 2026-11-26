@@ -17,7 +17,10 @@ export function DeviceBar({ device }: { device: DeviceMode }) {
   const switchId = useId();
   const { status, relation, report } = device;
   const lost = device.state?.status !== "connected";
-  const root = relation === "running" ? report?.root : undefined;
+  // The report carries the root's status only where its nodes are those shown:
+  // live while the device runs the file, or at a step of the past whose
+  // behavior shows, whatever the device runs now.
+  const root = report?.root;
   return (
     <div className="be-playback be-device-bar" role="group" aria-label="Device">
       <output className="be-readout" aria-label="Device tick">

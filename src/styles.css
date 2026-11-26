@@ -223,6 +223,15 @@
   align-items: center;
   gap: 6px;
 }
+/* The device's past: a scrubber across the editor, under its header. */
+.be-timeline {
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--be-line);
+}
+.be-timeline-scrub {
+  flex: 1;
+  min-width: 80px;
+}
 .be-file-name {
   font: 600 14px var(--be-mono);
   margin-right: 6px;

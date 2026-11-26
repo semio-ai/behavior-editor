@@ -11,6 +11,8 @@ export interface TextViewProps {
   highlight: Span | null;
   /** Called with the text at every change. */
   onChange(text: string): void;
+  /** Whether the text is shown only, not edited: a behavior of the device's past. */
+  readOnly?: boolean;
   /** Called with the caret's offset when it moves. */
   onCaret(offset: number): void;
 }
@@ -27,6 +29,7 @@ export function TextView({
   highlight,
   onChange,
   onCaret,
+  readOnly = false,
 }: TextViewProps) {
   const area = useRef<HTMLTextAreaElement>(null);
   const backdrop = useRef<HTMLPreElement>(null);
@@ -89,6 +92,7 @@ export function TextView({
             autoCapitalize="off"
             autoComplete="off"
             wrap="off"
+            readOnly={readOnly}
             aria-label="Behavior text"
             aria-describedby={diagnostics.length ? listId : undefined}
             aria-invalid={diagnostics.some((d) => d.severity === "error")}
